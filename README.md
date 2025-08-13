@@ -40,13 +40,17 @@ Run `linux_macos.sh` in the `install` folder.
 <summary>How to use</summary>  
 1. Launch Milana and configure the model. Instruct models are recommended (e.g., Mistral Instruct).  
 2. Choose a model provider (Ollama or HuggingFaceHub).  
-   - For HuggingFaceHub, enter a string like:  
-     `chat=mistralai/Mistral-7B-Instruct-v0.2;emb=sentence-transformers/all-MiniLM-L6-v2;token=hf_yourtoken`  
-   - For Ollama, download the models (e.g., `mistral:latest` and `all-minilm:latest`). Enter the string:  
-     `chat=mistral:latest;emb=all-minilm:latest`  
+For HuggingFaceHub, enter a string like:  
+
+`chat=mistralai/Mistral-7B-Instruct-v0.2;emb=sentence-transformers/all-MiniLM-L6-v2;token=hf_yourtoken`
+
+For Ollama, download the models (e.g., `mistral:latest` and `all-minilm:latest`). Enter the string:  
+
+`chat=mistral:latest;emb=all-minilm:latest`
+
 3. Click "Validate model" and save the settings.  
 4. Enable the required modules in the settings (e.g., web search or command line).  
-5. Create a chat, enter a task, and send the message.  
+5. Create a chat, enter a task, and send the message.
 
 **Note:**  
 - For stable operation, use powerful models or GPT-OSS.  
