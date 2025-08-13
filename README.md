@@ -38,7 +38,7 @@ Run `linux_macos.sh` in the `install` folder.
 
 <details>  
 <summary>How to use</summary>  
-1. Launch Milana and configure the model. Instruct models are recommended (e.g., Mistral Instruct).  
+1. Launch Milana and configure the model. Instruct models are recommended (e.g., codegemma (better, but small context window), Mistral Instruct).  
 2. Choose a model provider (Ollama or HuggingFaceHub).  
 For HuggingFaceHub, enter a string like:
 
@@ -131,3 +131,4 @@ Links to community-developed modules will appear here.
 </details>  
 
 **Questions and suggestions:** Discord `iishnitsa_milana`
+
