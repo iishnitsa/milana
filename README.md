@@ -40,25 +40,30 @@ Run `linux_macos.sh` in the `install` folder.
 <summary>How to use</summary>  
 1. Launch Milana and configure the model. Instruct models are recommended (e.g., Mistral Instruct).  
 2. Choose a model provider (Ollama or HuggingFaceHub).  
-For HuggingFaceHub, enter a string like:  
+For HuggingFaceHub, enter a string like:
 
 `chat=mistralai/Mistral-7B-Instruct-v0.2;emb=sentence-transformers/all-MiniLM-L6-v2;token=hf_yourtoken`
 
-For Ollama, download the models (e.g., `mistral:latest` and `all-minilm:latest`). Enter the string:  
+For Ollama, download the models (e.g., `mistral:latest` and `all-minilm:latest`). Important: if the model name doesn't contain a colon, add `:latest` at the end. Enter the string:
 
 `chat=mistral:latest;emb=all-minilm:latest`
 
 3. Click "Validate model" and save the settings.  
 4. Enable the required modules in the settings (e.g., web search or command line).  
-5. Create a chat, enter a task, and send the message.
+5. Create a chat, enter a task, and send the message.  
 
 **Note:**  
 - For stable operation, use powerful models or GPT-OSS.  
-- If you encounter bugs, send logs and descriptions to Discord: `iishnitsa_milana`.  
+- Due to restrictions in Russia, I currently only support Ollama and HuggingFaceHub.  
+- If you encounter bugs, please send to Discord `iishnitsa_milana`: screenshots/videos, log.txt, cache.db, and other relevant files from the chat folder where the issue occurred, along with a detailed description. My PC isn't powerful enough to reproduce all scenarios.  
 </details>  
 
 <details>  
 <summary>For developers</summary>  
+
+### Important Notes  
+- Due to technical limitations and restrictions in Russia, I currently only support Ollama and HuggingFaceHub.  
+- My PC is not powerful enough to test all scenarios. If you want me to make your changes to the program/find a bug/fix a bug, please write to me in Discord "iishnitsa_milana" with your suggestions, attach screenshots/videos, log.txt , cache.db and detailed descriptions.
 
 ### How to develop modules  
 A module consists of:  
@@ -125,4 +130,4 @@ Examples of modules can be found in the `default_tools` folder.
 Links to community-developed modules will appear here.  
 </details>  
 
-**Questions and suggestions:** Discord `iishnitsa_milana`.
+**Questions and suggestions:** Discord `iishnitsa_milana`
