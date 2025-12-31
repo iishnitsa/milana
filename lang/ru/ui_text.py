@@ -24,7 +24,6 @@ TEXTS = {
     # Main Window
     "new_chat": "Новый чат",
     "settings": "Настройки",
-    "attachments": "Вложения:",
     
     "chat_prefix": "Чат ",
 
@@ -46,6 +45,7 @@ TEXTS = {
     "message_from_model_requires_answer": "Требуется ваш ответ",
 
     # Attachment
+    "attachments": "Вложения",
     "attachment_open_error": "Ошибка открытия вложения",
 
     # Initial Settings
@@ -87,6 +87,9 @@ TEXTS = {
     "tab_modules": "Модули",
     "create": "Создать",
     "max_tasks": "Макс. количество задач:",
+    "use_rag": "Использовать продвинутую память диалога",
+    "filter_generations": "Очищать генерации",
+    "hierarchy_limit": "Лимит ступеней иерархии",
     "system_modules": "Системные модули",
     "global_custom_modules": "Пользовательские модули (глобальные)",
     "chat_specific_modules": "Новые модули (только для этого чата)",
@@ -135,4 +138,9 @@ TEXTS = {
     "model_err_ollama_missing": "Укажите модель Ollama",
     "model_err_lmstudio_missing": "Укажите модель LM Studio",
     "model_err_custom_api_missing": "Укажите IP и порт сервера",
+
+    "ok": "ОК",
+    "yes": "Да",
+    "no": "Нет",
+    "cancel": "Отмена",
 }
