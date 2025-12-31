@@ -23,7 +23,6 @@ TEXTS = {
     # Main Window
     "new_chat": "New Chat",
     "settings": "Settings",
-    "attachments": "Attachments:",
     
     "chat_prefix": "Chat ",
 
@@ -45,6 +44,8 @@ TEXTS = {
     "message_from_model_requires_answer": "Requires your response",
 
     # Attachment
+    
+    "attachments": "Attachments",
     "attachment_open_error": "Attachment Open Error",
 
     # Initial Settings
@@ -86,6 +87,9 @@ TEXTS = {
     "tab_modules": "Modules",
     "create": "Create",
     "max_tasks": "Max. tasks:",
+    "use_rag": "Use advanced dialogue memory",
+    "filter_generations": "Purify the generation",
+    "hierarchy_limit": "Hierarchy level limit",
     "system_modules": "System Modules",
     "global_custom_modules": "Custom Modules (Global)",
     "chat_specific_modules": "New Modules (Chat-specific)",
@@ -134,4 +138,9 @@ TEXTS = {
     "model_err_ollama_missing": "Ollama model is required",
     "model_err_lmstudio_missing": "LM Studio model is required",
     "model_err_custom_api_missing": "Server IP and port are required",
+
+    "ok": "OK",
+    "yes": "Yes",
+    "no": "No",
+    "cancel": "Cancel",
 }
