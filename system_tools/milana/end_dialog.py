@@ -9,15 +9,15 @@ from cross_gpt import (
     save_emb_dialog,
     get_now_try,
     up_now_try,
-    let_log
-)
-
-# Получаем текстовые константы из контейнера
-from cross_gpt import (
+    critic,
+    let_log,
     slash_token,
     slash_n,
     kv_token,
 )
+# НОВЫЕ ИМПОРТЫ ИЗ CHAT_MANAGER
+from chat_manager import get_chat_context, delete_chat
+
 # TODO: проверь на удаление диалога искусственно вызвав команду
 def main(text):
     # Инициализация атрибутов модуля при первом вызове
@@ -42,10 +42,8 @@ def main(text):
         parents_id = slash_token
     now_try = parts[-1]
 
-    # Получаем историю диалога
-    history = sql_exec(
-        'SELECT history FROM chats WHERE chat_id=?',
-        (global_state.conversations,), fetchone=True)
+    # ИЗМЕНЕНИЕ: Получаем историю через менеджер
+    _, history = get_chat_context(global_state.conversations)
 
     # Сохраняем результат в базу данных
     last_successful_id = sql_exec(
@@ -66,12 +64,31 @@ def main(text):
         )
     )
 
-    # Сохраняем эмбеддинги диалога
-    save_emb_dialog(history, 'correct', text) # TODO:
+    # Сохраняем эмбеддинги диалога, если история была найдена
+    if history:
+        save_emb_dialog(history, 'correct', text) # TODO:
 
     # Обновляем иерархию попыток
     up_now_try()
 
+    # ИЗМЕНЕНИЕ: Удаляем чат(ы) через менеджер
+    delete_chat(global_state.conversations)
+    if global_state.conversations % 2 == 0:
+        delete_chat(global_state.conversations - 1)
+        global_state.conversations -= 1
+        global_state.tools_commands_dict.popitem()
+    else: let_log('Диалог завершается не начавшись')
+    global_state.tools_commands_dict.popitem()
+    print(global_state.critic_reactions)
+    try: now_critic_reactions = global_state.critic_reactions[global_state.conversations] # TODO: давай ответ критика вернётся в енд диалог в качестве ответа? хотя это перегрузит контекст но идея интернесная
+    except: now_critic_reactions = 0; global_state.critic_reactions[global_state.conversations] = 0
+    if now_critic_reactions < global_state.max_critic_reactions:
+        critic_result = critic(global_state.main_now_task, text)
+        if critic_result != 1: global_state.critic_comment = critic_result
+        else: del global_state.critic_reactions[global_state.conversations]
+    else: del global_state.critic_reactions[global_state.conversations]
+
+    global_state.conversations -= 1
     # Устанавливаем результат диалога
     global_state.dialog_result = text
     return main.end_dialog_return
