@@ -1,4 +1,3 @@
-# ollama_provider.py
 import requests
 import re
 import json
@@ -10,15 +9,19 @@ from typing import Dict, Any, Optional, List
 session: Optional[requests.Session] = None
 base_url: str = ""
 default_chat_model: Optional[str] = None
-emb_model: str = ""
-model_template_info: Dict[str, Any] = {}
+ollama_base_url: str = "http://localhost:11434"
+ollama_emb_model: str = "all-minilm:latest"
 
 # Значения по умолчанию
 token_limit = 4095
 emb_token_limit = 4095
 do_chat_construct = True
 native_func_call = False
-tags = {}
+
+# Новые глобальные переменные для фильтрации think-части
+filter_think_enabled: bool = False
+filter_start_tag: str = "</think>"
+filter_end_tag: str = ""
 
 def find_context_size(model_data: Dict[str, Any], base_url: str, headers: Dict[str, str]) -> int:
     """
@@ -76,82 +79,44 @@ def find_context_size(model_data: Dict[str, Any], base_url: str, headers: Dict[s
     return 4095
 
 
-def _parse_template_info(template_info: Dict[str, Any]) -> Dict[str, str]:
-    """
-    Извлекает теги из шаблона модели Ollama.
-    Возвращает словарь с тегами в формате совместимом с GPT4All.
-    """
-    template = template_info.get("template", "")
-    system_msg = template_info.get("system", "")
-    
-    # Начинаем с пустых значений
-    parsed_tags = {
-        "bos": "", "eos": "",
-        "sys_start": "", "sys_end": "",
-        "user_start": "", "user_end": "",
-        "assist_start": "", "assist_end": "",
-        "tool_def_start": "", "tool_def_end": "",
-        "tool_call_start": "", "tool_call_end": "",
-        "tool_result_start": "", "tool_result_end": "",
-    }
-    
-    # Пытаемся извлечь системный тег
-    if system_msg:
-        # Ищем паттерны типа "<|im_start|>system" или "system:"
-        system_patterns = [r'(<\|im_start\|>system)', r'(system:)', r'(\[system\])', r'(<system>)']
-        for pattern in system_patterns:
-            match = re.search(pattern, system_msg, re.IGNORECASE)
-            if match:
-                parsed_tags["sys_start"] = match.group(1)
-                # Ищем соответствующий закрывающий тег
-                end_pattern = re.sub(r'system', r'end', pattern, flags=re.IGNORECASE)
-                end_match = re.search(end_pattern, system_msg, re.IGNORECASE)
-                if end_match:
-                    parsed_tags["sys_end"] = end_match.group(1)
-                break
-    
-    # Анализируем шаблон для поиска тегов
-    if template:
-        # Ищем специальные теги
-        special_tags = {
-            "bos": [r'<s>', r'<\|start\|>', r'\[start\]', r'bos'],
-            "eos": [r'</s>', r'<\|end\|>', r'\[end\]', r'eos'],
-            "sys_start": [r'<\|im_start\|>system', r'\[system\]', r'<system>'],
-            "sys_end": [r'<\|im_end\|>', r'\[/system\]', r'</system>'],
-            "user_start": [r'<\|im_start\|>user', r'\[user\]', r'<user>', r'user:'],
-            "user_end": [r'<\|im_end\|>', r'\[/user\]', r'</user>'],
-            "assist_start": [r'<\|im_start\|>assistant', r'\[assistant\]', r'<assistant>', r'assistant:'],
-            "assist_end": [r'<\|im_end\|>', r'\[/assistant\]', r'</assistant>'],
-        }
-        
-        for tag_name, patterns in special_tags.items():
-            for pattern in patterns:
-                matches = re.findall(pattern, template, re.IGNORECASE)
-                if matches:
-                    parsed_tags[tag_name] = matches[0]
-                    break
-    
-    return parsed_tags
-
-
 def connect(connection_string: str, timeout: int = 30) -> List[Any]:
     """
-    Подключение к серверу Ollama API.
+    Подключение к серверу GPT4All API с поддержкой Ollama для эмбеддингов.
     Формат строки подключения:
-    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest"
+    "url=http://localhost:4891; model=mistral-7b-instruct-v0.1.Q4_0.gguf; ollama_url=http://localhost:11434; emb_model=all-minilm:latest"
     """
     global session, base_url, default_chat_model, token_limit, emb_token_limit
-    global emb_model, do_chat_construct, native_func_call, tags, model_template_info
+    global ollama_base_url, ollama_emb_model, do_chat_construct, native_func_call, unified_tags
+    global filter_think_enabled, filter_start_tag, filter_end_tag  # Добавлено
 
-    # Параметры по умолчанию (только необходимые)
+    # Параметры по умолчанию
     params = {
-        "url": "http://localhost:11434",
-        "model": "mistral:latest",
-        "emb_model": "all-minilm:latest",
-        "token_limit": 4095,
+        "url": "http://localhost:4891",
+        "model": "Mistral Instruct",
+        "token_limit": 32768,
         "chat_template": "True",
         "native_func_call": "False",
+        "ollama_url": "http://localhost:11434",
+        "emb_model": "all-minilm:latest",
+        "bos": "",
+        "eos": "",
+        "sys_start": "",
+        "sys_end": "",
+        "user_start": "",
+        "user_end": "",
+        "assist_start": "",
+        "assist_end": "",
+        "tool_def_start": "",   
+        "tool_def_end": "",
+        "tool_call_start": "",  
+        "tool_call_end": "",
+        "tool_result_start": "",
+        "tool_result_end": "",
+        "filter_think": "False",      # Добавлено
+        "filter_start": "</think>",   # Добавлено
+        "filter_end": "",             # Добавлено
     }
+    tags = None
 
     # --- Разбор строки подключения ---
     for part in connection_string.split(";"):
@@ -165,24 +130,47 @@ def connect(connection_string: str, timeout: int = 30) -> List[Any]:
             params[key] = value
 
     base_url = params["url"].strip('/')
-    emb_model = params["emb_model"]
+    ollama_base_url = params["ollama_url"].strip('/')
+    ollama_emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"
     native_func_call = params["native_func_call"].lower().strip() == "true"
     
+    # Инициализация переменных фильтрации
+    filter_think_enabled = params["filter_think"].lower().strip() == "true"
+    filter_start_tag = params["filter_start"]
+    filter_end_tag = params["filter_end"]
+    
+    tags = {
+        "bos": params["bos"],
+        "eos": params["eos"],
+        "sys_start": params["sys_start"],
+        "sys_end": params["sys_end"],
+        "user_start": params["user_start"],
+        "user_end": params["user_end"],
+        "assist_start": params["assist_start"], 
+        "assist_end": params["assist_end"],
+        "tool_def_start": params["tool_def_start"],   
+        "tool_def_end": params["tool_def_end"],
+        "tool_call_start": params["tool_call_start"],  
+        "tool_call_end": params["tool_call_end"],
+        "tool_result_start": params["tool_result_start"],
+        "tool_result_end": params["tool_result_end"],
+    }
+    
     try:
-        # === Подключение к Ollama ===
+        # === Подключение к GPT4All ===
         session = requests.Session()
         session.headers.update({"Content-Type": "application/json"})
 
-        api_url = f"{base_url}/api/tags"
+        api_url = f"{base_url}/v1/models"
         response = session.get(api_url, timeout=timeout)
         response.raise_for_status()
 
         models_data = response.json()
-        available_models = [model['name'] for model in models_data.get('models', [])]
+        available_models = [model['id'] for model in models_data.get('data', [])]
 
         if not available_models:
-            return [False, 0, tags, "Не удалось получить список моделей с сервера Ollama."]
+            return [False, 0, tags, "Не удалось получить список моделей с сервера GPT4All."]
 
         # Устанавливаем модель для чата
         requested_model = params.get("model")
@@ -191,51 +179,33 @@ def connect(connection_string: str, timeout: int = 30) -> List[Any]:
         else:
             default_chat_model = available_models[0]
 
-        # Получаем информацию о модели для извлечения тегов и контекста
+        token_limit = int(params["token_limit"])
+
+        # === Подключение к Ollama для эмбеддингов ===
+        ollama_models_url = f"{ollama_base_url}/api/tags"
+        ollama_response = requests.get(ollama_models_url, timeout=timeout)
+        ollama_response.raise_for_status()
+
+        ollama_models_data = ollama_response.json()
+        ollama_available_models = [model['name'] for model in ollama_models_data.get('models', [])]
+
+        if not ollama_available_models:
+            return [False, 0, tags, "Не удалось получить список моделей с сервера Ollama."]
+
+        # Проверяем, доступна ли модель для эмбеддингов
+        if ollama_emb_model not in ollama_available_models:
+            ollama_emb_model = ollama_available_models[0]
+
+        # Автоматическое определение лимита токенов для Ollama эмбеддингов
         try:
-            show_url = f"{base_url}/api/show"
-            show_payload = {"name": default_chat_model}
-            show_response = session.post(show_url, json=show_payload, timeout=timeout)
+            show_url = f"{ollama_base_url}/api/show"
+            show_payload = {"name": ollama_emb_model}
+            show_response = requests.post(show_url, json=show_payload, timeout=timeout)
             if show_response.status_code == 200:
                 model_details = show_response.json()
-                model_template_info = model_details
-                
-                # Определяем лимит контекста
-                token_limit = find_context_size(model_details, base_url, {})
-                
-                # Извлекаем теги из шаблона модели
-                tags = _parse_template_info(model_details)
-                
-        except Exception as e:
-            token_limit = int(params["token_limit"])
-            # Используем пустые теги по умолчанию
-            tags = {
-                "bos": "", "eos": "",
-                "sys_start": "", "sys_end": "",
-                "user_start": "", "user_end": "",
-                "assist_start": "", "assist_end": "",
-                "tool_def_start": "", "tool_def_end": "",
-                "tool_call_start": "", "tool_call_end": "",
-                "tool_result_start": "", "tool_result_end": "",
-            }
-
-        # Проверяем и устанавливаем модель для эмбеддингов
-        if emb_model not in available_models:
-            emb_model = available_models[0]
-
-        # Автоматическое определение лимита токенов для эмбеддингов
-        try:
-            if emb_model != default_chat_model:  # Если модели разные, получаем детали для эмбеддинг-модели
-                show_url = f"{base_url}/api/show"
-                show_payload = {"name": emb_model}
-                show_response = session.post(show_url, json=show_payload, timeout=timeout)
-                if show_response.status_code == 200:
-                    model_details = show_response.json()
-                    emb_token_limit = find_context_size(model_details, base_url, {})
-            else:
-                emb_token_limit = token_limit
+                emb_token_limit = find_context_size(model_details, ollama_base_url, {})
         except Exception as e: pass
-        
+
         return [True, token_limit, tags]
 
     except requests.exceptions.RequestException as e:
@@ -248,68 +218,85 @@ def connect(connection_string: str, timeout: int = 30) -> List[Any]:
 
 def disconnect() -> bool:
     """Закрыть HTTP сессию"""
-    global session, base_url, default_chat_model, model_template_info
+    global session, base_url, default_chat_model
     if session:
         session.close()
         session = None
         base_url = ""
         default_chat_model = None
-        model_template_info = {}
         return True
     return False
 
 
+def apply_think_filter(text: str) -> str:
+    """
+    Применяет фильтрацию think-части к тексту ответа.
+    Если filter_think_enabled = True:
+      1. Ищет filter_start_tag в тексте
+      2. Если находит - берет текст после него
+      3. Если filter_end_tag не пуст - удаляет все до filter_end_tag
+    Иначе возвращает оригинальный текст.
+    """
+    global filter_think_enabled, filter_start_tag, filter_end_tag
+    
+    if not filter_think_enabled:
+        return text
+    
+    from cross_gpt import let_log
+    
+    let_log(f"apply_think_filter: Применяю фильтр. Start tag='{filter_start_tag}', End tag='{filter_end_tag}'")
+    
+    # Ищем стартовый тег
+    start_pos = text.find(filter_start_tag)
+    
+    if start_pos == -1:
+        let_log("apply_think_filter: Стартовый тег не найден, возвращаю полный текст")
+        return text
+    
+    # Берем текст после стартового тега
+    filtered_text = text[start_pos + len(filter_start_tag):]
+    let_log(f"apply_think_filter: Нашел стартовый тег на позиции {start_pos}")
+    
+    # Если указан конечный тег - удаляем все до него
+    if filter_end_tag and filter_end_tag.strip():
+        end_pos = filtered_text.find(filter_end_tag)
+        if end_pos != -1:
+            filtered_text = filtered_text[:end_pos]
+            let_log(f"apply_think_filter: Обрезал до конечного тега на позиции {end_pos}")
+        else:
+            let_log("apply_think_filter: Конечный тег не найден, оставляю текст как есть")
+    
+    let_log(f"apply_think_filter: Итоговый текст: '{filtered_text[:100]}...'")
+    return filtered_text.strip()
+
+
 def ask_model(generation_params):
     """
-    Простая функция для API /api/generate (аналог completions)
-    С автоматическим определением thinking-моделей по структуре ответа
-    И рекурсивным восстановлением при потере соединения
+    Простая функция для API v1/completions
     """
-    if not session or not base_url or not default_chat_model:
-        raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
+    from cross_gpt import let_log
+    
+    if not session or not base_url:
+        raise RuntimeError("GPT4All клиент не инициализирован. Сначала вызовите connect().")
 
-    api_url = f"{base_url}/api/generate"
+    api_url = f"{base_url}/v1/completions"
     
     try:
-        from cross_gpt import let_log
         let_log(f"ask_model: Отправка запроса на {api_url}")
+        let_log(f"ask_model: Параметры: {generation_params}")
         
-        # Подготовка параметров для Ollama API
-        ollama_params = {
-            "model": default_chat_model,
-            "prompt": generation_params.get("prompt", ""),
-            "stream": False,
-            "options": {}
-        }
+        # ДОБАВЛЯЕМ МОДЕЛЬ В ПАРАМЕТРЫ, ЕСЛИ ЕЁ НЕТ
+        if 'model' not in generation_params and default_chat_model:
+            generation_params['model'] = default_chat_model
+            let_log(f"ask_model: Добавлена модель по умолчанию: {default_chat_model}")
         
-        # НЕ добавляем "think": true - пусть модель решает сама
-        
-        # Маппинг параметров
-        param_mapping = {
-            "max_tokens": "num_predict",
-            "temperature": "temperature",
-            "top_p": "top_p",
-            "top_k": "top_k",
-            "repeat_penalty": "repeat_penalty",
-            "stop": "stop"
-        }
-        
-        for param, value in generation_params.items():
-            if param == "prompt":
-                continue
-            if param in param_mapping:
-                ollama_params["options"][param_mapping[param]] = value
-            else:
-                ollama_params["options"][param] = value
-        
-        let_log(f"ask_model: Параметры запроса: {ollama_params}")
-        response = session.post(api_url, json=ollama_params)
+        response = session.post(api_url, json=generation_params)
         
         if response.status_code != 200:
             error_text = response.text
             let_log(f"ask_model: Ошибка HTTP {response.status_code}: {error_text}")
             
-            # Обработка ошибок контекста
+            # ТАКАЯ ЖЕ УЛУЧШЕННАЯ ОБРАБОТКА ОШИБОК
             if response.status_code in [413]:
                 raise RuntimeError('ContextOverflowError')
             elif response.status_code == 400:
@@ -332,36 +319,40 @@ def ask_model(generation_params):
                 raise RuntimeError(f"HTTP ошибка {response.status_code}: {error_text}")
         
         data = response.json()
-        let_log(f"ask_model: Получен ответ, длина: {len(str(data))} символов")
+        let_log(f"ask_model: Получен ответ: {data}")
         
-        # АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ THINKING-МОДЕЛИ
-        # Если в ответе есть поле "thinking" - это thinking-модель
-        # В любом случае финальный ответ берём из поля "response"
-        result = data.get("response", "").strip()
-        let_log(f"ask_model: Результат: '{result[:100]}...'")
+        if "choices" not in data or not data["choices"]:
+            let_log("ask_model: Некорректный формат ответа - нет choices")
+            raise RuntimeError("Некорректный формат ответа - нет choices")
+
+        choice = data["choices"][0]
+        result = choice.get("text", "").strip()
+        
+        # ПРИМЕНЯЕМ ФИЛЬТРАЦИЮ THINK-ЧАСТИ
+        result = apply_think_filter(result)
+        let_log(f"ask_model: Результат после фильтрации: '{result}'")
         
         # Сбрасываем флаг рекурсии при успешном выполнении
-        if hasattr(ask_model, 'was_recursion'):
-            ask_model.was_recursion = False
+        if hasattr(ask_model, 'was_recursion_ask'):
+            ask_model.was_recursion_ask = False
             
         return result
 
     except requests.exceptions.ConnectionError as e:
-        from cross_gpt import let_log
-        let_log(f"ask_model: Ошибка соединения с Ollama API: {e}")
+        let_log(f"ask_model: Ошибка соединения с GPT4All API: {e}")
         
         # Проверяем, была ли уже рекурсия
-        if not hasattr(ask_model, 'was_recursion'):
-            ask_model.was_recursion = False
+        if not hasattr(ask_model, 'was_recursion_ask'):
+            ask_model.was_recursion_ask = False
             
-        if ask_model.was_recursion:
+        if ask_model.was_recursion_ask:
             # Если уже была рекурсия - пробрасываем ошибку
             let_log("ask_model: Рекурсия уже была, пробрасываем ошибку")
-            raise RuntimeError("Ошибка соединения с Ollama API")
+            raise RuntimeError("Ошибка соединения с GPT4All API")
         else:
             # Первая ошибка подключения - пытаемся повторить
-            ask_model.was_recursion = True
-            let_log("ask_model: Первая ошибка подключения, повторяем запрос через 60 секунд...")
+            ask_model.was_recursion_ask = True
+            let_log("ask_model: Первая ошибка подключения, повторяем запрос...")
             
             import time
             while True:
@@ -369,87 +360,67 @@ def ask_model(generation_params):
                     time.sleep(60)  # Ждем минуту
                     result = ask_model(generation_params)
                     # Сбрасываем флаг при успешном повторном вызове
-                    ask_model.was_recursion = False
+                    ask_model.was_recursion_ask = False
                     return result
                 except requests.exceptions.ConnectionError:
                     let_log("ask_model: Повторная ошибка подключения, ждем еще минуту...")
                     continue
                 except Exception as retry_e:
                     # Другие ошибки пробрасываем
-                    ask_model.was_recursion = False
+                    ask_model.was_recursion_ask = False
                     raise retry_e
                     
     except requests.exceptions.RequestException as e:
-        from cross_gpt import let_log
         let_log(f"ask_model: Ошибка сети: {e}")
         raise RuntimeError(f"Ошибка сети: {e}")
     except Exception as e:
-        from cross_gpt import let_log
         let_log(f"ask_model: Неожиданная ошибка: {e}")
         raise RuntimeError(f"Неожиданная ошибка: {e}")
 
+
 def ask_model_chat(generation_params):
     """
-    Функция для API /api/chat (аналог chat/completions)
+    Простая функция для API v1/chat/completions
+    Просто передает параметры в API без какой-либо обработки
     Возвращает полный ответ API как есть (словарь)
-    С автоматическим определением thinking-моделей
-    И рекурсивным восстановлением при потере соединения
     """
-    if not session or not base_url or not default_chat_model:
-        raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
+    from cross_gpt import let_log
+    
+    if not session or not base_url:
+        raise RuntimeError("GPT4All клиент не инициализирован. Сначала вызовите connect().")
 
-    api_url = f"{base_url}/api/chat"
+    api_url = f"{base_url}/v1/chat/completions"
     
     try:
-        from cross_gpt import let_log
         let_log(f"ask_model_chat: Отправка запроса на {api_url}")
+        let_log(f"ask_model_chat: Параметры: {generation_params}")
         
-        # Подготовка параметров для Ollama Chat API
-        ollama_params = {
-            "model": default_chat_model,
-            "messages": generation_params.get("messages", []),
-            "stream": False,
-            "options": {}
-        }
+        # ДОБАВЛЯЕМ МОДЕЛЬ В ПАРАМЕТРЫ, ЕСЛИ ЕЁ НЕТ
+        if 'model' not in generation_params and default_chat_model:
+            generation_params['model'] = default_chat_model
+            let_log(f"ask_model_chat: Добавлена модель по умолчанию: {default_chat_model}")
         
-        # НЕ добавляем "think": true - пусть модель решает сама
-        
-        # Маппинг параметров
-        param_mapping = {
-            "max_tokens": "num_predict",
-            "temperature": "temperature",
-            "top_p": "top_p",
-            "top_k": "top_k",
-            "repeat_penalty": "repeat_penalty",
-            "stop": "stop"
-        }
-        
-        for param, value in generation_params.items():
-            if param in ["messages", "model"]:
-                continue
-            if param in param_mapping:
-                ollama_params["options"][param_mapping[param]] = value
-            else:
-                ollama_params["options"][param] = value
-        
-        let_log(f"ask_model_chat: Параметры запроса: {ollama_params}")
-        response = session.post(api_url, json=ollama_params)
+        response = session.post(api_url, json=generation_params)
         
         if response.status_code != 200:
             error_text = response.text
             let_log(f"ask_model_chat: Ошибка HTTP {response.status_code}: {error_text}")
             
-            # Обработка ошибок контекста
+            # УЛУЧШЕННАЯ ОБРАБОТКА ОШИБОК
             if response.status_code in [413]:
+                # 413 - точно переполнение
                 raise RuntimeError('ContextOverflowError')
             elif response.status_code == 400:
+                # 400 может быть разным - анализируем текст ошибки
                 if any(keyword in error_text.lower() for keyword in ['context', 'length', 'token', 'exceed']):
                     let_log("ask_model_chat: Ошибка 400 связана с контекстом -> ContextOverflowError")
                     raise RuntimeError('ContextOverflowError')
                 else:
+                    # Другие ошибки 400 (как "model parameter required")
                     let_log(f"ask_model_chat: Ошибка 400 не связана с контекстом: {error_text}")
                     raise RuntimeError(f"Ошибка запроса: {error_text}")
             elif response.status_code == 500:
+                # 500 может быть переполнением или серверной ошибкой
                 if 'context' in error_text.lower():
                     let_log("ask_model_chat: Ошибка 500 связана с контекстом -> ContextOverflowError")
                     raise RuntimeError('ContextOverflowError')
@@ -462,23 +433,33 @@ def ask_model_chat(generation_params):
                 raise RuntimeError(f"HTTP ошибка {response.status_code}: {error_text}")
         
         data = response.json()
-        let_log(f"ask_model_chat: Получен ответ, длина: {len(str(data))} символов")
-        
-        # АВТОМАТИЧЕСКАЯ ОБРАБОТКА ДЛЯ THINKING-МОДЕЛЕЙ В ЧАТЕ
-        # Для thinking-моделей поле thinking будет внутри message.thinking
-        # Фильтрация не нужна - API уже возвращает чистый ответ в message.content
-        # Просто оставляем структуру как есть
+        let_log(f"ask_model_chat: Получен ответ: {data}")
         
         # Сбрасываем флаг рекурсии при успешном выполнении
         if hasattr(ask_model_chat, 'was_recursion_chat'):
             ask_model_chat.was_recursion_chat = False
-            
-        # Возвращаем полный ответ как словарь
+        
+        # ПРИМЕНЯЕМ ФИЛЬТРАЦИЮ THINK-ЧАСТИ К СООБЩЕНИЮ АССИСТЕНТА
+        if filter_think_enabled and "choices" in data and data["choices"]:
+            choice = data["choices"][0]
+            if "message" in choice and "content" in choice["message"]:
+                original_content = choice["message"]["content"]
+                filtered_content = apply_think_filter(original_content)
+                
+                # Обновляем содержимое в ответе
+                data["choices"][0]["message"]["content"] = filtered_content
+                
+                # Также обновляем текст в корне ответа, если он есть
+                if "text" in data["choices"][0]:
+                    data["choices"][0]["text"] = filtered_content
+                
+                let_log(f"ask_model_chat: Применил фильтр think-части. Было: '{original_content[:100]}...', Стало: '{filtered_content[:100]}...'")
+        
+        # ВОЗВРАЩАЕМ ПОЛНЫЙ ОТВЕТ КАК СЛОВАРЬ, БЕЗ ИЗВЛЕЧЕНИЯ ТЕКСТА
         return data
 
     except requests.exceptions.ConnectionError as e:
-        from cross_gpt import let_log
-        let_log(f"ask_model_chat: Ошибка соединения с Ollama API: {e}")
+        let_log(f"ask_model_chat: Ошибка соединения с GPT4All API: {e}")
         
         # Проверяем, была ли уже рекурсия
         if not hasattr(ask_model_chat, 'was_recursion_chat'):
@@ -487,11 +468,11 @@ def ask_model_chat(generation_params):
         if ask_model_chat.was_recursion_chat:
             # Если уже была рекурсия - пробрасываем ошибку
             let_log("ask_model_chat: Рекурсия уже была, пробрасываем ошибку")
-            raise RuntimeError("Ошибка соединения с Ollama API")
+            raise RuntimeError("Ошибка соединения с GPT4All API")
         else:
             # Первая ошибка подключения - пытаемся повторить
             ask_model_chat.was_recursion_chat = True
-            let_log("ask_model_chat: Первая ошибка подключения, повторяем запрос через 60 секунд...")
+            let_log("ask_model_chat: Первая ошибка подключения, повторяем запрос...")
             
             import time
             while True:
@@ -510,33 +491,31 @@ def ask_model_chat(generation_params):
                     raise retry_e
                     
     except requests.exceptions.RequestException as e:
-        from cross_gpt import let_log
         let_log(f"ask_model_chat: Ошибка сети: {e}")
         raise RuntimeError(f"Ошибка сети: {e}")
     except Exception as e:
-        from cross_gpt import let_log
         let_log(f"ask_model_chat: Неожиданная ошибка: {e}")
         raise RuntimeError(f"Неожиданная ошибка: {e}")
+
 
 def create_embeddings(text: str) -> List[float]:
     """
     Создание эмбеддингов для текста через Ollama API.
-    С рекурсивным восстановлением при потере соединения
     """
-    global base_url, emb_model, session
+    global ollama_base_url, ollama_emb_model
     
-    if not base_url or not emb_model or not session:
+    if not ollama_base_url or not ollama_emb_model:
         raise RuntimeError("Клиент Ollama для эмбеддингов не инициализирован. Вызовите connect() сначала.")
         
-    api_url = f"{base_url}/api/embeddings"
+    api_url = f"{ollama_base_url}/api/embeddings"
     
     payload = {
-        "model": emb_model,
+        "model": ollama_emb_model,
         "prompt": text
     }
 
     try:
-        response = session.post(api_url, json=payload, timeout=30)
+        response = requests.post(api_url, json=payload, timeout=30)
         response.raise_for_status()
 
         data = response.json()
@@ -552,8 +531,6 @@ def create_embeddings(text: str) -> List[float]:
         return embedding
 
     except requests.exceptions.ConnectionError as e:
-        from cross_gpt import let_log
-        let_log(f"create_embeddings: Ошибка соединения с Ollama API: {e}")
         
         # Проверяем, была ли уже рекурсия
         if not hasattr(create_embeddings, 'was_recursion_emb'):
@@ -561,12 +538,10 @@ def create_embeddings(text: str) -> List[float]:
             
         if create_embeddings.was_recursion_emb:
             # Если уже была рекурсия - пробрасываем ошибку
-            let_log("create_embeddings: Рекурсия уже была, пробрасываем ошибку")
             raise RuntimeError(f"Ошибка API эмбеддингов Ollama: {str(e)}")
         else:
             # Первая ошибка подключения - пытаемся повторить
             create_embeddings.was_recursion_emb = True
-            let_log("create_embeddings: Первая ошибка подключения, повторяем запрос через 60 секунд...")
             
             import time
             while True:
@@ -577,7 +552,6 @@ def create_embeddings(text: str) -> List[float]:
                     create_embeddings.was_recursion_emb = False
                     return result
                 except requests.exceptions.ConnectionError:
-                    let_log("create_embeddings: Повторная ошибка подключения, ждем еще минуту...")
                     continue
                 except Exception as retry_e:
                     # Другие ошибки пробрасываем
