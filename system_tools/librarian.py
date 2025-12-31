@@ -3,7 +3,6 @@ need_information
 call to get missing information
 '''
 
-# Получаем текстовые константы из контейнера
 from cross_gpt import (
     global_state,
     ask_model,
@@ -52,8 +51,8 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
         main.answer_l_4 = '"1" - yes, "0" - no'
         return
 
-    print('БИБЛИОТЕКАРЬ ВЫЗВАН')
-
+    let_log('БИБЛИОТЕКАРЬ ВЫЗВАН')
+    
     def find_engine(ask_text, attempts_left, donee='correct', search_target=1, full_output=True):
         requests_to_libraries = [ask_text]
         complex_result = ''
@@ -64,14 +63,23 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             maybe_new_requests_to_libraries = []
 
             for i, emb in zip(requests_to_libraries, embeddings):
-                print(i)
+                let_log(i)
                 results = []
 
                 try:
                     if search_target == 1:
-                        where1 = {"done": donee, "result": True}
-                        where2 = {"done": donee}
-                        where3 = {}
+                        base_filter = {}
+                        if not global_state.gigo_web_search_allowed:
+                            base_filter = {'source': {'$ne': 'web'}}
+
+                        # Копируем базовый фильтр и добавляем специфичные условия
+                        where1 = base_filter.copy()
+                        where1.update({"done": donee, "result": True})
+                        
+                        where2 = base_filter.copy()
+                        where2.update({"done": donee})
+                        
+                        where3 = base_filter.copy()
                         if donee == 'correct': where3 = {"done": 'incorrect'}
                         results = coll_exec(
                             "query",
@@ -106,50 +114,82 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                             fetch="documents",
                             first=False
                         ) or []
-
                     elif search_target == 3:
                         pass
 
                 except Exception as e:
-                    print(f"[find_engine] Ошибка запроса: {e}")
+                    let_log(f"[find_engine] Ошибка запроса: {e}")
+
+                # Если ничего не найдено, пробуем поиск в интернете
+                if not results and global_state.gigo_web_search_allowed:
+                    try:
+                        from cross_gpt import web_search, split_text_with_cutting
+                        web_result = web_search(i)
+                        if web_result and web_result != found_info_1:
+                            # Сохраняем результат в user_collection
+                            chunks = split_text_with_cutting(web_result)
+                            if chunks:
+                                for t, chunk in enumerate(chunks):
+                                    # Генерируем уникальный ID
+                                    import hashlib
+                                    chunk_id = hashlib.md5(f"{i}_{t}".encode()).hexdigest()
+                                    coll_exec(
+                                        action="add",
+                                        coll_name="user_collection",
+                                        ids=[chunk_id],
+                                        embeddings=[get_embs(chunk)],
+                                        metadatas=[{
+                                            'name': i,  # текст запроса
+                                            'part': t + 1,
+                                            'source': 'web'
+                                        }],
+                                        documents=[chunk]
+                                    )
+                            results = [web_result]
+                    except Exception as e:
+                        let_log(f"Web search error: {e}")
 
                 if results:
-                    print(results)
+                    let_log(results)
                     if full_output:
-                        try: best_result = ask_model(
+                        try: 
+                            best_result = ask_model(
                                 main.best_result_l_1 + '\n' + i + '\n' +
-                                main.best_result_l_2 + '\n' + '\n'.join(results)
+                                main.best_result_l_2 + '\n' + '\n'.join(results), all_user=True
                             )
-                        except: best_result = ask_model(
+                        except: 
+                            best_result = ask_model(
                                 main.best_result_l_1 + '\n' + i + '\n' +
-                                main.best_result_l_2 + '\n' + text_cutter('\n'.join(results))
+                                main.best_result_l_2 + '\n' + text_cutter('\n'.join(results)), all_user=True
                             )
                         return best_result # TODO: нужно условие что ничего не найдено
                     
                     answer = ask_model(
                         main.request_l_1 + '\n' + i + '\n' +
                         main.information_l_1 + '\n' + results[0] + '\n' +
-                        main.satisfies_l_1
+                        main.satisfies_l_1, all_user=True
                     )
 
                     try:
                         if one_token in answer[0:3]:
-                            print('удовлетворяет')
+                            let_log('удовлетворяет')
                             return results[0]
                     except:
                         pass
 
                     for r in results:
-                        print('убрал сокращение каждого результата перед проверкой на полезность')
-                        try: answer = ask_model(
+                        let_log('убрал сокращение каждого результата перед проверкой на полезность')
+                        try: 
+                            answer = ask_model(
                                 main.answer_l_1 + '\n' + i + '\n' +
                                 main.answer_l_2 + '\n' + r + '\n' +
-                                main.answer_l_4
+                                main.answer_l_4, all_user=True
                             )
-                        except: answer = ask_model(
+                        except: 
+                            answer = ask_model(
                                 main.answer_l_1 + '\n' + i + '\n' +
                                 main.answer_l_2 + '\n' + text_cutter(r) + '\n' +
-                                main.answer_l_4
+                                main.answer_l_4, all_user=True
                             )
                         try:
                             if one_token in answer[0:3]:
@@ -159,19 +199,18 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                     try:
                         complex_result = ask_model(
                             main.select_matter_l_1 + '\n' + i + '\n' +
-                            main.select_matter_l_2 + '\n' + complex_result
+                            main.select_matter_l_2 + '\n' + complex_result, all_user=True
                         )
                     except:
                         complex_result = ask_model(
                             main.select_matter_l_1 + '\n' + i + '\n' +
-                            main.select_matter_l_2 + '\n' + text_cutter(complex_result)
+                            main.select_matter_l_2 + '\n' + text_cutter(complex_result), all_user=True
                         )
                     answer = ask_model(
                         main.answer_l_1 + '\n' + complex_result + '\n' +
                         main.answer_l_2 + '\n' + i + '\n' +
-                        main.answer_l_3
+                        main.answer_l_3, all_user=True
                     )
-                    # вот тут запрос результат и вопрос надо ли выбросить мусор а не в цикле
                     try:
                         if one_token in answer[0:12]:
                             return complex_result
@@ -182,7 +221,7 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             
             if new_requests_to_libraries:
                 requests_to_libraries = new_requests_to_libraries
-                embeddings = [get_embs(req) for req in requests_to_libraries] # TODO: тут ошибка кэшера
+                embeddings = [get_embs(req) for req in requests_to_libraries]
                 attempts_left -= 1
             else:
                 break
@@ -191,46 +230,85 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             return found_info_1
         return complex_result
 
-    # Обработка входящего запроса
-    first_request_target = 1
-    full_output = False
-    #full_output = True
+    def process_single_question(quest):
+        # Обработка входящего запроса для одиночного вопроса
+        first_request_target = 1
+        full_output = False
 
-    if quest and quest[0] in (one_token, two_token, three_token):
-        first_request_target = quest[0]
-        if len(quest) > 1 and quest[1] == one_token:
-            full_output = True
-            quest = quest[2:]
-        elif len(quest) > 1 and quest[1] == two_token:
-            quest = quest[2:]
-        else:
-            quest = quest[1:]
+        if quest and quest[0] in (one_token, two_token, three_token):
+            first_request_target = quest[0]
+            if len(quest) > 1 and quest[1] == one_token:
+                full_output = True
+                quest = quest[2:]
+            elif len(quest) > 1 and quest[1] == two_token:
+                quest = quest[2:]
+            else:
+                quest = quest[1:]
 
-    # Первый проход — milana_collection
-    result_primary = find_engine(
-        quest,
-        global_state.max_attempts,
-        search_target=1,
-        full_output=full_output
-    ) or ""
+        # Первый проход — milana_collection
+        result_primary = find_engine(
+            quest,
+            global_state.max_attempts,
+            search_target=1,
+            full_output=full_output
+        ) or ""
 
-    # Второй проход — user_collection
-    result_user = find_engine(
-        quest,
-        global_state.max_attempts,
-        search_target=2,
-        full_output=full_output
-    ) or ""
+        # Второй проход — user_collection
+        result_user = find_engine(
+            quest,
+            global_state.max_attempts,
+            search_target=2,
+            full_output=full_output
+        ) or ""
 
-    parts = [result_primary, result_user]
+        parts = [result_primary, result_user]
 
-    def is_valid(x):
-        if not x: return False
-        if x.lower() == "none": return False
-        if x == found_info_1: return False
-        return True
-    final_res = ''
-    for p in parts:
-        if is_valid(p): final_res += p + '\n'
-    if final_res == '': final_res = found_info_1
-    return final_res
+        def is_valid(x):
+            if not x: return False
+            if x.lower() == "none": return False
+            if x == found_info_1: return False
+            return True
+        
+        final_res = ''
+        for p in parts:
+            if is_valid(p): 
+                final_res += p + '\n'
+        
+        if final_res == '': 
+            final_res = found_info_1
+        return final_res
+
+    # Обработка входящего запроса - если quest многострочный, обрабатываем каждую строку
+    if isinstance(quest, str) and '\n' in quest:
+        # Разбиваем на строки и фильтруем
+        lines = quest.splitlines()
+        
+        # Оставляем только строки со знаком вопроса, если есть
+        question_lines = [line for line in lines if '?' in line]
+        
+        # Если не нашли строк с вопросами, используем все строки
+        if not question_lines:
+            question_lines = lines
+        
+        # Убираем нумерацию в начале строк (например, "1. ", "2. ")
+        import re
+        cleaned_questions = []
+        for question in question_lines:
+            # Убираем нумерацию вида "1. ", "2) " и т.п. в начале строки
+            cleaned = re.sub(r'^\s*\d+[\.\)]\s*', '', question.strip())
+            if cleaned:  # Пропускаем пустые строки
+                cleaned_questions.append(cleaned)
+        
+        # Обрабатываем каждый вопрос отдельно
+        additional_info = ''
+        for question in cleaned_questions:
+            answer = process_single_question(question)
+            let_log(found_info_1)
+            if answer != found_info_1:
+                additional_info += '\n' + answer
+        
+        return additional_info.strip() if additional_info else found_info_1
+    
+    else:
+        # Обычная обработка одиночного запроса
+        return process_single_question(quest)
