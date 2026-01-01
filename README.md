@@ -32,6 +32,7 @@ The project is very raw, but I decided to release it to avoid getting stuck in e
 <summary>Windows/macOS/Linux Venv installation or .exe Building</summary>
 
 **Windows**
+
 Before installation, you need:
 - `Git`
 - `Desktop development with C++` workload (via `Visual Studio Installer`)
@@ -44,6 +45,7 @@ Or run `buildexe.bat` in the `install` folder and wait for the Milana.exe to be 
 To create the installer, download Inno Setup and compile the installer using the `InnoSetupInstallerBild.iss` config in the `install` folder.
 
 **Linux and macOS**
+
 Run `linux_macos.sh` in the `install` folder.
 </details>
 
@@ -944,3 +946,4 @@ Links to community-developed modules will appear here.
 </details>
 
 **Questions and suggestions:** Discord `iishnitsa_milana`
+
