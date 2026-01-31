@@ -17,6 +17,6 @@ notebooks/.ipynb_checkpoints/
 models/checkpoints/
 /tests/
 _internal/
-output/
+Output/
 Milana.exe
 /start_milana.cmd
