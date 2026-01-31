@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+/mvenv/
+
+# Мои проектные папки
+/data/chats/*
+/data/models/*
+/data/settings.db
+notebooks/.ipynb_checkpoints/
+models/checkpoints/
+/tests/
+_internal/
+output/
+Milana.exe
+/start_milana.cmd
