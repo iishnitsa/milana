@@ -85,13 +85,15 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
         current_level = get_level()
         if current_level >= global_state.hierarchy_limit: return main.conversations_limit_reached_text
     let_log('начинается диалог')
-    if global_state.conversations > 0:
-        let_log('СОХРАНЕНИЕ перед делегированием')
-        save_emb_dialog('delegated')
-        let_log('Сохранили оператора как delegated')
-        if global_state.conversations % 2 == 0 and global_state.conversations != 0:
-            save_emb_dialog('delegated', 'executor')
-            let_log('Сохранили исполнителя как delegated') # TODO: произошло сохранение когда не было диалогов по идее, проверка на неравенство нулю должна исправить но проверь
+    if global_state.critic_wants_retry: global_state.critic_wants_retry = False
+    else:
+        if global_state.conversations > 0:
+            let_log('СОХРАНЕНИЕ перед делегированием')
+            save_emb_dialog('delegated')
+            let_log('Сохранили оператора как delegated')
+            if global_state.conversations % 2 == 0 and global_state.conversations != 0:
+                save_emb_dialog('delegated', 'executor')
+                let_log('Сохранили исполнителя как delegated')
     global_state.stop_agent = True
     if client_task == '':
         prompt = gigo(global_state.main_now_task)

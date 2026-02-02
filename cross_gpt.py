@@ -1115,7 +1115,7 @@ def _execute_with_cache_and_error_handling(generation_func):
     let_log(f'СГЕНЕРИРОВАНО {len(generated)} токенов за {elapsed:.2f}s')
     let_log(f'Генерация заняла {elapsed:.2f}s, вывод {len(generated)} токенов')
     return generated
-use_user = True
+
 @cacher
 def ask_model(prompt_text, 
               system_prompt: str = None,
@@ -1123,7 +1123,6 @@ def ask_model(prompt_text,
               limit: int = None,
               temperature: float = 0.6,
               **extra_params) -> str:
-    let_log(verdicts)
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
     # Проверка длины контекста
@@ -1136,9 +1135,7 @@ def ask_model(prompt_text,
         root = tk.Tk()
         root.withdraw()
         root.attributes('-topmost', True)
-        input_text = simpledialog.askstring("Ввод текста", 
-                                        "Пожалуйста, введите текст:",
-                                        parent=root)
+        input_text = simpledialog.askstring("Ввод текста", "Пожалуйста, введите текст:", parent=root)
         root.destroy()
         if input_text is not None:
             if input_text != "":
@@ -1170,7 +1167,6 @@ def ask_model(prompt_text,
         }
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
-    
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
     # Режим 1: Подача строки (completions)
     if not do_chat_construct:
@@ -1700,7 +1696,7 @@ def remove_commands_roles(cleaned_text): # TODO: перепроверь рабо
             if start_pos != -1:
                 # Нашли содержимое - удаляем всё начиная с этой позиции
                 cleaned_text = cleaned_text[:start_pos]
-                break  # Прерываем после первого найденного
+                break # Прерываем после первого найденного
     # Теперь ищем маркеры команд с помощью extract_command_markers
     # Для этого нам нужен словарь команд - используем пустой словарь
     markers = extract_command_markers(cleaned_text, {})
@@ -1781,7 +1777,6 @@ def text_cutter(text):
             traceprint()
             print(e)
             sys.exit(1)
-    # Когда все части обработаны, объединяем их
     return ' '.join(summarized_chunks)
 
 def load_info_loaders(info_loaders_names):
@@ -1801,8 +1796,6 @@ def load_info_loaders(info_loaders_names):
         let_log("✅ Модуль info_loaders успешно импортирован")
     except Exception as e:
         let_log(f"❌ ФАТАЛЬНО: Не удалось импортировать модуль info_loaders: {e}")
-        # Не создаем заглушек - просто оставляем пустой словарь
-        # Система продолжит работу, но файлы обрабатываться не будут
         return input_info_loaders
     # Загружаем только рабочие обработчики
     for ext, func_name in info_loaders_names.items():
@@ -1832,24 +1825,20 @@ def upload_user_data(files_list):
     Возвращает только успешно обработанные результаты.
     """
     all_results = []  # Только успешные результаты
-    
     if not files_list:
         let_log("Список файлов для загрузки пуст")
         return all_results
-    
     # Проверяем, загружены ли обработчики
     if not input_info_loaders:
         let_log("⚠ Обработчики файлов не загружены. Пропускаем загрузку файлов.")
         send_output_message(text="Система обработки файлов недоступна", command='warning')
         return all_results
-    
     for filename in files_list:
         file_basename = os.path.basename(filename)
         let_log(f"Обработка файла: {file_basename}")
         try:
             # 1. Проверка существования файла
-            if not os.path.exists(filename):
-                raise FileNotFoundError(f"Файл не существует: {filename}")
+            if not os.path.exists(filename): raise FileNotFoundError(f"Файл не существует: {filename}")
             # 2. Получение расширения
             _, file_extension = os.path.splitext(filename)
             extension = file_extension[1:].lower() if file_extension else ''
@@ -2031,8 +2020,7 @@ def next_executor():
 
 def get_executor_number():
     """Получить номер текущего исполнителя"""
-    if global_state.now_try == '/' or global_state.now_try == '':
-        return 0
+    if global_state.now_try == '/' or global_state.now_try == '': return 0
     parts = global_state.now_try.strip('/').split('/')
     last_part = parts[-1]
     if ':' in last_part:
@@ -2043,8 +2031,7 @@ def get_executor_number():
 
 def get_level():
     """Получить номер текущего уровня"""
-    if global_state.now_try == '/' or global_state.now_try == '':
-        return 1
+    if global_state.now_try == '/' or global_state.now_try == '': return 1
     parts = global_state.now_try.strip('/').split('/')
     last_part = parts[-1]
     if ':' in last_part:
@@ -2071,8 +2058,7 @@ def get_operator_id():
 
 def get_executor_id():
     """Полный ID исполнителя"""
-    if get_executor_number() == 0:
-        return None  # Исполнитель не создан
+    if get_executor_number() == 0: return None  # Исполнитель не создан
     return global_state.now_try
 
 def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
@@ -2352,21 +2338,6 @@ def gigo(base_task, roles=[]):
     except: plan = ask_model(gigo_make_plan + base_task + text_cutter(minds) + '\n' + text_cutter(additional_info), all_user=True)
     return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
 
-verdicts = [
-    """ВЕРДИКТ: ДОРАБОТАТЬ
-НОВАЯ ЗАДАЧА:
-Твоя предыдущая попытка решить задачу "написать функцию суммирования" была почти успешной, но в ней отсутствовала обработка нечисловых данных. Пожалуйста, доработай эту функцию, добавив блок try-except.
-""",
-    "ВЕРДИКТ: НЕ УВЕРЕН",
-    "ВЕРДИКТ: ПРИНЯТЬ",
-    """ВЕРДИКТ: ДОРАБОТАТЬ
-НОВАЯ ЗАДАЧА:
-Твоя предыдущая попытка решить задачу "написать функцию суммирования" была почти успешной, но в ней отсутствовала обработка нечисловых данных. Пожалуйста, доработай эту функцию, добавив блок try-except.
-""",
-    "ВЕРДИКТ: НЕ УВЕРЕН",
-    "ВЕРДИКТ: ПРИНЯТЬ",
-]
-
 def critic(task: str, result: str) -> int | str:
     # TODO: может обработку текста и результат сюда засунуть?
     """
@@ -2375,17 +2346,21 @@ def critic(task: str, result: str) -> int | str:
     - Возвращает строку с новой, доработанной задачей для исполнителя.
     """
     # TODO: добавь текст каттер
+    if global_state.conversations % 2 == 0:
+        if global_state.conversations != 0: num_critic_reaction = 1
+        else: num_critic_reaction = global_state.conversations - 1
+    else: num_critic_reaction = global_state.conversations
     try:
-        now_critic_reactions = global_state.critic_reactions[global_state.conversations]
-        let_log(f"Текущие реакции для диалога {global_state.conversations}: {now_critic_reactions}")
+        now_critic_reactions = global_state.critic_reactions[num_critic_reaction]
+        let_log(f"Текущие реакции для диалога {num_critic_reaction}: {now_critic_reactions}")
         let_log(f"Реакций ({now_critic_reactions}), максимум ({global_state.max_critic_reactions}), запускаем критика")
     except:
         now_critic_reactions = 0
-        global_state.critic_reactions[global_state.conversations] = 0
-        let_log(f"Нет реакций для диалога {global_state.conversations}, установлено 0")
+        global_state.critic_reactions[num_critic_reaction] = 0
+        let_log(f"Нет реакций для диалога {num_critic_reaction}, установлено 0")
     if now_critic_reactions == global_state.max_critic_reactions:
         let_log(f"Достигнут максимум реакций ({now_critic_reactions}), пропускаем критика")
-        del global_state.critic_reactions[global_state.conversations]
+        del global_state.critic_reactions[num_critic_reaction]
         return 1
     # --- Этап 1 ---
     try:
@@ -2431,10 +2406,7 @@ def critic(task: str, result: str) -> int | str:
                      f"{prompt_decision_4} {evaluation_text}\n"
                      f"{librarian_context}" # <-- Сюда будет подставлен контекст от библиотекаря
                      f"{prompt_decision_5}")
-    #decision_response = ask_model(prompt_stage3, all_user=True)
-    decision_response = verdicts[0]
-    del verdicts[0]
-    # --- Парсинг ответа и возврат результата ---
+    decision_response = ask_model(prompt_stage3, all_user=True)
     if marker_decision_revise in decision_response:
         try:
             start_index = decision_response.index(marker_new_task) + len(marker_new_task)
@@ -2443,23 +2415,21 @@ def critic(task: str, result: str) -> int | str:
                 print("Критик: Требуется доработка. Сформулирована новая задача.")
                 global_state.critic_wants_retry = True
                 global_state.critic_comment = new_task
-                if global_state.conversations % 2 == 0: global_state.critic_reactions[global_state.conversations - 1] += 1
-                else: global_state.critic_reactions[global_state.conversations] += 1
+                global_state.critic_reactions[num_critic_reaction] += 1
                 return new_task
-        except ValueError:
-            del global_state.critic_reactions[global_state.conversations]
+        except Exception as e:
+            let_log(e)
+            del global_state.critic_reactions[num_critic_reaction]
             return 1
     elif marker_decision_approve in decision_response:
         print("Критик: Задача выполнена успешно.")
-        del global_state.critic_reactions[global_state.conversations]
+        del global_state.critic_reactions[num_critic_reaction]
         return 3
-    # <-- Новая, явная проверка на неуверенность
     elif marker_decision_unsure in decision_response:
         print("Критик: Не уверен в результате, требуется проверка человеком.")
-        del global_state.critic_reactions[global_state.conversations]
+        del global_state.critic_reactions[num_critic_reaction]
         return 2
-    # Если вердикт не распознан или ответ пустой
-    return 1
+    return 1 # Если вердикт не распознан или ответ пустой
 
 def find_all_commands(text: str, available_commands: list[str], cutoff: float = 0.75) -> list[str]:
     """
@@ -2669,8 +2639,9 @@ def tools_selector(text, sid):
     # 9) выполнить функцию
     let_log("[TOOLS_SELECTOR] Выполняем функцию...")
     if found_key == start_dialog_command_name: global_state.task_delegated = True
-    try: result = func_callable(content)
-    except Exception as e: result = "__TOOL_ERROR__: " + str(e)
+    #try: result = func_callable(content)
+    #except Exception as e: result = "__TOOL_ERROR__: " + str(e)
+    result = func_callable(content) # TODO:
     let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
     # 10) кэшировать результат если не системная команда
     try:
@@ -2809,6 +2780,7 @@ def worker(really_main_task):
                 let_log(global_state.conversations)
                 # нужно еще задачу в хрому записать
                 # TODO: вынеси эти 2 куска кода в функцию
+                let_log(global_state.conversations)
                 if global_state.conversations <= 0:
                     if global_state.critic_wants_retry: # TODO: в критике тоже добавь пояснения И ОН НЕ ВЕЗДЕ ДОЛЖЕН ИСПОЛЬЗОВАТЬ РИЛИ МАЙН ТАКС А ЕЩЁ НАДО УНИФИЦИРОВАТЬ ЕГО С КЛИЕНТСКИМИ ТЕКСТАМИ
                         if user_review_text1 in really_main_task or user_review_text2 in really_main_task or user_review_text3 in really_main_task or user_review_text4 in really_main_task:
@@ -2819,7 +2791,6 @@ def worker(really_main_task):
                 else:
                     global_state.dialog_state = True
                     if global_state.critic_wants_retry:
-                        global_state.critic_wants_retry = False
                         if user_review_text1 in global_state.main_now_task or user_review_text2 in global_state.main_now_task or user_review_text3 in global_state.main_now_task or user_review_text4 in global_state.main_now_task:
                             global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                         else: global_state.main_now_task = user_review_text1 + global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
