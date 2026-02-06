@@ -15,7 +15,6 @@ TEXTS = {
     "browse": "Обзор...",
     "delete": "Удалить",
     "language": "Язык",
-    "restart_required": "Для применения языковых настроек требуется перезапуск приложения.",
 
     # Language Loading
     "lang_load_error_title": "Ошибка загрузки языка",
@@ -24,7 +23,6 @@ TEXTS = {
     # Main Window
     "new_chat": "Новый чат",
     "settings": "Настройки",
-    
     "chat_prefix": "Чат ",
 
     # Chat Context Menu
@@ -37,9 +35,6 @@ TEXTS = {
     # App Closing
     "active_chats_on_close_title": "Активные чаты",
     "active_chats_on_close_message": "Есть {count} активных чатов. Выберите действие:",
-    "active_chats_on_close_detail": "Вы можете безопасно остановить их или закрыть принудительно.",
-    "stop_safely": "Безопасно остановить",
-    "terminate": "Закрыть принудительно",
 
     # Chat Controls
     "message_from_model_requires_answer": "Требуется ваш ответ",
@@ -86,7 +81,7 @@ TEXTS = {
     "tab_chat_settings": "Настройки чата",
     "tab_modules": "Модули",
     "create": "Создать",
-    "max_tasks": "Макс. количество задач:",
+    "max_critic_reactions": "Макс. реакций критика:",
     "use_rag": "Использовать продвинутую память диалога",
     "filter_generations": "Очищать генерации",
     "hierarchy_limit": "Лимит ступеней иерархии",

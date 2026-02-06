@@ -148,7 +148,7 @@ You can only call the commands available below. Their description of work is in 
                     break
     # Формируем строку с описанием инструментов для промпта
     selected_ivan_tools = ''
-    for tool in ivan_tools: selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')' + ', '
+    for tool in ivan_tools: selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + '), '
     if selected_ivan_tools and selected_ivan_tools[-2:] == ', ': selected_ivan_tools = selected_ivan_tools[:-2]
     # Определяем, какой промпт использовать (с инструментами или без)
     if selected_ivan_tools: what_write_prompt = main.create_executor_write_prompt_1

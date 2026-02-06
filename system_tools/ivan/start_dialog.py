@@ -128,7 +128,7 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     # Формирование финального промпта
     full_prompt = main.milana_template
     let_log(milana_tools)
-    for tool in milana_tools: full_prompt += tool + ' (' + milana_tools[tool][0] + ')' + ',' + ' '
+    for tool in milana_tools: full_prompt += tool + ' (' + milana_tools[tool][0] + '), '
     let_log(full_prompt)
     let_log(global_state.another_tools)
     if full_prompt and full_prompt[-1] == ',': full_prompt = full_prompt[:-1]

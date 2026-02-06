@@ -36,7 +36,7 @@ class GlobalState:
         self.milana_module_tools = []
         self.ivan_module_tools = []
         self.module_tools_keys = []
-        self.max_critic_reactions = 1#3
+        self.max_critic_reactions = 2
         self.critic_reactions = {}
         self.critic_wants_retry = False
         self.critic_comment = ''
@@ -2455,8 +2455,7 @@ def find_all_commands(text: str, available_commands: list[str], cutoff: float = 
             word_from_text,
             available_commands,
             n=1,  # Ищем только одно, самое лучшее, совпадение для данного слова
-            cutoff=cutoff
-        )
+            cutoff=cutoff)
         if close_matches:
             # Если для слова найдено достаточно близкое совпадение,
             # добавляем соответствующую команду из списка `available_commands` в наше множество.
@@ -2510,8 +2509,7 @@ def find_and_match_command(text, commands_dict):
             # Определяем длину закрывающего маркера
             j = i
             while j < len(text) and j - i < 4:
-                if text[j] in exclamation_chars:
-                    j += 1
+                if text[j] in exclamation_chars: j += 1
                 else: break
             # Закрывающий маркер должен быть хотя бы из 1 символа
             if j - i >= 1:
@@ -2548,12 +2546,7 @@ def find_and_match_command(text, commands_dict):
             break
     if not found_key and key_map:
         try:
-            matches = difflib.get_close_matches(
-                raw_name, 
-                list(key_map.keys()), 
-                n=1, 
-                cutoff=0.7
-            )
+            matches = difflib.get_close_matches(raw_name, list(key_map.keys()), n=1, cutoff=0.7)
             if matches: found_key = matches[0]
         except: found_key = None
     if not found_key: return None
@@ -2797,7 +2790,7 @@ def worker(really_main_task):
                         talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
                     else: talk_prompt = global_state.dialog_result
 
-def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pause_event, log_queue):
+def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global memory_sql
     global actual_handlers_names, another_tools_files_addresses
     global token_limit, emb_token_limit, most_often
@@ -2850,6 +2843,8 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pa
     use_rag = int(settings.get("use_rag", 1))
     global_state.write_results = int(settings.get("write_results", 0))
     if int(settings.get("write_log", 1)) == 0: is_save_log = False
+    # === ДОБАВЛЕНО: Получение максимального количества реакций критика ===
+    global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     # === Инициализация ChromaDB ===
     chroma_path = os.path.join(chat_path, "chroma_db")
     client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True, anonymized_telemetry=False))
@@ -2871,8 +2866,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pa
         create_chat,
         get_chat_context,
         update_history,
-        delete_chat
-    )
+        delete_chat)
     initialize_schema()
     default_tools_dir = os.path.join(base_dir, "default_tools")
     for rel_path in tool_paths:
@@ -2926,8 +2920,8 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pa
     clean_variables_content = []
     if filter_generations == 1:
         clean_variables_content = [operator_role_text, worker_role_text, func_role_text, system_role_text]
-        if unified_tags.get('bos') is not None: clean_variables_content.append(bos_tag)
-        if unified_tags.get('user_start') is not None: clean_variables_content.append(user_start_tag)
+        if unified_tags.get('bos') is not None: clean_variables_content.append(unified_tags.get('bos'))
+        if unified_tags.get('user_start') is not None: clean_variables_content.append(unified_tags.get('user_start'))
         filter_generations = True
     else: filter_generations = False
     global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
