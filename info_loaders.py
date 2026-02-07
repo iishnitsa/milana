@@ -11,6 +11,7 @@ import gc
 import numpy as np
 import pandas as pd
 import cv2
+import unicodedata
 from cross_gpt import (
     err_image_process_text_infoloaders,
     text_on_image_prompt_infoloaders,
@@ -35,6 +36,7 @@ from cross_gpt import (
     excel_empty_text,
     excel_error_text,
 )
+
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
@@ -118,7 +120,36 @@ def _load_image_models():
         _IMAGE_MODELS_LOAD_FAILED = True
         raise
 
-def process_image(image_content, input_file_handlers):
+def is_binary_text(text, threshold=0.5, max_chars=1024):
+    """
+    Проверяет, является ли текст бинарным (содержит много непечатаемых символов).
+    
+    Args:
+        text (str): Текст для проверки.
+        threshold (float): Пороговое значение доли печатаемых символов.
+        max_chars (int): Максимальное количество символов для проверки.
+    
+    Returns:
+        bool: True, если текст считается бинарным.
+    """
+    if not text:
+        return True
+    check_text = text[:max_chars]
+    printable_count = 0
+    for char in check_text:
+        category = unicodedata.category(char)
+        if char == '\n' or char == '\r' or char == '\t':
+            printable_count += 1
+        elif category in ('Cc', 'Cs'):
+            continue
+        elif char == '\ufffd':
+            continue
+        else:
+            printable_count += 1
+    ratio = printable_count / len(check_text)
+    return ratio < threshold
+
+def process_image(file_path_or_data, input_file_handlers):
     """Обработка изображения с использованием BLIP и EasyOCR"""
     let_log('Обработка изображения')
     
@@ -128,10 +159,13 @@ def process_image(image_content, input_file_handlers):
         return f"Ошибка загрузки моделей: {e}"
     
     try:
-        if isinstance(image_content, bytes):
-            image = Image.open(BytesIO(image_content)).convert('RGB')
+        # Определяем тип входных данных
+        if isinstance(file_path_or_data, bytes):
+            let_log('  Обработка изображения из байтов (из архива)')
+            image = Image.open(BytesIO(file_path_or_data)).convert('RGB')
         else:
-            image = Image.open(image_content).convert('RGB')
+            let_log(f'  Обработка изображения из файла: {file_path_or_data}')
+            image = Image.open(file_path_or_data).convert('RGB')
     except Exception as e:
         return f"{err_image_process_text_infoloaders}{e}"
 
@@ -188,12 +222,24 @@ def cleanup_image_models():
     gc.collect()
     let_log("Модели очищены, сборщик мусора вызван")
 
-def process_pdf(file_path, input_file_handlers):
+def process_pdf(file_path_or_data, input_file_handlers):
     let_log('пдф')
-    try: pdf = pymupdf.open(file_path)
-    except Exception as ex: let_log(ex); return f"{err_image_process_pdf_infoloaders}{ex}"
+    
+    try:
+        # Определяем тип входных данных
+        if isinstance(file_path_or_data, bytes):
+            let_log('  Обработка PDF из байтов (из архива)')
+            pdf = pymupdf.open(stream=BytesIO(file_path_or_data), filetype="pdf")
+        else:
+            let_log(f'  Обработка PDF из файла: {file_path_or_data}')
+            pdf = pymupdf.open(file_path_or_data)
+    except Exception as ex:
+        let_log(ex)
+        return f"{err_image_process_pdf_infoloaders}{ex}"
+    
     full_text = []
     attachment_count = 0
+    
     # Проход по страницам документа
     for page_num, page in enumerate(pdf, start=1):
         # Извлечение текста со страницы
@@ -201,6 +247,7 @@ def process_pdf(file_path, input_file_handlers):
         if text.strip():
             full_text.append(f"--- {page_pdf_prompt_infoloaders} {page_num} ---")
             full_text.append(text.strip())
+        
         # Извлечение изображений
         for image_index, img in enumerate(page.get_images(full=True), start=1):
             xref = img[0]  # Индекс изображения
@@ -210,50 +257,115 @@ def process_pdf(file_path, input_file_handlers):
             attachment_count += 1
             file_name = f"{attachment_prompt_infoloaders}{attachment_count}"
             try:
-                # Теперь передаем изображение как байты
+                # Передаем изображение как байты
                 result = input_file_handlers.get(extension, lambda x: unprocessable_file_infoloaders)(image_bytes, input_file_handlers)
                 full_text.append(f"[{file_name}: {result}]")
-            except Exception as ex: let_log(ex); full_text.append(f"[{file_name}: {image_processing_error_infoloaders} ({ex})]")
+            except Exception as ex:
+                let_log(ex)
+                full_text.append(f"[{file_name}: {image_processing_error_infoloaders} ({ex})]")
+    
     pdf.close()
     return "\n".join(full_text)
 
-def process_docx(file_path, input_file_handlers):
+def process_docx(file_path_or_data, input_file_handlers):
     let_log('док икс')
+    
     try:
-        # Открываем документ
-        doc = Document(file_path)
-    except Exception as e: return f"{file_open_error_infoloaders}{e}"
+        # Определяем тип входных данных
+        if isinstance(file_path_or_data, bytes):
+            # Если переданы байты, используем BytesIO
+            let_log('  Обработка DOCX из байтов (из архива)')
+            doc = Document(BytesIO(file_path_or_data))
+        else:
+            # Иначе считаем, что это путь к файлу
+            let_log(f'  Обработка DOCX из файла: {file_path_or_data}')
+            doc = Document(file_path_or_data)
+    except Exception as e:
+        return f"{file_open_error_infoloaders}{e}"
+    
     full_text = []
     attachment_count = 0
-    # Проход по всех элементов документа
+    
+    # Проход по всем элементам документа
     for paragraph in doc.paragraphs:
         # Добавляем текст из параграфа
         if paragraph.text.strip():
             full_text.append(paragraph.text.strip())
+        
         # Проверяем наличие изображений в параграфе
         for run in paragraph.runs:
-            if run.element.xpath('.//a:blip/@r:embed'):
-                attachment_count += 1
-                # Получаем ID изображения
-                embed_id = run.element.xpath('.//a:blip/@r:embed')[0]
-                # Извлекаем часть документа, соответствующую медиафайлу
-                media_part = doc.part.related_parts[embed_id]
-                # Определяем расширение файла
-                extension = os.path.splitext(media_part.partname)[-1]
-                file_name_with_ext = f"{attachment_prompt_infoloaders}{attachment_count}{extension}"
+            # Ищем встроенные изображения
+            if hasattr(run, 'element') and hasattr(run.element, 'xpath'):
                 try:
-                    # Передаём содержимое изображения в обработчик
-                    result = input_file_handlers.get(extension[1:], lambda x: unprocessable_file_infoloaders)(media_part.blob, input_file_handlers)
-                    full_text.append(f"[{file_name_with_ext}: {result}]")
-                except Exception as e: full_text.append(f"[{file_name_with_ext}: {file_processing_error_infoloaders} ({e})]")
+                    # Ищем теги blip (встроенные изображения)
+                    embed_elements = run.element.xpath('.//a:blip/@r:embed')
+                    if embed_elements:
+                        for embed_id in embed_elements:
+                            attachment_count += 1
+                            try:
+                                # Получаем часть документа, соответствующую медиафайлу
+                                if hasattr(doc.part, 'related_parts') and embed_id in doc.part.related_parts:
+                                    media_part = doc.part.related_parts[embed_id]
+                                    
+                                    # Определяем расширение файла
+                                    if hasattr(media_part, 'partname'):
+                                        extension = os.path.splitext(media_part.partname)[-1]
+                                    else:
+                                        extension = '.jpg'  # По умолчанию
+                                    
+                                    file_name_with_ext = f"{attachment_prompt_infoloaders}{attachment_count}{extension}"
+                                    
+                                    # Получаем содержимое изображения
+                                    if hasattr(media_part, 'blob'):
+                                        image_content = media_part.blob
+                                        
+                                        # Определяем расширение для обработчика
+                                        ext_for_handler = extension[1:] if extension.startswith('.') else extension
+                                        
+                                        # Проверяем, есть ли обработчик для этого расширения
+                                        if ext_for_handler in input_file_handlers:
+                                            # Передаём содержимое изображения в обработчик
+                                            result = input_file_handlers[ext_for_handler](image_content, input_file_handlers)
+                                            full_text.append(f"[{file_name_with_ext}: {result}]")
+                                        else:
+                                            full_text.append(f"[{file_name_with_ext}: {unsupported_format_infoloaders}]")
+                                    else:
+                                        full_text.append(f"[{file_name_with_ext}: Нет данных изображения]")
+                                else:
+                                    full_text.append(f"[Изображение {attachment_count}: Не найдено в документе]")
+                            except Exception as e:
+                                full_text.append(f"[Изображение {attachment_count}: {file_processing_error_infoloaders} ({e})]")
+                except Exception as e:
+                    # Игнорируем ошибки при поиске изображений
+                    let_log(f"  Ошибка при поиске изображений в DOCX: {e}")
+                    continue
+    
     return "\n".join(full_text)
 
-def process_zip(file_path_or_data, input_file_handlers):
-    let_log('ZIP-архив')
-    results = []  # Теперь возвращаем список результатов
+def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0, max_depth=5):
+    """
+    Обрабатывает ZIP-архив с рекурсивной обработкой вложенных архивов
+    
+    Args:
+        file_path_or_data: путь к файлу или байты архива
+        input_file_handlers: словарь обработчиков файлов
+        is_nested: флаг вложенного архива (для логирования)
+        depth: текущая глубина рекурсии
+        max_depth: максимальная глубина рекурсии (защита от бесконечной вложенности)
+    """
+    if depth >= max_depth:
+        let_log(f"⚠ Достигнута максимальная глубина рекурсии ({max_depth}) для архивов")
+        return [{
+            'filename': zip_archive_name_infoloaders,
+            'content': f"Достигнута максимальная глубина вложенности архивов ({max_depth})",
+            'type': 'error'
+        }]
+    
+    let_log('ZIP-архив' + (' (вложенный)' if is_nested else ''))
+    results = []
     
     try:
-        # Определяем, является ли вход данными или путём к файлу
+        # Определяем тип входных данных
         if isinstance(file_path_or_data, bytes):
             zip_file = zipfile.ZipFile(BytesIO(file_path_or_data))
         else:
@@ -265,73 +377,131 @@ def process_zip(file_path_or_data, input_file_handlers):
                 if file_info.is_dir():
                     continue
                     
+                # Получаем полный путь к файлу (включая подпапки)
+                file_path = file_info.filename
+                
                 # Получаем расширение файла
                 _, ext = os.path.splitext(file_info.filename)
                 ext = ext[1:].lower()  # Убираем точку и приводим к нижнему регистру
                 
                 # Читаем содержимое файла
-                file_content = zip_file.read(file_info)
+                try:
+                    file_content = zip_file.read(file_info)
+                except Exception as read_error:
+                    results.append({
+                        'filename': file_path,
+                        'content': f"Ошибка чтения файла из архива: {read_error}",
+                        'type': 'error'
+                    })
+                    continue
                 
-                # Обрабатываем файл соответствующим обработчиком
+                # Проверяем, является ли файл ZIP-архивом (рекурсивная обработка)
+                if ext == 'zip':
+                    let_log(f"  Обнаружен вложенный архив: {file_path}")
+                    try:
+                        # Рекурсивная обработка вложенного архива
+                        nested_results = process_zip(
+                            file_content, 
+                            input_file_handlers, 
+                            is_nested=True,
+                            depth=depth + 1,
+                            max_depth=max_depth
+                        )
+                        for nested_result in nested_results:
+                            # Добавляем путь родительского архива к имени файла
+                            nested_result['filename'] = f"{file_path}/{nested_result['filename']}"
+                            results.append(nested_result)
+                    except Exception as e:
+                        results.append({
+                            'filename': file_path,
+                            'content': f"Ошибка обработки вложенного архива: {e}",
+                            'type': 'error'
+                        })
+                    continue
+                
+                # Обрабатываем обычные файлы соответствующим обработчиком
                 if ext in input_file_handlers:
                     try:
                         result = input_file_handlers[ext](file_content, input_file_handlers)
                         results.append({
-                            'filename': file_info.filename,
+                            'filename': file_path,
                             'content': result,
                             'type': 'file'
                         })
                     except Exception as e:
                         results.append({
-                            'filename': file_info.filename,
+                            'filename': file_path,
                             'content': f"{file_processing_error_infoloaders}{e}",
                             'type': 'error'
                         })
                 else:
                     # Если формат не поддерживается, просто добавляем информацию о файле
                     results.append({
-                        'filename': file_info.filename,
+                        'filename': file_path,
                         'content': unsupported_format_infoloaders,
                         'type': 'unsupported'
                     })
                     
     except zipfile.BadZipFile:
-        return [{'filename': zip_archive_name_infoloaders, 'content': corrupted_zip_infoloaders, 'type': 'error'}]
+        error_msg = corrupted_zip_infoloaders
+        if is_nested:
+            error_msg = f"Вложенный архив поврежден: {error_msg}"
+        return [{'filename': zip_archive_name_infoloaders, 'content': error_msg, 'type': 'error'}]
     except Exception as e:
-        return [{'filename': zip_archive_name_infoloaders, 'content': f'{zip_processing_error_infoloaders}: {e}', 'type': 'error'}]
+        error_msg = f'{zip_processing_error_infoloaders}: {e}'
+        if is_nested:
+            error_msg = f"Ошибка обработки вложенного архива: {error_msg}"
+        return [{'filename': zip_archive_name_infoloaders, 'content': error_msg, 'type': 'error'}]
     
     return results
 
 def process_text(file_path_or_data, input_file_handlers):
     let_log('text')
-    if isinstance(file_path_or_data, str):
-        try:
-            with open(file_path_or_data, 'rb') as file:
-                raw_data = file.read()
-                result = chardet.detect(raw_data)
-                encoding = result['encoding'] or 'utf-8'  # Защита от None
-                return raw_data.decode(encoding, errors='replace')  # Обработка ошибок
-        except (FileNotFoundError, IOError):
-            return file_path_or_data
-    else:
-        raw_data = file_path_or_data.encode('utf-8', errors='ignore')
+    
+    try:
+        if isinstance(file_path_or_data, bytes):
+            let_log('  Обработка текста из байтов (из архива)')
+            raw_data = file_path_or_data
+        else:
+            let_log(f'  Обработка текста из файла: {file_path_or_data}')
+            try:
+                with open(file_path_or_data, 'rb') as file:
+                    raw_data = file.read()
+            except (FileNotFoundError, IOError):
+                # Если файл не найден, считаем что это сам текст
+                return file_path_or_data
+        
+        # Определяем кодировку
         result = chardet.detect(raw_data)
         encoding = result['encoding'] or 'utf-8'  # Защита от None
-        return raw_data.decode(encoding, errors='replace')  # Обработка ошибок
+        
+        # Декодируем с обработкой ошибок
+        return raw_data.decode(encoding, errors='replace')
+        
+    except Exception as e:
+        let_log(f"  Ошибка обработки текста: {e}")
+        # Пытаемся вернуть как есть
+        if isinstance(file_path_or_data, bytes):
+            return file_path_or_data.decode('utf-8', errors='ignore')
+        else:
+            return file_path_or_data
 
 def process_excel(file_path_or_data, input_file_handlers):
     """
     Обрабатывает Excel файлы (xlsx, xls) - извлекает данные из всех листов
+    Поддерживает как путь к файлу, так и байты
     """
     let_log('Excel файл')
     
     try:
-        # Определяем, является ли вход данными или путём к файлу
+        # Определяем тип входных данных
         if isinstance(file_path_or_data, bytes):
+            let_log('  Обработка Excel из байтов (из архива)')
             # Используем BytesIO для чтения из памяти
             import io
             excel_file = pd.ExcelFile(io.BytesIO(file_path_or_data))
         else:
+            let_log(f'  Обработка Excel из файла: {file_path_or_data}')
             excel_file = pd.ExcelFile(file_path_or_data)
         
         results = []
@@ -343,14 +513,13 @@ def process_excel(file_path_or_data, input_file_handlers):
                 df = excel_file.parse(sheet_name)
                 
                 # Преобразуем DataFrame в текстовое представление
-                # Убираем NaN значения и приводим к строке
                 df_text = df.fillna('').astype(str).to_string(index=False)
                 
                 results.append(f"--- {excel_cheet_text}{sheet_name} ---")
                 results.append(f"{excel_cheet_size_text}{df.shape[0]} {excel_cheet_strings_text} {df.shape[1]} {excel_cheet_columns_text}")
                 results.append(excel_cheet_data_text)
                 results.append(df_text)
-                results.append("") # Пустая строка для разделения
+                results.append("")  # Пустая строка для разделения
                 
             except Exception as e:
                 results.append(f"{excel_cheet_error_text} '{sheet_name}' {e}")
@@ -367,3 +536,16 @@ def process_excel(file_path_or_data, input_file_handlers):
         error_msg = f"{excel_error_text} {e}"
         let_log(error_msg)
         return error_msg
+
+def process_unknown(file_path_or_data, input_file_handlers):
+    """
+    Обработчик для файлов с неизвестными расширениями.
+    Пытается обработать файл как текстовый.
+    """
+    let_log('Попытка обработки неизвестного файла как текстового')
+    text = process_text(file_path_or_data, input_file_handlers)
+    if is_binary_text(text):
+        raise ValueError("Файл не является текстовым или имеет неизвестную кодировку.")
+    else:
+        let_log('Файл обработан как текстовый')
+        return text

@@ -19,4 +19,5 @@ models/checkpoints/
 _internal/
 Output/
 Milana.exe
+/Milana.spec
 /start_milana.cmd

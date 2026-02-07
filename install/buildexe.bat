@@ -128,9 +128,9 @@ pyinstaller --onedir --icon="data\icons\icon.ico" --name "Milana" ^
 --hidden-import sklearn.neighbors._quad_tree ^
 --hidden-import scipy._lib.messagestream ^
 --hidden-import ddgs ^
+--noconsole ^
 --clean ^
 --noconfirm ^
---noconsole ^
 "launcher.py"
 
 if errorlevel 1 (

@@ -19,11 +19,7 @@ import random
 import string
 from contextlib import redirect_stdout
 import io
-from customtkinter import (
-    CTkButton, CTkEntry, CTkFrame, CTkLabel, CTkScrollableFrame,
-    CTkTabview, CTkRadioButton, CTkSwitch, CTkOptionMenu, CTkTextbox,
-    CTkCheckBox, CTkToplevel, CTk
-)
+from customtkinter import CTkButton, CTkEntry, CTkFrame, CTkLabel, CTkScrollableFrame, CTkTabview, CTkRadioButton, CTkSwitch, CTkOptionMenu, CTkTextbox, CTkCheckBox, CTkToplevel, CTk
 
 initialize_work = None
 
@@ -1220,8 +1216,9 @@ class ChatApp(CTk):
         for i, attachment in enumerate(self.attachments):
             att_frame = create_styled_frame(scrollable_container)
             att_frame.pack(fill="x", pady=2, padx=2)
+            CTkButton(att_frame, text="X", width=22, height=22, fg_color=DARK_SECONDARY, hover_color=PURPLE_ACCENT, text_color=WHITE, command=lambda idx=i: self.remove_attachment(idx)).pack(side=tk.LEFT)
             create_styled_label(att_frame, text=attachment.name, font=("Georgia", 11, "bold"), anchor="w").pack(side=tk.LEFT, padx=5, expand=True, fill="x")
-            CTkButton(att_frame, text="X", width=22, height=22, fg_color=DARK_SECONDARY, hover_color=PURPLE_ACCENT, text_color=WHITE, command=lambda idx=i: self.remove_attachment(idx)).pack(side=tk.RIGHT)
+            
         def _update_height():
             try:
                 if not self.attachment_overlay_frame or not self.attachment_overlay_frame.winfo_exists(): return

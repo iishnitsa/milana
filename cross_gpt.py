@@ -1487,6 +1487,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                             # вырезаем func_text_for_parse из начала контента
                             cleaned_content = content
                             if content_l.startswith(func_text_for_parse): cleaned_content = content[len(func_text_for_parse):].strip()
+                            elif func_text_for_parse in content: cleaned_content = content.replace(func_text_for_parse, '', 1).strip()
                             function_message = {
                                 "role": "function",
                                 "name": found_key,
@@ -1824,28 +1825,48 @@ def upload_user_data(files_list):
     Обрабатывает файлы, пропуская те, для которых нет обработчика или возникла ошибка.
     Возвращает только успешно обработанные результаты.
     """
+    # Проверяем, загружены ли обработчики
+    if not input_info_loaders:
+        let_log("⚠ Обработчики файлов не загружены. Загружаем...")
+        try:
+            load_info_loaders(default_handlers_names)
+        except Exception as e:
+            let_log(f"❌ Ошибка загрузки обработчиков файлов: {e}")
+            send_output_message(text="Система обработки файлов недоступна", command='warning')
+            return []
+    
     all_results = []  # Только успешные результаты
+    processed_chunks = []  # Собираем все чанки из всех файлов
+    
     if not files_list:
         let_log("Список файлов для загрузки пуст")
         return all_results
-    # Проверяем, загружены ли обработчики
-    if not input_info_loaders:
-        let_log("⚠ Обработчики файлов не загружены. Пропускаем загрузку файлов.")
-        send_output_message(text="Система обработки файлов недоступна", command='warning')
-        return all_results
+    
     for filename in files_list:
         file_basename = os.path.basename(filename)
         let_log(f"Обработка файла: {file_basename}")
         try:
             # 1. Проверка существования файла
-            if not os.path.exists(filename): raise FileNotFoundError(f"Файл не существует: {filename}")
+            if not os.path.exists(filename):
+                raise FileNotFoundError(f"Файл не существует: {filename}")
+            
             # 2. Получение расширения
             _, file_extension = os.path.splitext(filename)
             extension = file_extension[1:].lower() if file_extension else ''
-            if not extension: raise ValueError(f"Файл не имеет расширения: {filename}")
+            if not extension:
+                raise ValueError(f"Файл не имеет расширения: {filename}")
+            
             # 3. Проверка наличия обработчика
-            if extension not in input_info_loaders: raise KeyError(f"Нет обработчика для расширения .{extension}")
-            handler = input_info_loaders[extension]
+            if extension not in input_info_loaders:
+                # Пытаемся обработать как текстовый файл
+                handler = info_loaders.process_unknown
+                let_log(f"  Для расширения .{extension} нет обработчика, попытка открыть как текст")
+            else:
+                handler = input_info_loaders[extension]
+            
+            # 4. Получаем размер файла
+            file_size = os.path.getsize(filename)
+            
             # 5. Использование кэша (если включено)
             result = read_cache()
             if result == [False]:
@@ -1856,31 +1877,26 @@ def upload_user_data(files_list):
             else:
                 let_log(f"  Используется кэшированный результат")
                 result_content = result[1]
-            # 6. Успешная обработка
+            
+            # 6. Обработка результата (разбиение на чанки и сбор для последующего сохранения)
             if file_extension[1:].lower() == 'zip' and isinstance(result_content, list):
-                # Обработка ZIP-архива
+                # Обработка ZIP-архива (включая вложенные)
                 for file_data in result_content:
                     if file_data['type'] in ['file', 'unsupported']:
                         content = file_data['content']
                         if isinstance(content, str):
                             let_log(f"  Разбиение файла из ZIP: {file_data['filename']}")
                             chunks = split_text_with_cutting(content)
-                            if not chunks:
-                                continue
-                            for t, chunk in enumerate(chunks):
-                                set_common_save_id()
-                                coll_exec(
-                                    action="add",
-                                    coll_name="user_collection",
-                                    ids=[get_common_save_id()],
-                                    embeddings=[get_embs(chunk)],
-                                    metadatas=[{
-                                        'name': f"{filename}/{file_data['filename']}",
-                                        'part': t + 1,
-                                        'source': 'zip'
-                                    }],
-                                    documents=[chunk]
-                                )
+                            if chunks:
+                                for t, chunk in enumerate(chunks):
+                                    processed_chunks.append({
+                                        'chunk': chunk,
+                                        'metadata': {
+                                            'name': f"{filename}/{file_data['filename']}",
+                                            'part': t + 1,
+                                            'source': 'zip'
+                                        }
+                                    })
             else:
                 # Обработка обычного файла
                 if isinstance(result_content, str):
@@ -1888,19 +1904,15 @@ def upload_user_data(files_list):
                     chunks = split_text_with_cutting(result_content)
                     if chunks:
                         for t, chunk in enumerate(chunks):
-                            set_common_save_id()
-                            coll_exec(
-                                action="add",
-                                coll_name="user_collection",
-                                ids=[get_common_save_id()],
-                                embeddings=[get_embs(chunk)],
-                                metadatas=[{
+                            processed_chunks.append({
+                                'chunk': chunk,
+                                'metadata': {
                                     'name': filename,
                                     'part': t + 1,
                                     'source': 'file'
-                                }],
-                                documents=[chunk]
-                            )
+                                }
+                            })
+            
             # Добавляем в список успешных
             all_results.append({
                 'filename': filename,
@@ -1909,6 +1921,7 @@ def upload_user_data(files_list):
                 'size': file_size
             })
             let_log(f"✅ Файл {file_basename} успешно обработан")
+            
         except (FileNotFoundError, ValueError, KeyError) as e:
             # Ожидаемые ошибки - пропускаем файл
             let_log(f"⏭ Пропускаем {file_basename}: {e}")
@@ -1919,7 +1932,25 @@ def upload_user_data(files_list):
             let_log(f"⏭ Пропускаем {file_basename} из-за ошибки: {error_msg}")
             let_log(f"  Детали: {str(e)[:200]}")
             send_output_message(text=f"Ошибка при обработке {file_basename}", command='warning')
-    # Аннотация только успешно обработанных файлов
+    
+    # 7. Сохраняем ВСЕ чанки из ВСЕХ успешно обработанных файлов в базу
+    if processed_chunks:
+        let_log(f"Сохраняем {len(processed_chunks)} чанков в базу...")
+        for chunk_info in processed_chunks:
+            set_common_save_id()
+            coll_exec(
+                action="add",
+                coll_name="user_collection",
+                ids=[get_common_save_id()],
+                embeddings=[get_embs(chunk_info['chunk'])],
+                metadatas=[chunk_info['metadata']],
+                documents=[chunk_info['chunk']]
+            )
+        let_log(f"✅ Все чанки сохранены в базу")
+    else:
+        let_log("⚠ Нет чанков для сохранения в базу")
+    
+    # 8. Аннотация только успешно обработанных файлов
     if all_results:
         try:
             annotation_text = ""
@@ -1930,6 +1961,7 @@ def upload_user_data(files_list):
                     for file_data in result['content']:
                         if isinstance(file_data.get('content'), str):
                             annotation_text += f"\n\n--- {os.path.basename(result['filename'])}/{file_data['filename']} ---\n{file_data['content'][:5000]}"
+            
             if annotation_text.strip():
                 try:
                     global_state.summ_attach = annotation_available_prompt + ask_model(
@@ -1942,18 +1974,24 @@ def upload_user_data(files_list):
                             text_cutter(annotation_text), 
                             system_prompt=summarize_text_some_phrases
                         )
-                    except: global_state.summ_attach = annotation_failed_text
-            else: global_state.summ_attach = annotation_failed_text
+                    except:
+                        global_state.summ_attach = annotation_failed_text
+            else:
+                global_state.summ_attach = annotation_failed_text
         except Exception as e:
             let_log(f"Ошибка при создании аннотации: {e}")
             global_state.summ_attach = annotation_failed_text
     else:
         let_log("Нет успешно обработанных файлов для аннотации")
         global_state.summ_attach = annotation_failed_text
-    # Очистка ресурсов
+    
+    # 9. Очистка ресурсов - выгружаем модель обработки изображений из ОЗУ
     try:
-        if hasattr(info_loaders, 'cleanup_image_models'): info_loaders.cleanup_image_models()
-    except Exception as e: let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
+        if hasattr(info_loaders, 'cleanup_image_models'):
+            info_loaders.cleanup_image_models()
+    except Exception as e:
+        let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
+    
     return all_results
 
 def set_common_save_id(): global_state.common_save_id += 1
@@ -2736,7 +2774,6 @@ def get_user_feedback_and_update_task(current_task, dialog_result):
     if not updated_task: raise # TODO: доделай тут или общение с пользователем или просто сообщение что текста нет
     if user_message['attachments']:
         send_output_message(text=start_load_attachments_text)
-        if not input_info_loaders: load_info_loaders(default_handlers_names)
         upload_user_data(user_message['attachments'])
         send_output_message(text=end_load_attachments_text)
     return updated_task
