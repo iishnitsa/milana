@@ -993,96 +993,111 @@ def system_tools_loader():
     )
 
 @cacher
-def get_embs(text: str): # TODO: протестировать
+def get_embs(text: str):  # TODO: протестировать
     # 1) кеширование
     send_log_to_ui('embeddings:\n' + text)
     start = time.time()
-    # [ИСПРАВЛЕНИЕ 1 - БЕЗОПАСНОСТЬ] Добавляем ограничение на количество попыток
-    # убери цикл вообще, оставь 2 попытки или одну, хз, а может просто так оставить
-    max_attempts_emb = 4
-    current_attempt = 0
-    # 2) начинаем с одного куска — весь текст
-    pieces = [text]
-    while True:
-        current_attempt += 1 # Увеличиваем счетчик
-        if current_attempt > max_attempts_emb:
-            let_log(f'Превышено максимальное количество попыток ({max_attempts_emb}) дробления текста для эмбеддингов. Возврат пустого списка.')
-            return []
-        try:
-            # 3) ПРЕДВАРИТЕЛЬНАЯ ПРОВЕРКА ПЕРЕПОЛНЕНИЯ
-            for i, p in enumerate(pieces):
-                estimated_tokens = len(p) * text_tokens_coefficient
-                if estimated_tokens > emb_token_limit: raise RuntimeError('ContextOverflowError')
-            pieces = [piece for piece in pieces if piece.strip()]
-            if not pieces:
-                let_log("Текст состоит из пробелов, возврат пустого эмбеддинга.")
-                all_embs = []
-                break
-            # 4) если проверка пройдена - получаем эмбеддинги
-            all_embs_raw = []
-            for p in pieces:
-                try: answer = get_provider_embs(p)
+    
+    # Удаляем начальные/конечные пробелы
+    text = text.strip()
+    if not text:
+        let_log("Текст пустой, возврат пустого эмбеддинга.")
+        return []
+    
+    # 2) начальное деление на части с учётом лимита
+    pieces = []
+    estimated_tokens = len(text) * text_tokens_coefficient
+    
+    if estimated_tokens <= emb_token_limit:
+        pieces = [text]
+    else:
+        # Сразу делим на нужное количество частей (с запасом 10%)
+        needed_parts = max(2, int(estimated_tokens / emb_token_limit * 1.10) + 1)
+        let_log(f'Исходное разделение текста на {needed_parts} частей')
+        text_len = len(text)
+        part_len = text_len // needed_parts
+        for i in range(needed_parts):
+            start_idx = i * part_len
+            end_idx = (i + 1) * part_len if i < needed_parts - 1 else text_len
+            pieces.append(text[start_idx:end_idx])
+    
+    # 3) обработка каждой части
+    processed_pieces = []
+    processed_embs = []
+    
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+            
+        current_piece = piece
+        while True:
+            try:
+                # Проверяем не превышает ли текущий кусок лимит
+                piece_tokens = len(current_piece) * text_tokens_coefficient
+                if piece_tokens > emb_token_limit:
+                    # Делим пополам при переполнении
+                    half_len = len(current_piece) // 2
+                    if half_len == 0:
+                        let_log("Не удалось разделить текст дальше, часть пропущена")
+                        break
+                    
+                    let_log(f'Разделение части пополам: {len(current_piece)} символов')
+                    pieces.append(current_piece[half_len:])
+                    current_piece = current_piece[:half_len]
+                    continue
+                
+                # Получаем эмбеддинг для текущей части
+                try:
+                    embs = get_provider_embs(current_piece)
                 except Exception as e:
-                    if 'ContextOverflowError' in str(e): raise
+                    if 'ContextOverflowError' in str(e):
+                        raise RuntimeError('ContextOverflowError')
                     let_log(e)
                     send_ui_no_cache(f'{error_in_provider}\n{e}')
+                    
+                    # Повтор при ошибке провайдера (не переполнение)
                     while True:
                         time.sleep(60)
                         try:
-                            answer = get_provider_embs(p)
+                            embs = get_provider_embs(current_piece)
                             send_ui_no_cache(success_in_provider)
                             break
-                        except Exception as e:
-                            if 'ContextOverflowError' in str(e): raise
-                all_embs_raw.append(answer)
-            # [ИСПРАВЛЕНИЕ 2 - РАЗМЕРНОСТЬ] Разворачиваем (flatten) результат на один уровень.
-            # Превращаем [[emb1], [emb2]] в [emb1, emb2]
-            all_embs = [emb for sublist in all_embs_raw for emb in sublist]
-            break # Успешный выход из цикла
-        except RuntimeError as e:
-            # [СТРОГАЯ ОБРАБОТКА ОШИБОК 1] Продолжаем цикл только при ContextOverflowError
-            if 'ContextOverflowError' not in str(e): raise # Немедленно поднимаем любую другую RuntimeError, не связанную с переполнением
-            let_log('интеллектуальное дробление для эмбеддингов')
-            # 5) ИНТЕЛЛЕКТУАЛЬНОЕ ДЕЛЕНИЕ С ВЫЧИСЛЕНИЕМ КОЛИЧЕСТВА ЧАСТЕЙ
-            new_pieces = []
-            need_retry = False 
-            for p in pieces:
-                estimated_tokens = len(p) * text_tokens_coefficient
-                if estimated_tokens <= emb_token_limit: new_pieces.append(p)
-                else:
-                    # Вычисляем на сколько частей нужно разделить (с запасом 10%)
-                    # [ИСПРАВЛЕНИЕ - ДЕЛЕНИЕ] Делим не на 2, а на нужное количество
-                    needed_parts = max(2, int(estimated_tokens / emb_token_limit * 1.10) + 1)
-                    let_log(f'Разделение текста на {needed_parts} частей')
-                    p_len = len(p)
-                    part_len = p_len // needed_parts
-                    for i in range(needed_parts):
-                        start_idx = i * part_len
-                        end_idx = (i + 1) * part_len if i < needed_parts - 1 else p_len
-                        new_pieces.append(p[start_idx:end_idx])
-                    need_retry = True
-            # Защита от бесконечного цикла
-            if not need_retry and current_attempt > 1:
-                let_log("Логика деления не смогла уменьшить части. Выход.")
-                return []
-            pieces = new_pieces
-            let_log(f'Разделено на {len(pieces)} частей')
-        except Exception as e:
-            # [СТРОГАЯ ОБРАБОТКА ОШИБОК 2] Любая другая критическая ошибка
-            traceprint()
-            let_log(f'Критическая ошибка (не ContextOverflowError) при получении эмбеддингов: {e}')
-            raise # Немедленно поднимает
+                        except Exception as retry_e:
+                            if 'ContextOverflowError' in str(retry_e):
+                                raise RuntimeError('ContextOverflowError')
+                
+                processed_pieces.append(current_piece)
+                processed_embs.extend(embs)  # Разворачиваем вложенные списки
+                break
+                
+            except RuntimeError as e:
+                if 'ContextOverflowError' not in str(e):
+                    raise
+                
+                # Делим проблемную часть пополам
+                half_len = len(current_piece) // 2
+                if half_len == 0:
+                    let_log("Не удалось разделить текст дальше, часть пропущена")
+                    break
+                
+                let_log(f'Разделение проблемной части пополам: {len(current_piece)} символов')
+                pieces.append(current_piece[half_len:])
+                current_piece = current_piece[:half_len]
+    
+    # 4) усреднение эмбеддингов
+    if not processed_embs:
+        flat_embs = []
+    elif len(processed_embs) == 1:
+        flat_embs = processed_embs[0]
+    else:
+        let_log(f'Усреднение {len(processed_embs)} эмбеддингов')
+        embs_array = np.array(processed_embs)
+        flat_embs = np.mean(embs_array, axis=0).tolist()
+    
     elapsed = time.time() - start
     let_log(f'Получение эмбеддингов выполнено за {elapsed:.2f} секунд')
-    # 6) УСРЕДНЯЕМ эмбеддинги
-    if not all_embs: flat_embs = []
-    elif len(all_embs) == 1: flat_embs = all_embs[0]
-    else:
-        let_log(f'Усреднение {len(all_embs)} эмбеддингов')
-        # Работает корректно, так как all_embs теперь 2D: [emb1, emb2, ...]
-        embs_array = np.array(all_embs)
-        flat_embs = np.mean(embs_array, axis=0).tolist()
-    # 7) сохраняем в кеш
+    
     return flat_embs
 
 def get_token_limit(): return token_limit

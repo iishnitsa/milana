@@ -14,7 +14,7 @@ from urllib.parse import quote_plus, urlparse, urljoin
 from ddgs import DDGS
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from cross_gpt import let_log, text_cutter, cacher
+from cross_gpt import let_log, cacher
 
 # Улучшенные заголовки для имитации реального браузера
 HEADERS = {
@@ -41,6 +41,54 @@ USER_AGENTS = [
 
 LINKS_PER_ENGINE = 10
 
+def is_reasonable_text(text, min_ratio=0.3):
+    """
+    Проверяет, выглядит ли текст разумным (не кракозябры).
+    Возвращает True, если текст содержит достаточно "нормальных" символов.
+    """
+    if not text or len(text) < 10: return False
+    total_chars = len(text)
+    letters = sum(1 for c in text if c.isalpha())
+    spaces = text.count(' ')
+    punctuation = sum(1 for c in text if c in '.,!?;:-()[]{}"\'' and c.isprintable())
+    replacement_chars = text.count('�')
+    control_chars = sum(1 for c in text if ord(c) < 32 and c not in '\n\r\t')
+    good_chars = letters + spaces + punctuation
+    good_ratio = good_chars / total_chars if total_chars > 0 else 0
+    bad_chars = replacement_chars + control_chars
+    bad_ratio = bad_chars / total_chars if total_chars > 0 else 1
+    return (good_ratio >= min_ratio and 
+            bad_ratio < 0.1 and 
+            letters > 10 and 
+            letters > total_chars * 0.1)
+
+def decode_with_fallback(content):
+    """Пробует разные стратегии декодирования сложного контента"""
+    strategies = [
+        lambda: content.decode('utf-8', errors='strict'),
+        lambda: content.decode('utf-8-sig', errors='strict'),
+        lambda: content.decode('windows-1251', errors='strict'),
+        lambda: content.decode('cp1251', errors='strict'),
+        lambda: content.decode('koi8-r', errors='strict'),
+        lambda: content.decode('iso-8859-1', errors='strict'),
+        lambda: content.decode('cp1252', errors='strict'),
+    ]
+    for strategy in strategies:
+        try:
+            result = strategy()
+            if is_reasonable_text(result[:2000]): return result
+        except: continue
+    return content.decode('utf-8', errors='replace')
+
+def decode_by_content_heuristic(content):
+    """Эвристическое определение кодировки по содержимому"""
+    cyrillic_bytes = sum(1 for b in content[:1000] if 0xC0 <= b <= 0xFF or 0x80 <= b <= 0xBF)
+    if cyrillic_bytes > 100:
+        for enc in ['windows-1251', 'cp1251', 'koi8-r', 'koi8-u']:
+            try: return content.decode(enc, errors='strict')
+            except: continue
+    return content.decode('utf-8', errors='replace')
+
 def requests_retry_session(
     retries=3,
     backoff_factor=0.5,
@@ -62,7 +110,6 @@ def requests_retry_session(
     session.mount('https://', adapter)
     return session
 
-@cacher
 def fetch_links_ddg(query, max_results=10):
     results = []
     try:
@@ -70,66 +117,147 @@ def fetch_links_ddg(query, max_results=10):
             for r in ddgs.text(query, max_results=max_results):
                 results.append(r['href'])
                 if len(results) >= max_results: break
-    except Exception as e: let_log(f'[fetch_links] DDGS error: {str(e)}')
+    except Exception as e: pass
     return results if results else []
 
-@cacher
 def get_page_text(url):
     try:
-        # Random delay before request
         time.sleep(random.uniform(1, 3))
-        # Create session with retry logic
         session = requests_retry_session(retries=2, status_forcelist=(403, 500, 502, 504))
-        # Random User-Agent selection
         headers = HEADERS.copy()
         headers['User-Agent'] = random.choice(USER_AGENTS)
-        # UNIVERSAL REFERER LOGIC
         try:
             parsed_url = urlparse(url)
-            # Set Referer as the site's base URL
             headers['Referer'] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
         except Exception as e:
             let_log(f'[get_page_text] Error parsing URL {url}: {str(e)}')
-            # Fallback to Google if URL parsing fails
             headers['Referer'] = 'https://www.google.com/'
-        # Make request with increased timeout
-        r = session.get(
-            url,
-            headers=headers,
-            timeout=(10, 30)  # (connect timeout, read timeout)
-        )
+        r = session.get(url, headers=headers, timeout=(10, 30), stream=True)
+        raw_content = r.content
+        encoding = None
+        detection_method = "unknown"
+        content_type = r.headers.get('Content-Type', '').lower()
+        if 'charset=' in content_type:
+            try:
+                encoding = content_type.split('charset=')[-1].split(';')[0].strip().strip('"\'').lower()
+                encoding = encoding.replace('_', '-').replace(' ', '-')
+                detection_method = "HTTP header"
+            except Exception as e: pass
+        if not encoding:
+            try:
+                sample_size = min(len(raw_content), 10240)
+                sample = raw_content[:sample_size].decode('ascii', errors='ignore')
+                charset_patterns = [
+                    r'<meta[^>]*charset=["\']?([^"\'>]+)["\']?',
+                    r'<meta[^>]*content=["\'][^"\']*charset=([^"\';\s]+)',
+                    r'xml:encoding=["\']?([^"\'>]+)["\']?'
+                ]
+                for pattern in charset_patterns:
+                    matches = re.findall(pattern, sample, re.IGNORECASE)
+                    if matches:
+                        encoding = matches[0].strip().lower()
+                        encoding = encoding.replace('_', '-').replace(' ', '-')
+                        detection_method = "HTML meta tag"
+                        break
+            except Exception as e: pass
+        if not encoding:
+            try:
+                encoding = r.apparent_encoding
+                if encoding: detection_method = "requests.apparent_encoding"
+            except Exception as e: pass
+        if not encoding and len(raw_content) >= 4:
+            bom_dict = {
+                b'\xef\xbb\xbf': 'utf-8',
+                b'\xff\xfe': 'utf-16-le',
+                b'\xfe\xff': 'utf-16-be',
+                b'\xff\xfe\x00\x00': 'utf-32-le',
+                b'\x00\x00\xfe\xff': 'utf-32-be',
+            }
+            for bom, bom_encoding in bom_dict.items():
+                if raw_content.startswith(bom):
+                    encoding = bom_encoding
+                    detection_method = "BOM detection"
+                    break
+        validated_encoding = None
+        decoded_content = None
+        common_encodings = [
+            'utf-8', 'utf-8-sig',
+            'windows-1251', 'cp1251',
+            'koi8-r', 'koi8-u',
+            'iso-8859-1', 'latin-1',
+            'cp1252', 'windows-1252',
+            'utf-16', 'utf-16-le', 'utf-16-be',
+            'ascii'
+        ]
+        if encoding:
+            encoding_lower = encoding.lower().replace('_', '-').replace(' ', '-')
+            try:
+                import codecs
+                codecs.lookup(encoding_lower)
+                try:
+                    decoded_content = raw_content.decode(encoding_lower, errors='strict')
+                    if is_reasonable_text(decoded_content[:1000]): validated_encoding = encoding_lower
+                    else: decoded_content = None
+                except UnicodeDecodeError:
+                    decoded_content = raw_content.decode(encoding_lower, errors='replace')
+                    if is_reasonable_text(decoded_content[:1000]): validated_encoding = encoding_lower
+                    else: decoded_content = None
+            except (LookupError, ValueError) as e: pass
+        if not validated_encoding:
+            for enc in common_encodings:
+                try:
+                    decoded_content = raw_content.decode(enc, errors='strict')
+                    if is_reasonable_text(decoded_content[:1000]):
+                        validated_encoding = enc
+                        detection_method = f"common encoding fallback: {enc}"
+                        break
+                except UnicodeDecodeError:
+                    try:
+                        decoded_content = raw_content.decode(enc, errors='replace')
+                        if is_reasonable_text(decoded_content[:1000]):
+                            replacement_count = decoded_content[:1000].count('�')
+                            if replacement_count < 50:
+                                validated_encoding = enc
+                                detection_method = f"common encoding fallback (replace): {enc}"
+                                break
+                    except Exception:
+                        continue
+        
+        if not validated_encoding:
+            import codecs
+            all_encodings = [enc for enc in codecs.lookup_errors('strict')._codecs_dict.keys()]
+            for enc in all_encodings:
+                try:
+                    if enc not in common_encodings:
+                        decoded_content = raw_content.decode(enc, errors='strict')
+                        if is_reasonable_text(decoded_content[:1000]):
+                            validated_encoding = enc
+                            detection_method = f"brute force: {enc}"
+                            break
+                except: continue
+        if not validated_encoding:
+            validated_encoding = 'utf-8'
+            detection_method = "default utf-8 with replace"
+            decoded_content = raw_content.decode(validated_encoding, errors='replace')
+        if decoded_content:
+            replacement_chars = decoded_content.count('�')
+            total_chars = len(decoded_content)
+            if total_chars > 0:
+                replacement_ratio = replacement_chars / total_chars
+                if replacement_ratio > 0.3: return ''
+        soup = BeautifulSoup(decoded_content, 'html.parser')
         # Special handling for 403
         if r.status_code == 403:
-            let_log(f'[get_page_text] Access forbidden (403) for {url}. Trying alternative approach...')
-            # Try another User-Agent
             headers['User-Agent'] = random.choice(USER_AGENTS)
             r = session.get(url, headers=headers, timeout=(10, 30))
-            let_log(f'[get_page_text] Retry request, status: {r.status_code}')
-        if not r.ok:
-            let_log(f'[get_page_text] HTTP error: {r.status_code}')
-            return ''
+        if not r.ok: return ''
         content_type = r.headers.get('Content-Type', '').lower()
-        if 'text/html' not in content_type:
-            let_log(f'[get_page_text] Unsupported content type: {content_type}')
-            return ''
-        
+        if 'text/html' not in content_type: return ''
         # Пункт 3: Установите правильную кодировку
-        try:
-            # Автоопределение кодировки
-            r.encoding = r.apparent_encoding
-            let_log(f'[get_page_text] Detected encoding for {url}: {r.encoding}')
-        except Exception as e:
-            let_log(f'[get_page_text] Error detecting encoding for {url}: {str(e)}')
-            # Fallback к UTF-8 если не удалось определить
-            r.encoding = 'utf-8'
-        
-        soup = BeautifulSoup(r.text, 'html.parser')
-        # Remove script and style elements
+        try: r.encoding = validated_encoding if validated_encoding else 'utf-8'
+        except Exception as e: r.encoding = 'utf-8'
         for script in soup(["script", "style", "noscript"]): script.decompose()
-        # Additional cleanup
         for element in soup(["nav", "footer", "header", "aside", "form"]): element.decompose()
-        
-        # Пункт 2: Улучшенный поиск основного контента
         selectors = [
             'main', 'article', 
             '[role="main"]', 
@@ -140,66 +268,33 @@ def get_page_text(url):
             '.story', '.story-content',
             '#article', '.article'
         ]
-        
         main_content = None
         for selector in selectors:
             try:
                 found = soup.select_one(selector)
-                if found and len(found.get_text(strip=True)) > 100:  # Проверяем, что есть достаточный текст
+                if found and len(found.get_text(strip=True)) > 100:
                     main_content = found
-                    let_log(f'[get_page_text] Found content with selector: {selector}')
                     break
-            except Exception as e:
-                continue  # Пропускаем некорректные селекторы
-        
-        if main_content: 
-            text = main_content.get_text(" ", strip=True)
+            except Exception as e: continue
+        if main_content: text = main_content.get_text(" ", strip=True)
         else: 
-            # Если не нашли по селекторам, попробуем эвристический подход
-            # Ищем элемент с наибольшим количеством текста
             all_elements = soup.find_all(['div', 'section'])
             best_element = None
             max_text_length = 0
-            
             for element in all_elements:
                 element_text = element.get_text(strip=True)
                 if len(element_text) > max_text_length and len(element_text) > 200:
                     max_text_length = len(element_text)
                     best_element = element
-            
-            if best_element:
-                text = best_element.get_text(" ", strip=True)
-                let_log(f'[get_page_text] Using heuristic approach, found element with {max_text_length} chars')
-            else:
-                text = soup.get_text(" ", strip=True)
-                let_log(f'[get_page_text] Using full page text')
-        
-        # Remove extra spaces and line breaks
+            if best_element: text = best_element.get_text(" ", strip=True)
+            else: text = soup.get_text(" ", strip=True)
         text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Пункт 1: Добавьте проверку длины текста
-        if len(text) < 100:  # Минимальная длина текста увеличена до 100 символов
-            let_log(f'[get_page_text] Text too short ({len(text)} chars), returning empty')
-            return ''
-            
-        # Дополнительная проверка на качество контента
-        # Проверяем соотношение полезного текста к общему количеству символов
+        if len(text) < 100: return ''
         words = text.split()
-        if len(words) < 20:  # Меньше 20 слов - вероятно, не статья
-            let_log(f'[get_page_text] Too few words ({len(words)}), returning empty')
-            return ''
-        
-        # Проверка на наличие "мусорного" контента (например, только навигация)
-        if any(bad_text in text.lower() for bad_text in ['404', 'not found', 'page not found', 'access denied']):
-            let_log(f'[get_page_text] Bad content detected, returning empty')
-            return ''
-            
-        let_log(f'[get_page_text] Successfully extracted {len(text)} chars from {url}')
+        if len(words) < 20: return ''
+        if any(bad_text in text.lower() for bad_text in ['404', 'not found', 'page not found', 'access denied']): return ''
         return text
-        
-    except Exception as e:
-        let_log(f'[get_page_text] Error processing page {url}: {str(e)}')
-        return ''
+    except Exception as e: return ''
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -214,29 +309,65 @@ def main(text):
         main.results_prefix = 'Here\'s what I found\n'
         main.search_error_msg = 'Search error: '
         main.no_results_msg = 'No results found. Try refining your query or using different keywords.'
+        @cacher
+        def pages_handler(text):
+            # Константы
+            TARGET_SUCCESSFUL_SITES = 10
+            MAX_ADDITIONAL_REQUESTS = 5  # Максимальное количество дополнительных запросов к поисковику
+            MAX_TOTAL_LINKS = 30  # Максимальное общее количество ссылок для обработки
+            all_links = []
+            successful_texts = []  # Список успешных текстов [(url, text), ...]
+            processed_links = set()  # Множество обработанных ссылок
+            additional_requests_made = 0  # Счетчик дополнительных запросов
+            # Функция для получения дополнительных ссылок
+            def get_more_links(count):
+                nonlocal additional_requests_made
+                if additional_requests_made >= MAX_ADDITIONAL_REQUESTS: return []
+                try:
+                    additional_requests_made += 1
+                    # Запрашиваем на count больше, так как некоторые могут не сработать
+                    new_links = fetch_links_ddg(text, max_results=count + 2)
+                    # Исключаем уже обработанные ссылки
+                    fresh_links = [link for link in new_links if link not in processed_links]
+                    return fresh_links
+                except: return []
+            # Получаем первоначальные ссылки
+            try:
+                initial_links = fetch_links_ddg(text, LINKS_PER_ENGINE)
+                all_links.extend(initial_links)
+            except Exception as e: let_log(f'{main.search_error_msg}{str(e)}'); return f'{main.search_error_msg}{str(e)}'
+            if not all_links: return main.no_results_msg
+            # Основной цикл обработки ссылок
+            link_index = 0
+            while len(successful_texts) < TARGET_SUCCESSFUL_SITES and link_index < len(all_links):
+                # Проверяем, не превысили ли максимальное количество ссылок
+                if len(processed_links) >= MAX_TOTAL_LINKS:
+                    let_log(f'[main] Достигнут максимальный лимит ссылок ({MAX_TOTAL_LINKS})')
+                    break
+                link = all_links[link_index]
+                # Пропускаем уже обработанные ссылки (на всякий случай)
+                if link in processed_links:
+                    link_index += 1
+                    continue
+                page_text = get_page_text(link)
+                processed_links.add(link)
+                if page_text: successful_texts.append((link, page_text))
+                else:
+                    # Если текст не получен, запрашиваем дополнительную ссылку
+                    if len(successful_texts) < TARGET_SUCCESSFUL_SITES:
+                        additional_links = get_more_links(1)
+                        if additional_links: all_links.extend(additional_links)
+                link_index += 1
+                # Пауза между запросами (кроме последнего)
+                if link_index < len(all_links) and link_index < MAX_TOTAL_LINKS:
+                    sleep_time = random.uniform(2, 4)
+                    time.sleep(sleep_time)
+            # Формируем итоговый текст
+            if not successful_texts: return main.search_failed
+            collected_text = ""
+            for link, text in successful_texts[:TARGET_SUCCESSFUL_SITES]: collected_text += f"=== {link} ===\n{text}\n\n"
+            let_log(f'Обработано ссылок: {len(processed_links)}, всего получено ссылок: {len(all_links)}')
+            return main.results_prefix + text_cutter(collected_text)
         return
-        
     let_log('WEB SEARCH CALLED')
-    all_links = []
-    
-    try:
-        links = fetch_links_ddg(text, LINKS_PER_ENGINE)
-        all_links.extend(links)
-    except Exception as e: return f'{main.search_error_msg}{str(e)}'
-
-    # Remove duplicates while preserving order
-    unique_links = list(dict.fromkeys(all_links))
-    # If no links found
-    if not unique_links: return main.no_results_msg
-
-    # Process all found links (no page limit)
-    collected_text = ""
-    for i, link in enumerate(unique_links):
-        page_text = get_page_text(link)
-        if page_text: collected_text += f"=== Source: {link} ===\n{page_text}\n\n"
-        # Add random delay between pages
-        if i < len(unique_links) - 1:
-            time.sleep(random.uniform(2, 4))
-
-    if not collected_text.strip(): return main.search_failed
-    return main.results_prefix + text_cutter(collected_text)
+    return pages_handler(text)
