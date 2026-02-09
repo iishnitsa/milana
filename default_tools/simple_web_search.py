@@ -367,7 +367,7 @@ def main(text):
             collected_text = ""
             for link, text in successful_texts[:TARGET_SUCCESSFUL_SITES]: collected_text += f"=== {link} ===\n{text}\n\n"
             let_log(f'Обработано ссылок: {len(processed_links)}, всего получено ссылок: {len(all_links)}')
-            return main.results_prefix + text_cutter(collected_text)
+            return collected_text
         return
     let_log('WEB SEARCH CALLED')
-    return pages_handler(text)
+    return main.results_prefix + text_cutter(pages_handler(text))
