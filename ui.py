@@ -133,10 +133,6 @@ def create_chat_message_bubble(parent, text, is_my, attachments=None, is_questio
     # Основной пузырь с рамкой
     bubble = create_styled_frame(row_frame, border_width=2, border_color=PURPLE_ACCENT if is_my else WHITE, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
     bubble.pack(expand=False, anchor="center")
-    # Если это вопрос, добавляем значок вопроса
-    if is_question and not is_my: 
-        question_label = CTkLabel(bubble, text="❓", font=("Georgia", 16), fg_color="transparent", text_color=WHITE)
-        question_label.pack(side=tk.LEFT, padx=(6, 0), pady=6)
     # Текст сообщения (wraplength будет установлен динамически)
     msg_text_widget = CTkLabel(
         bubble, 
@@ -170,7 +166,6 @@ def setup_message_wraplength(widget, messages_frame):
     def update_wraplength(event=None):
         try:
             if widget.winfo_exists():
-                # Используем 85% ширины родителя, а не фиксированный отступ
                 available_width = messages_frame.winfo_width() * 0.905
                 if available_width > 50: widget.configure(wraplength=available_width)
         except Exception: pass

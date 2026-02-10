@@ -114,7 +114,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = False
+use_user = True # TODO:
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
@@ -324,6 +324,7 @@ def read_cache():
         except Exception as pickle_error: raise
         let_log(f"[CACHE READ] id={cache_counter}")
         cache_counter += 1
+        let_log(deserialized_value)
         return [True, deserialized_value]
     except OperationalError as e:
         error_msg = str(e).lower()
@@ -2685,9 +2686,9 @@ def tools_selector(text, sid):
     # 9) выполнить функцию
     let_log("[TOOLS_SELECTOR] Выполняем функцию...")
     if found_key == start_dialog_command_name: global_state.task_delegated = True
-    #try: result = func_callable(content)
-    #except Exception as e: result = "__TOOL_ERROR__: " + str(e)
-    result = func_callable(content) # TODO:
+    try: result = func_callable(content)
+    except Exception as e: result = "__TOOL_ERROR__: " + str(e)
+    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
     let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
     # 10) кэшировать результат если не системная команда
     try:
@@ -2979,100 +2980,60 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
     # === Загружаем пользовательские модули ===
     let_log(f"\n=== ЗАГРУЗКА ПОЛЬЗОВАТЕЛЬСКИХ МОДУЛЕЙ ===")
-    let_log(f"Всего файлов для загрузки: {len(another_tools_files_addresses)}")
-    # 1. Объединенный поиск web_search и ask_user в одном цикле
-    web_search_module = None
-    ask_user_module = None
-    other_modules_files = []
+
+    # Разделяем файлы на специальные и обычные
+    special_files = {
+        'web_search': None,
+        'ask_user': None
+    }
+    other_files = []
+
     for file_path in another_tools_files_addresses:
         file_name = os.path.basename(file_path).lower()
         let_log(f"Проверка файла: {file_name}")
-        # Ищем веб-поиск (файл должен заканчиваться на web_search.py)
+        
+        # Определяем тип файла
         if file_name.endswith('web_search.py'):
             let_log(f"✓ Найден файл веб-поиска: {file_path}")
-            try:
-                # Загружаем модуль веб-поиска отдельно
-                module_name = os.path.splitext(file_name)[0]
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if hasattr(module, 'main'):
-                    # Создаем обертку с именем web_search
-                    def web_search_wrapper(arg, func=module.main): return func(arg)
-                    web_search_module = (module, web_search_wrapper, file_path)
-                    let_log(f"  Модуль веб-поиска загружен: {module_name}")
-                else: let_log(f"  ⚠ Файл веб-поиска не содержит функцию main")
-            except Exception as e: let_log(f"  ⚠ Ошибка загрузки веб-поиска: {e}")
+            special_files['web_search'] = file_path
         elif file_name == 'ask_user.py':
             let_log(f"✓ Найден файл ask_user: {file_path}")
-            try:
-                module_name = os.path.splitext(file_name)[0]
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if hasattr(module, 'main'):
-                    ask_user_module = (module, module.main, file_path)
-                    let_log(f"  Модуль ask_user загружен: {module_name}")
-                else: let_log(f"  ⚠ Файл ask_user не содержит функцию main")
-            except Exception as e: let_log(f"  ⚠ Ошибка загрузки ask_user: {e}")
-        else: other_modules_files.append(file_path)
-    # 2. Загружаем остальные модули через mod_loader
-    loaded_tools = []
-    if other_modules_files:
-        let_log(f"\nЗагрузка остальных модулей ({len(other_modules_files)} файлов)")
-        loaded_tools = mod_loader(other_modules_files)
-    if web_search_module:
-        module, web_search_wrapper, file_path = web_search_module
-        # Загружаем локализацию для веб-поиска
-        current_lang = globals().get('language', 'en')
-        locale_data = load_locale(file_path, current_lang)
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
-                if match:
-                    command_name = match.group(1).strip()
-                    description = match.group(2).strip()
-                    # Применяем локализацию, если она есть
-                    if locale_data and 'module_doc' in locale_data:
-                        if len(locale_data['module_doc']) >= 2:
-                            command_name = locale_data['module_doc'][0] or command_name
-                            description = locale_data['module_doc'][1] or description
-                    # Добавляем в loaded_tools
-                    loaded_tools.append((command_name, description, module.main))
-                    let_log(f"  Веб-поиск добавлен в список инструментов: {command_name}")
-                    globals()['web_search'] = web_search_wrapper
-                    let_log(f"✅ Функция web_search глобализована")
-                else: let_log(f"  ⚠ Не удалось извлечь command_name из файла веб-поиска")
-        except Exception as e: let_log(f"  ⚠ Ошибка обработки файла веб-поиска: {e}")
-    else: let_log(f"⚠ Файл веб-поиска не найден в списке")
-    if ask_user_module:
-        module, ask_user_func, file_path = ask_user_module
-        # Загружаем локализацию для ask_user
-        current_lang = globals().get('language', 'en')
-        locale_data = load_locale(file_path, current_lang)
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
-                if match:
-                    command_name = match.group(1).strip()
-                    description = match.group(2).strip()
-                    # Применяем локализацию, если она есть
-                    if locale_data and 'module_doc' in locale_data:
-                        if len(locale_data['module_doc']) >= 2:
-                            command_name = locale_data['module_doc'][0] or command_name
-                            description = locale_data['module_doc'][1] or description
-                    # Добавляем в loaded_tools
-                    loaded_tools.append((command_name, description, ask_user_func))
-                    let_log(f"  Ask_user добавлен в список инструментов: {command_name}")
-                    # Глобализуем ask_user
-                    globals()['ask_user'] = ask_user_func
-                    let_log(f"✅ Функция ask_user глобализована")
-                else: let_log(f" ⚠ Не удалось извлечь command_name из файла ask_user")
-        except Exception as e: let_log(f" ⚠ Ошибка обработки файла ask_user: {e}")
-    # 4. Настраиваем global_state
+            special_files['ask_user'] = file_path
+        else:
+            other_files.append(file_path)
+
+    # Сначала загружаем обычные модули
+    if other_files:
+        let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
+        loaded_tools = mod_loader(other_files)
+    else:
+        loaded_tools = []
+
+    # Загружаем специальные модули через mod_loader
+    let_log(f"\nЗагрузка специальных модулей")
+    for module_type, file_path in special_files.items():
+        if file_path:
+            let_log(f"Загрузка {module_type}: {file_path}")
+            module_result = mod_loader([file_path])
+            
+            if module_result:
+                for command_name, description, func in module_result:
+                    # Добавляем в общий список инструментов
+                    loaded_tools.append((command_name, description, func))
+                    
+                    # Глобализуем функцию по типу модуля
+                    if module_type == 'web_search':
+                        globals()['web_search'] = func
+                        let_log(f"✅ Функция web_search глобализована")
+                    elif module_type == 'ask_user':
+                        globals()['ask_user'] = func
+                        let_log(f"✅ Функция ask_user глобализована")
+            else:
+                let_log(f"⚠ Не удалось загрузить {module_type}")
+
+    # Настраиваем global_state
     global_state.another_tools = loaded_tools
+
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
     let_log(f"Всего загружено инструментов: {len(loaded_tools)}")
     let_log(f"Веб-поиск доступен: {'web_search' in globals()}")
