@@ -207,20 +207,17 @@ def load_special_mod(file_path, mod_type):
             # Загружаем локализацию для специального модуля
             current_lang = globals().get('language', 'en')
             locale_data = load_locale(file_path, current_lang)
-            
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
                 if match:
                     cmd_name = match.group(1).strip()
                     desc = match.group(2).strip()
-                    
                     # Применяем локализацию, если она есть
                     if locale_data and 'module_doc' in locale_data:
                         if len(locale_data['module_doc']) >= 2:
                             cmd_name = locale_data['module_doc'][0] or cmd_name
                             desc = locale_data['module_doc'][1] or desc
-                    
                     if mod_type == 'web_search': globals()['web_search'] = module.main
                     elif mod_type == 'ask_user': globals()['ask_user'] = module.main
                     return (cmd_name, desc, module.main)
@@ -443,8 +440,7 @@ def send_output_message(text=None, attachments=None, command=None):
     message_data = {
         'text': text or '',
         'attachments': attachments or None,
-        'command': command
-    }
+        'command': command}
     try: ui_conn[1].put(message_data)
     except Exception as e: let_log(f"Ошибка при отправке сообщения: {e}"); return
     return True
@@ -504,7 +500,6 @@ def coll_exec(action: str,
     Универсальная обёртка с кэшированием и поддержкой add/update/delete/query/get/count/modify.
     Поддержка $in и $nin для vector_id через множественные запросы (встроена).
     ВАЖНО: в этой версии обёртка не вычисляет расстояния (нет эвклидов/косинусов).
-    
     Сжатие происходит ВСЕГДА для документов в milana_collection/user_collection.
     Формат: 'z' + Base64(gzip(данные)) для сжатых, 'n' + текст для несжатых.
     """
@@ -513,23 +508,16 @@ def coll_exec(action: str,
         include = fetch if isinstance(fetch, list) else [fetch]
         if len(include) > 1:
             out = {}
-            for key in include:
-                out[key] = [] if key != "distances" else [[]]
+            for key in include: out[key] = [] if key != "distances" else [[]]
             return out
         else:
             key = include[0]
-            if key == "ids":
-                return []
-            elif key == "documents":
-                return []
-            elif key == "metadatas":
-                return []
-            elif key == "embeddings":
-                return []
-            elif key == "distances":
-                return [[]]
-            else:
-                return None
+            if key == "ids": return []
+            elif key == "documents": return []
+            elif key == "metadatas": return []
+            elif key == "embeddings": return []
+            elif key == "distances": return [[]]
+            else: return None
     # 1. Для операций ЗАПИСИ (add, update) - заменяем пустые эмбеддинги на None
     if action in ("add", "update") and embeddings is not None:
         new_embeddings = []
@@ -539,23 +527,19 @@ def coll_exec(action: str,
                 # Ставим None - ChromaDB выдаст ошибку, но это лучше чем пустой список
                 # Пользователь увидит ошибку и исправит данные
                 new_embeddings.append(None)
-            else:
-                new_embeddings.append(emb)
+            else: new_embeddings.append(emb)
         embeddings = new_embeddings
-    
     # 2. Для операций ПОИСКА (query) - сразу возвращаем пустой результат
     if action == "query":
         if query_embeddings is None:
             let_log("[coll_exec] ⚠ query_embeddings is None, возвращаем пустой результат")
             return _empty_result(fetch)
-        
         # Проверяем каждый запрос в списке
         all_empty = True
         for qe in query_embeddings:
             if qe is not None and isinstance(qe, list) and len(qe) > 0:
                 all_empty = False
                 break
-        
         if all_empty:
             let_log("[coll_exec] ⚠ Все query_embeddings пустые, возвращаем пустой результат")
             return _empty_result(fetch)
@@ -1049,19 +1033,15 @@ def get_embs(text: str):  # TODO: протестировать
     # 1) кеширование
     send_log_to_ui('embeddings:\n' + text)
     start = time.time()
-    
     # Удаляем начальные/конечные пробелы
     text = text.strip()
     if not text:
         let_log("Текст пустой, возврат пустого эмбеддинга.")
         return []
-    
     # 2) начальное деление на части с учётом лимита
     pieces = []
     estimated_tokens = len(text) * text_tokens_coefficient
-    
-    if estimated_tokens <= emb_token_limit:
-        pieces = [text]
+    if estimated_tokens <= emb_token_limit: pieces = [text]
     else:
         # Сразу делим на нужное количество частей (с запасом 10%)
         needed_parts = max(2, int(estimated_tokens / emb_token_limit * 1.10) + 1)
@@ -1072,16 +1052,12 @@ def get_embs(text: str):  # TODO: протестировать
             start_idx = i * part_len
             end_idx = (i + 1) * part_len if i < needed_parts - 1 else text_len
             pieces.append(text[start_idx:end_idx])
-    
     # 3) обработка каждой части
     processed_pieces = []
     processed_embs = []
-    
     for piece in pieces:
         piece = piece.strip()
-        if not piece:
-            continue
-            
+        if not piece: continue
         current_piece = piece
         while True:
             try:
@@ -1093,21 +1069,16 @@ def get_embs(text: str):  # TODO: протестировать
                     if half_len == 0:
                         let_log("Не удалось разделить текст дальше, часть пропущена")
                         break
-                    
                     let_log(f'Разделение части пополам: {len(current_piece)} символов')
                     pieces.append(current_piece[half_len:])
                     current_piece = current_piece[:half_len]
                     continue
-                
                 # Получаем эмбеддинг для текущей части
-                try:
-                    embs = get_provider_embs(current_piece)
+                try: embs = get_provider_embs(current_piece)
                 except Exception as e:
-                    if 'ContextOverflowError' in str(e):
-                        raise RuntimeError('ContextOverflowError')
+                    if 'ContextOverflowError' in str(e): raise RuntimeError('ContextOverflowError')
                     let_log(e)
                     send_ui_no_cache(f'{error_in_provider}\n{e}')
-                    
                     # Повтор при ошибке провайдера (не переполнение)
                     while True:
                         time.sleep(60)
@@ -1116,40 +1087,29 @@ def get_embs(text: str):  # TODO: протестировать
                             send_ui_no_cache(success_in_provider)
                             break
                         except Exception as retry_e:
-                            if 'ContextOverflowError' in str(retry_e):
-                                raise RuntimeError('ContextOverflowError')
-                
+                            if 'ContextOverflowError' in str(retry_e): raise RuntimeError('ContextOverflowError')
                 processed_pieces.append(current_piece)
                 processed_embs.extend(embs)  # Разворачиваем вложенные списки
                 break
-                
             except RuntimeError as e:
-                if 'ContextOverflowError' not in str(e):
-                    raise
-                
+                if 'ContextOverflowError' not in str(e): raise
                 # Делим проблемную часть пополам
                 half_len = len(current_piece) // 2
                 if half_len == 0:
                     let_log("Не удалось разделить текст дальше, часть пропущена")
                     break
-                
                 let_log(f'Разделение проблемной части пополам: {len(current_piece)} символов')
                 pieces.append(current_piece[half_len:])
                 current_piece = current_piece[:half_len]
-    
     # 4) усреднение эмбеддингов
-    if not processed_embs:
-        flat_embs = []
-    elif len(processed_embs) == 1:
-        flat_embs = processed_embs[0]
+    if not processed_embs: flat_embs = []
+    elif len(processed_embs) == 1: flat_embs = processed_embs[0]
     else:
         let_log(f'Усреднение {len(processed_embs)} эмбеддингов')
         embs_array = np.array(processed_embs)
         flat_embs = np.mean(embs_array, axis=0).tolist()
-    
     elapsed = time.time() - start
     let_log(f'Получение эмбеддингов выполнено за {elapsed:.2f} секунд')
-    
     return flat_embs
 
 def get_token_limit(): return token_limit
@@ -1895,45 +1855,34 @@ def upload_user_data(files_list):
     # Проверяем, загружены ли обработчики
     if not input_info_loaders:
         let_log("⚠ Обработчики файлов не загружены. Загружаем...")
-        try:
-            load_info_loaders(default_handlers_names)
+        try: load_info_loaders(default_handlers_names)
         except Exception as e:
             let_log(f"❌ Ошибка загрузки обработчиков файлов: {e}")
             send_output_message(text="Система обработки файлов недоступна", command='warning')
             return []
-    
     all_results = []  # Только успешные результаты
     processed_chunks = []  # Собираем все чанки из всех файлов
-    
     if not files_list:
         let_log("Список файлов для загрузки пуст")
         return all_results
-    
     for filename in files_list:
         file_basename = os.path.basename(filename)
         let_log(f"Обработка файла: {file_basename}")
         try:
             # 1. Проверка существования файла
-            if not os.path.exists(filename):
-                raise FileNotFoundError(f"Файл не существует: {filename}")
-            
+            if not os.path.exists(filename): raise FileNotFoundError(f"Файл не существует: {filename}")
             # 2. Получение расширения
             _, file_extension = os.path.splitext(filename)
             extension = file_extension[1:].lower() if file_extension else ''
-            if not extension:
-                raise ValueError(f"Файл не имеет расширения: {filename}")
-            
+            if not extension: raise ValueError(f"Файл не имеет расширения: {filename}")
             # 3. Проверка наличия обработчика
             if extension not in input_info_loaders:
                 # Пытаемся обработать как текстовый файл
                 handler = info_loaders.process_unknown
                 let_log(f"  Для расширения .{extension} нет обработчика, попытка открыть как текст")
-            else:
-                handler = input_info_loaders[extension]
-            
+            else: handler = input_info_loaders[extension]
             # 4. Получаем размер файла
             file_size = os.path.getsize(filename)
-            
             # 5. Использование кэша (если включено)
             result = read_cache()
             if result == [False]:
@@ -1944,7 +1893,6 @@ def upload_user_data(files_list):
             else:
                 let_log(f"  Используется кэшированный результат")
                 result_content = result[1]
-            
             # 6. Обработка результата (разбиение на чанки и сбор для последующего сохранения)
             if file_extension[1:].lower() == 'zip' and isinstance(result_content, list):
                 # Обработка ZIP-архива (включая вложенные)
@@ -1961,9 +1909,7 @@ def upload_user_data(files_list):
                                         'metadata': {
                                             'name': f"{filename}/{file_data['filename']}",
                                             'part': t + 1,
-                                            'source': 'zip'
-                                        }
-                                    })
+                                            'source': 'zip'}})
             else:
                 # Обработка обычного файла
                 if isinstance(result_content, str):
@@ -1976,19 +1922,14 @@ def upload_user_data(files_list):
                                 'metadata': {
                                     'name': filename,
                                     'part': t + 1,
-                                    'source': 'file'
-                                }
-                            })
-            
+                                    'source': 'file'}})
             # Добавляем в список успешных
             all_results.append({
                 'filename': filename,
                 'content': result_content,
                 'extension': extension,
-                'size': file_size
-            })
+                'size': file_size})
             let_log(f"✅ Файл {file_basename} успешно обработан")
-            
         except (FileNotFoundError, ValueError, KeyError) as e:
             # Ожидаемые ошибки - пропускаем файл
             let_log(f"⏭ Пропускаем {file_basename}: {e}")
@@ -1999,7 +1940,6 @@ def upload_user_data(files_list):
             let_log(f"⏭ Пропускаем {file_basename} из-за ошибки: {error_msg}")
             let_log(f"  Детали: {str(e)[:200]}")
             send_output_message(text=f"Ошибка при обработке {file_basename}", command='warning')
-    
     # 7. Сохраняем ВСЕ чанки из ВСЕХ успешно обработанных файлов в базу
     if processed_chunks:
         let_log(f"Сохраняем {len(processed_chunks)} чанков в базу...")
@@ -2011,12 +1951,9 @@ def upload_user_data(files_list):
                 ids=[get_common_save_id()],
                 embeddings=[get_embs(chunk_info['chunk'])],
                 metadatas=[chunk_info['metadata']],
-                documents=[chunk_info['chunk']]
-            )
+                documents=[chunk_info['chunk']])
         let_log(f"✅ Все чанки сохранены в базу")
-    else:
-        let_log("⚠ Нет чанков для сохранения в базу")
-    
+    else: let_log("⚠ Нет чанков для сохранения в базу")
     # 8. Аннотация только успешно обработанных файлов
     if all_results:
         try:
@@ -2026,39 +1963,29 @@ def upload_user_data(files_list):
                     annotation_text += f"\n\n--- {os.path.basename(result['filename'])} ---\n{result['content'][:5000]}"
                 elif isinstance(result['content'], list):
                     for file_data in result['content']:
-                        if isinstance(file_data.get('content'), str):
-                            annotation_text += f"\n\n--- {os.path.basename(result['filename'])}/{file_data['filename']} ---\n{file_data['content'][:5000]}"
-            
+                        if isinstance(file_data.get('content'), str): annotation_text += f"\n\n--- {os.path.basename(result['filename'])}/{file_data['filename']} ---\n{file_data['content'][:5000]}"
             if annotation_text.strip():
                 try:
                     global_state.summ_attach = annotation_available_prompt + ask_model(
                         annotation_text, 
-                        system_prompt=summarize_text_some_phrases
-                    )
+                        system_prompt=summarize_text_some_phrases)
                 except:
                     try:
                         global_state.summ_attach = annotation_available_prompt + ask_model(
                             text_cutter(annotation_text), 
-                            system_prompt=summarize_text_some_phrases
-                        )
-                    except:
-                        global_state.summ_attach = annotation_failed_text
-            else:
-                global_state.summ_attach = annotation_failed_text
+                            system_prompt=summarize_text_some_phrases)
+                    except: global_state.summ_attach = annotation_failed_text
+            else: global_state.summ_attach = annotation_failed_text
         except Exception as e:
             let_log(f"Ошибка при создании аннотации: {e}")
             global_state.summ_attach = annotation_failed_text
     else:
         let_log("Нет успешно обработанных файлов для аннотации")
         global_state.summ_attach = annotation_failed_text
-    
     # 9. Очистка ресурсов - выгружаем модель обработки изображений из ОЗУ
     try:
-        if hasattr(info_loaders, 'cleanup_image_models'):
-            info_loaders.cleanup_image_models()
-    except Exception as e:
-        let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
-    
+        if hasattr(info_loaders, 'cleanup_image_models'): info_loaders.cleanup_image_models()
+    except Exception as e: let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
     return all_results
 
 def set_common_save_id(): global_state.common_save_id += 1
@@ -2444,13 +2371,11 @@ def gigo(base_task, roles=[]):
     return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
 
 def critic(task: str, result: str) -> int | str:
-    # TODO: может обработку текста и результат сюда засунуть?
     """
     Оценивает результат.
     - Возвращает 1, если результат приемлем, критик не уверен или произошла ошибка.
     - Возвращает строку с новой, доработанной задачей для исполнителя.
     """
-    # TODO: добавь текст каттер
     if global_state.conversations % 2 == 0:
         if global_state.conversations != 0: num_critic_reaction = 1
         else: num_critic_reaction = global_state.conversations - 1
@@ -3031,18 +2956,12 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
     # === Загружаем пользовательские модули ===
     let_log(f"\n=== ЗАГРУЗКА ПОЛЬЗОВАТЕЛЬСКИХ МОДУЛЕЙ ===")
-
     # Разделяем файлы на специальные и обычные
-    special_files = {
-        'web_search': None,
-        'ask_user': None
-    }
+    special_files = {'web_search': None, 'ask_user': None}
     other_files = []
-
     for file_path in another_tools_files_addresses:
         file_name = os.path.basename(file_path).lower()
         let_log(f"Проверка файла: {file_name}")
-        
         # Определяем тип файла
         if file_name.endswith('web_search.py'):
             let_log(f"✓ Найден файл веб-поиска: {file_path}")
@@ -3050,28 +2969,22 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         elif file_name == 'ask_user.py':
             let_log(f"✓ Найден файл ask_user: {file_path}")
             special_files['ask_user'] = file_path
-        else:
-            other_files.append(file_path)
-
+        else: other_files.append(file_path)
     # Сначала загружаем обычные модули
     if other_files:
         let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
         loaded_tools = mod_loader(other_files)
-    else:
-        loaded_tools = []
-
+    else: loaded_tools = []
     # Загружаем специальные модули через mod_loader
     let_log(f"\nЗагрузка специальных модулей")
     for module_type, file_path in special_files.items():
         if file_path:
             let_log(f"Загрузка {module_type}: {file_path}")
             module_result = mod_loader([file_path])
-            
             if module_result:
                 for command_name, description, func in module_result:
                     # Добавляем в общий список инструментов
                     loaded_tools.append((command_name, description, func))
-                    
                     # Глобализуем функцию по типу модуля
                     if module_type == 'web_search':
                         globals()['web_search'] = func
@@ -3079,12 +2992,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
                     elif module_type == 'ask_user':
                         globals()['ask_user'] = func
                         let_log(f"✅ Функция ask_user глобализована")
-            else:
-                let_log(f"⚠ Не удалось загрузить {module_type}")
-
+            else: let_log(f"⚠ Не удалось загрузить {module_type}")
     # Настраиваем global_state
     global_state.another_tools = loaded_tools
-
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
     let_log(f"Всего загружено инструментов: {len(loaded_tools)}")
     let_log(f"Веб-поиск доступен: {'web_search' in globals()}")

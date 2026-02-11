@@ -170,13 +170,7 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     elif global_state.dialog_state:
         let_log('СОЗДАНИЕ НОВОГО СПЕЦИАЛИСТА...')
         talk_prompt = create_executor(talk_prompt)
-    else:
-        '''
-        if global_state.conversations != 0: # ПРОВЕРЬ В ОБОИХ СЦЕНАРИЯХ TODO:
-            global_state.dialog_state = True # TODO:
-            global_state.stop_agent = False
-        '''
-        return answer
+    else: return answer
     let_log("ОТВЕТ ПОСЛЕ ОБРАБОТКИ:")
     let_log(talk_prompt)
     last_talk_prompt = talk_prompt # Это ответ от функции/инструмента
