@@ -107,7 +107,6 @@ cd /d "%PROJECT_ROOT%"
 
 REM Build command (paths in quotes for spaces)
 pyinstaller --onedir --icon="data\icons\icon.ico" --name "Milana" ^
---clean ^
 --distpath "%PROJECT_ROOT%\dist" ^
 --workpath "%PROJECT_ROOT%\build" ^
 --collect-all easyocr ^
