@@ -114,7 +114,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = True # TODO:
+use_user = False
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
@@ -508,6 +508,57 @@ def coll_exec(action: str,
     Сжатие происходит ВСЕГДА для документов в milana_collection/user_collection.
     Формат: 'z' + Base64(gzip(данные)) для сжатых, 'n' + текст для несжатых.
     """
+    def _empty_result(fetch):
+        """Возвращает пустой результат в нужном формате"""
+        include = fetch if isinstance(fetch, list) else [fetch]
+        if len(include) > 1:
+            out = {}
+            for key in include:
+                out[key] = [] if key != "distances" else [[]]
+            return out
+        else:
+            key = include[0]
+            if key == "ids":
+                return []
+            elif key == "documents":
+                return []
+            elif key == "metadatas":
+                return []
+            elif key == "embeddings":
+                return []
+            elif key == "distances":
+                return [[]]
+            else:
+                return None
+    # 1. Для операций ЗАПИСИ (add, update) - заменяем пустые эмбеддинги на None
+    if action in ("add", "update") and embeddings is not None:
+        new_embeddings = []
+        for i, emb in enumerate(embeddings):
+            if emb is None or (isinstance(emb, list) and len(emb) == 0):
+                let_log(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, документ: {documents[i] if documents and i < len(documents) else 'unknown'}")
+                # Ставим None - ChromaDB выдаст ошибку, но это лучше чем пустой список
+                # Пользователь увидит ошибку и исправит данные
+                new_embeddings.append(None)
+            else:
+                new_embeddings.append(emb)
+        embeddings = new_embeddings
+    
+    # 2. Для операций ПОИСКА (query) - сразу возвращаем пустой результат
+    if action == "query":
+        if query_embeddings is None:
+            let_log("[coll_exec] ⚠ query_embeddings is None, возвращаем пустой результат")
+            return _empty_result(fetch)
+        
+        # Проверяем каждый запрос в списке
+        all_empty = True
+        for qe in query_embeddings:
+            if qe is not None and isinstance(qe, list) and len(qe) > 0:
+                all_empty = False
+                break
+        
+        if all_empty:
+            let_log("[coll_exec] ⚠ Все query_embeddings пустые, возвращаем пустой результат")
+            return _empty_result(fetch)
     def _compress_doc_always(doc: str | bytes) -> str:
         """
         Всегда пытается сжать документ.
