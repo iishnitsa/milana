@@ -114,7 +114,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = False
+use_user = True # TODO:
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
@@ -207,6 +207,7 @@ def load_special_mod(file_path, mod_type):
             # Загружаем локализацию для специального модуля
             current_lang = globals().get('language', 'en')
             locale_data = load_locale(file_path, current_lang)
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
@@ -503,6 +504,7 @@ def coll_exec(action: str,
     Сжатие происходит ВСЕГДА для документов в milana_collection/user_collection.
     Формат: 'z' + Base64(gzip(данные)) для сжатых, 'n' + текст для несжатых.
     """
+    '''
     def _empty_result(fetch):
         """Возвращает пустой результат в нужном формате"""
         include = fetch if isinstance(fetch, list) else [fetch]
@@ -543,6 +545,7 @@ def coll_exec(action: str,
         if all_empty:
             let_log("[coll_exec] ⚠ Все query_embeddings пустые, возвращаем пустой результат")
             return _empty_result(fetch)
+    '''
     def _compress_doc_always(doc: str | bytes) -> str:
         """
         Всегда пытается сжать документ.

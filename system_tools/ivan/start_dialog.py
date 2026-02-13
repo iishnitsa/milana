@@ -85,6 +85,7 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
         current_level = get_level()
         if current_level >= global_state.hierarchy_limit: return main.conversations_limit_reached_text
     let_log('начинается диалог')
+    global_state.dialog_ended = False
     if global_state.critic_wants_retry: global_state.critic_wants_retry = False
     else:
         if global_state.conversations > 0:
