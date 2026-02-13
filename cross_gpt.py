@@ -114,7 +114,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = True # TODO:
+use_user = False
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
