@@ -14,7 +14,6 @@ TEXTS = {
     "browse": "Browse...",
     "delete": "Delete",
     "language": "Language",
-    "restart_required": "Application restart is required to apply language settings.",
 
     # Language Loading
     "lang_load_error_title": "Language Load Error",
@@ -23,7 +22,6 @@ TEXTS = {
     # Main Window
     "new_chat": "New Chat",
     "settings": "Settings",
-    
     "chat_prefix": "Chat ",
 
     # Chat Context Menu
@@ -36,9 +34,6 @@ TEXTS = {
     # App Closing
     "active_chats_on_close_title": "Active Chats",
     "active_chats_on_close_message": "There are {count} active chats. Choose action:",
-    "active_chats_on_close_detail": "You can safely stop them or force close.",
-    "stop_safely": "Stop Safely",
-    "terminate": "Force Close",
 
     # Chat Controls
     "message_from_model_requires_answer": "Requires your response",
@@ -86,7 +81,7 @@ TEXTS = {
     "tab_chat_settings": "Chat Settings",
     "tab_modules": "Modules",
     "create": "Create",
-    "max_tasks": "Max. tasks:",
+    "max_critic_reactions": "Max. reactions of the critic:",
     "use_rag": "Use advanced dialogue memory",
     "filter_generations": "Purify the generation",
     "hierarchy_limit": "Hierarchy level limit",

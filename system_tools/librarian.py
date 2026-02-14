@@ -73,7 +73,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                             fetch="documents",
                             first=False
                         ) or []
-                        
                         # Фильтруем None значения
                         filtered_results = []
                         if results is not None:
@@ -87,7 +86,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                     else:
                                         filtered_results.append(item)
                         results = filtered_results
-                        
                         results2 = coll_exec(
                             "query",
                             "milana_collection",
@@ -96,7 +94,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                             fetch="documents",
                             first=False
                         ) or []
-                        
                         # Фильтруем None значения
                         filtered_results2 = []
                         if results2 is not None:
@@ -104,13 +101,10 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                 if item is not None:
                                     if isinstance(item, str):
                                         item_clean = item.strip()
-                                        if item_clean and item_clean.lower() != "none":
-                                            filtered_results2.append(item)
-                                    else:
-                                        filtered_results2.append(item)
+                                        if item_clean and item_clean.lower() != "none": filtered_results2.append(item)
+                                    else: filtered_results2.append(item)
                         results2 = filtered_results2
                         results.extend(results2)
-                        
                         if where3:
                             results3 = coll_exec(
                                 "query",
@@ -120,7 +114,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                 fetch="documents",
                                 first=False
                             ) or []
-                            
                             # Фильтруем None значения
                             filtered_results3 = []
                             if results3 is not None:
@@ -128,13 +121,10 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                     if item is not None:
                                         if isinstance(item, str):
                                             item_clean = item.strip()
-                                            if item_clean and item_clean.lower() != "none":
-                                                filtered_results3.append(item)
-                                        else:
-                                            filtered_results3.append(item)
+                                            if item_clean and item_clean.lower() != "none": filtered_results3.append(item)
+                                        else: filtered_results3.append(item)
                             results3 = filtered_results3
                             results.extend(results3)
-                            
                     elif search_target == 2:
                         results = coll_exec(
                             "query",
@@ -143,7 +133,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                             fetch="documents",
                             first=False
                         ) or []
-                        
                         # Фильтруем None значения
                         filtered_results = []
                         if results is not None:
@@ -151,12 +140,9 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                 if item is not None:
                                     if isinstance(item, str):
                                         item_clean = item.strip()
-                                        if item_clean and item_clean.lower() != "none":
-                                            filtered_results.append(item)
-                                    else:
-                                        filtered_results.append(item)
+                                        if item_clean and item_clean.lower() != "none": filtered_results.append(item)
+                                    else: filtered_results.append(item)
                         results = filtered_results
-                        
                     elif search_target == 3: pass
                 except Exception as e: let_log(f"[find_engine] Ошибка запроса: {e}"); results = []
                 # Если ничего не найдено, пробуем поиск в интернете
@@ -253,7 +239,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             else: break
         if not complex_result: return found_info_1
         return complex_result
-
     def process_single_question(quest):
         # Обработка входящего запроса для одиночного вопроса
         first_request_target = 1

@@ -4,7 +4,7 @@
 
 [Setup]
 AppName=Milana
-AppVersion=2025.12
+AppVersion=2026.02
 AppPublisher=iishnitsa
 AppPublisherURL=https://github.com/iishnitsa/milana
 DefaultDirName={pf}\Milana
@@ -14,7 +14,7 @@ Compression=lzma2
 SolidCompression=yes
 SetupIconFile=..\data\icons\icon.ico
 UninstallDisplayIcon={app}\data\icons\icon.ico
-AppID={{53d69905-8c9e-42c5-a6e9-372fe34aa5e6}}
+AppID={{74bec6ac-6270-4f46-a420-eb3a0d86a788}}
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 
@@ -29,7 +29,7 @@ Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Ad
 Name: "startmenuicon"; Description: "Create a Start Menu shortcut"; GroupDescription: "Additional icons:"
 
 [Files]
-Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs; Excludes: "__pycache__, __pycache__\*, install, install\*, mvenv, mvenv\*, *.pyc, *.pyo, *.pyd, launcher.py, data\settings.db, README.md, run_ui.cmd, run_ui.sh, *.lnk, build, build\*, dist, dist\*, *.iss, Milana.lnk, Output, Output\*, .git, .git\*, .gitignore, .gitattributes, .vscode, .vscode\*, .idea, .idea\*, *.log, *.bak, *.tmp, thumbs.db, ui.py, requirements.txt, *.db, data\chats"
+Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs; Excludes: "__pycache__, __pycache__\*, tests, install, install\*, mvenv, mvenv\*, *.pyc, *.pyo, *.pyd, launcher.py, data\settings.db, README.md, run_ui.cmd, run_ui.sh, *.lnk, build, build\*, dist, dist\*, *.iss, Milana.lnk, Output, Output\*, .git, .git\*, .gitignore, .gitattributes, .vscode, .vscode\*, .idea, .idea\*, *.log, *.bak, *.tmp, thumbs.db, requirements.txt, *.db, data\chats"
 
 Source: "..\_internal\*"; DestDir: "{app}\_internal"; Flags: recursesubdirs createallsubdirs
 

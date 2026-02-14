@@ -64,7 +64,6 @@ def main(text):
         global_state.tools_commands_dict.pop(global_state.conversations)
         let_log("Удалены инструменты исполнителя")
         global_state.conversations -= 1
-        
     else: let_log('Исполнитель не был создан, чат не удалён')
     delete_chat(global_state.conversations)
     let_log("Удалёны чат оператора")

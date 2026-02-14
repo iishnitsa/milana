@@ -36,7 +36,7 @@ class GlobalState:
         self.milana_module_tools = []
         self.ivan_module_tools = []
         self.module_tools_keys = []
-        self.max_critic_reactions = 1#3
+        self.max_critic_reactions = 2
         self.critic_reactions = {}
         self.critic_wants_retry = False
         self.critic_comment = ''
@@ -207,20 +207,18 @@ def load_special_mod(file_path, mod_type):
             # Загружаем локализацию для специального модуля
             current_lang = globals().get('language', 'en')
             locale_data = load_locale(file_path, current_lang)
-            
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
                 if match:
                     cmd_name = match.group(1).strip()
                     desc = match.group(2).strip()
-                    
                     # Применяем локализацию, если она есть
                     if locale_data and 'module_doc' in locale_data:
                         if len(locale_data['module_doc']) >= 2:
                             cmd_name = locale_data['module_doc'][0] or cmd_name
                             desc = locale_data['module_doc'][1] or desc
-                    
                     if mod_type == 'web_search': globals()['web_search'] = module.main
                     elif mod_type == 'ask_user': globals()['ask_user'] = module.main
                     return (cmd_name, desc, module.main)
@@ -324,6 +322,7 @@ def read_cache():
         except Exception as pickle_error: raise
         let_log(f"[CACHE READ] id={cache_counter}")
         cache_counter += 1
+        let_log(deserialized_value)
         return [True, deserialized_value]
     except OperationalError as e:
         error_msg = str(e).lower()
@@ -442,8 +441,7 @@ def send_output_message(text=None, attachments=None, command=None):
     message_data = {
         'text': text or '',
         'attachments': attachments or None,
-        'command': command
-    }
+        'command': command}
     try: ui_conn[1].put(message_data)
     except Exception as e: let_log(f"Ошибка при отправке сообщения: {e}"); return
     return True
@@ -503,10 +501,51 @@ def coll_exec(action: str,
     Универсальная обёртка с кэшированием и поддержкой add/update/delete/query/get/count/modify.
     Поддержка $in и $nin для vector_id через множественные запросы (встроена).
     ВАЖНО: в этой версии обёртка не вычисляет расстояния (нет эвклидов/косинусов).
-    
     Сжатие происходит ВСЕГДА для документов в milana_collection/user_collection.
     Формат: 'z' + Base64(gzip(данные)) для сжатых, 'n' + текст для несжатых.
     """
+    '''
+    def _empty_result(fetch):
+        """Возвращает пустой результат в нужном формате"""
+        include = fetch if isinstance(fetch, list) else [fetch]
+        if len(include) > 1:
+            out = {}
+            for key in include: out[key] = [] if key != "distances" else [[]]
+            return out
+        else:
+            key = include[0]
+            if key == "ids": return []
+            elif key == "documents": return []
+            elif key == "metadatas": return []
+            elif key == "embeddings": return []
+            elif key == "distances": return [[]]
+            else: return None
+    # 1. Для операций ЗАПИСИ (add, update) - заменяем пустые эмбеддинги на None
+    if action in ("add", "update") and embeddings is not None:
+        new_embeddings = []
+        for i, emb in enumerate(embeddings):
+            if emb is None or (isinstance(emb, list) and len(emb) == 0):
+                let_log(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, документ: {documents[i] if documents and i < len(documents) else 'unknown'}")
+                # Ставим None - ChromaDB выдаст ошибку, но это лучше чем пустой список
+                # Пользователь увидит ошибку и исправит данные
+                new_embeddings.append(None)
+            else: new_embeddings.append(emb)
+        embeddings = new_embeddings
+    # 2. Для операций ПОИСКА (query) - сразу возвращаем пустой результат
+    if action == "query":
+        if query_embeddings is None:
+            let_log("[coll_exec] ⚠ query_embeddings is None, возвращаем пустой результат")
+            return _empty_result(fetch)
+        # Проверяем каждый запрос в списке
+        all_empty = True
+        for qe in query_embeddings:
+            if qe is not None and isinstance(qe, list) and len(qe) > 0:
+                all_empty = False
+                break
+        if all_empty:
+            let_log("[coll_exec] ⚠ Все query_embeddings пустые, возвращаем пустой результат")
+            return _empty_result(fetch)
+    '''
     def _compress_doc_always(doc: str | bytes) -> str:
         """
         Всегда пытается сжать документ.
@@ -993,96 +1032,87 @@ def system_tools_loader():
     )
 
 @cacher
-def get_embs(text: str): # TODO: протестировать
+def get_embs(text: str):  # TODO: протестировать
     # 1) кеширование
     send_log_to_ui('embeddings:\n' + text)
     start = time.time()
-    # [ИСПРАВЛЕНИЕ 1 - БЕЗОПАСНОСТЬ] Добавляем ограничение на количество попыток
-    # убери цикл вообще, оставь 2 попытки или одну, хз, а может просто так оставить
-    max_attempts_emb = 4
-    current_attempt = 0
-    # 2) начинаем с одного куска — весь текст
-    pieces = [text]
-    while True:
-        current_attempt += 1 # Увеличиваем счетчик
-        if current_attempt > max_attempts_emb:
-            let_log(f'Превышено максимальное количество попыток ({max_attempts_emb}) дробления текста для эмбеддингов. Возврат пустого списка.')
-            return []
-        try:
-            # 3) ПРЕДВАРИТЕЛЬНАЯ ПРОВЕРКА ПЕРЕПОЛНЕНИЯ
-            for i, p in enumerate(pieces):
-                estimated_tokens = len(p) * text_tokens_coefficient
-                if estimated_tokens > emb_token_limit: raise RuntimeError('ContextOverflowError')
-            pieces = [piece for piece in pieces if piece.strip()]
-            if not pieces:
-                let_log("Текст состоит из пробелов, возврат пустого эмбеддинга.")
-                all_embs = []
-                break
-            # 4) если проверка пройдена - получаем эмбеддинги
-            all_embs_raw = []
-            for p in pieces:
-                try: answer = get_provider_embs(p)
+    # Удаляем начальные/конечные пробелы
+    text = text.strip()
+    if not text:
+        let_log("Текст пустой, возврат пустого эмбеддинга.")
+        return []
+    # 2) начальное деление на части с учётом лимита
+    pieces = []
+    estimated_tokens = len(text) * text_tokens_coefficient
+    if estimated_tokens <= emb_token_limit: pieces = [text]
+    else:
+        # Сразу делим на нужное количество частей (с запасом 10%)
+        needed_parts = max(2, int(estimated_tokens / emb_token_limit * 1.10) + 1)
+        let_log(f'Исходное разделение текста на {needed_parts} частей')
+        text_len = len(text)
+        part_len = text_len // needed_parts
+        for i in range(needed_parts):
+            start_idx = i * part_len
+            end_idx = (i + 1) * part_len if i < needed_parts - 1 else text_len
+            pieces.append(text[start_idx:end_idx])
+    # 3) обработка каждой части
+    processed_pieces = []
+    processed_embs = []
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece: continue
+        current_piece = piece
+        while True:
+            try:
+                # Проверяем не превышает ли текущий кусок лимит
+                piece_tokens = len(current_piece) * text_tokens_coefficient
+                if piece_tokens > emb_token_limit:
+                    # Делим пополам при переполнении
+                    half_len = len(current_piece) // 2
+                    if half_len == 0:
+                        let_log("Не удалось разделить текст дальше, часть пропущена")
+                        break
+                    let_log(f'Разделение части пополам: {len(current_piece)} символов')
+                    pieces.append(current_piece[half_len:])
+                    current_piece = current_piece[:half_len]
+                    continue
+                # Получаем эмбеддинг для текущей части
+                try: embs = get_provider_embs(current_piece)
                 except Exception as e:
-                    if 'ContextOverflowError' in str(e): raise
+                    if 'ContextOverflowError' in str(e): raise RuntimeError('ContextOverflowError')
                     let_log(e)
                     send_ui_no_cache(f'{error_in_provider}\n{e}')
+                    # Повтор при ошибке провайдера (не переполнение)
                     while True:
                         time.sleep(60)
                         try:
-                            answer = get_provider_embs(p)
+                            embs = get_provider_embs(current_piece)
                             send_ui_no_cache(success_in_provider)
                             break
-                        except Exception as e:
-                            if 'ContextOverflowError' in str(e): raise
-                all_embs_raw.append(answer)
-            # [ИСПРАВЛЕНИЕ 2 - РАЗМЕРНОСТЬ] Разворачиваем (flatten) результат на один уровень.
-            # Превращаем [[emb1], [emb2]] в [emb1, emb2]
-            all_embs = [emb for sublist in all_embs_raw for emb in sublist]
-            break # Успешный выход из цикла
-        except RuntimeError as e:
-            # [СТРОГАЯ ОБРАБОТКА ОШИБОК 1] Продолжаем цикл только при ContextOverflowError
-            if 'ContextOverflowError' not in str(e): raise # Немедленно поднимаем любую другую RuntimeError, не связанную с переполнением
-            let_log('интеллектуальное дробление для эмбеддингов')
-            # 5) ИНТЕЛЛЕКТУАЛЬНОЕ ДЕЛЕНИЕ С ВЫЧИСЛЕНИЕМ КОЛИЧЕСТВА ЧАСТЕЙ
-            new_pieces = []
-            need_retry = False 
-            for p in pieces:
-                estimated_tokens = len(p) * text_tokens_coefficient
-                if estimated_tokens <= emb_token_limit: new_pieces.append(p)
-                else:
-                    # Вычисляем на сколько частей нужно разделить (с запасом 10%)
-                    # [ИСПРАВЛЕНИЕ - ДЕЛЕНИЕ] Делим не на 2, а на нужное количество
-                    needed_parts = max(2, int(estimated_tokens / emb_token_limit * 1.10) + 1)
-                    let_log(f'Разделение текста на {needed_parts} частей')
-                    p_len = len(p)
-                    part_len = p_len // needed_parts
-                    for i in range(needed_parts):
-                        start_idx = i * part_len
-                        end_idx = (i + 1) * part_len if i < needed_parts - 1 else p_len
-                        new_pieces.append(p[start_idx:end_idx])
-                    need_retry = True
-            # Защита от бесконечного цикла
-            if not need_retry and current_attempt > 1:
-                let_log("Логика деления не смогла уменьшить части. Выход.")
-                return []
-            pieces = new_pieces
-            let_log(f'Разделено на {len(pieces)} частей')
-        except Exception as e:
-            # [СТРОГАЯ ОБРАБОТКА ОШИБОК 2] Любая другая критическая ошибка
-            traceprint()
-            let_log(f'Критическая ошибка (не ContextOverflowError) при получении эмбеддингов: {e}')
-            raise # Немедленно поднимает
+                        except Exception as retry_e:
+                            if 'ContextOverflowError' in str(retry_e): raise RuntimeError('ContextOverflowError')
+                processed_pieces.append(current_piece)
+                processed_embs.extend(embs)  # Разворачиваем вложенные списки
+                break
+            except RuntimeError as e:
+                if 'ContextOverflowError' not in str(e): raise
+                # Делим проблемную часть пополам
+                half_len = len(current_piece) // 2
+                if half_len == 0:
+                    let_log("Не удалось разделить текст дальше, часть пропущена")
+                    break
+                let_log(f'Разделение проблемной части пополам: {len(current_piece)} символов')
+                pieces.append(current_piece[half_len:])
+                current_piece = current_piece[:half_len]
+    # 4) усреднение эмбеддингов
+    if not processed_embs: flat_embs = []
+    elif len(processed_embs) == 1: flat_embs = processed_embs[0]
+    else:
+        let_log(f'Усреднение {len(processed_embs)} эмбеддингов')
+        embs_array = np.array(processed_embs)
+        flat_embs = np.mean(embs_array, axis=0).tolist()
     elapsed = time.time() - start
     let_log(f'Получение эмбеддингов выполнено за {elapsed:.2f} секунд')
-    # 6) УСРЕДНЯЕМ эмбеддинги
-    if not all_embs: flat_embs = []
-    elif len(all_embs) == 1: flat_embs = all_embs[0]
-    else:
-        let_log(f'Усреднение {len(all_embs)} эмбеддингов')
-        # Работает корректно, так как all_embs теперь 2D: [emb1, emb2, ...]
-        embs_array = np.array(all_embs)
-        flat_embs = np.mean(embs_array, axis=0).tolist()
-    # 7) сохраняем в кеш
     return flat_embs
 
 def get_token_limit(): return token_limit
@@ -1115,7 +1145,7 @@ def _execute_with_cache_and_error_handling(generation_func):
     let_log(f'СГЕНЕРИРОВАНО {len(generated)} токенов за {elapsed:.2f}s')
     let_log(f'Генерация заняла {elapsed:.2f}s, вывод {len(generated)} токенов')
     return generated
-use_user = True
+
 @cacher
 def ask_model(prompt_text, 
               system_prompt: str = None,
@@ -1123,7 +1153,6 @@ def ask_model(prompt_text,
               limit: int = None,
               temperature: float = 0.6,
               **extra_params) -> str:
-    let_log(verdicts)
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
     # Проверка длины контекста
@@ -1136,9 +1165,7 @@ def ask_model(prompt_text,
         root = tk.Tk()
         root.withdraw()
         root.attributes('-topmost', True)
-        input_text = simpledialog.askstring("Ввод текста", 
-                                        "Пожалуйста, введите текст:",
-                                        parent=root)
+        input_text = simpledialog.askstring("Ввод текста", "Пожалуйста, введите текст:", parent=root)
         root.destroy()
         if input_text is not None:
             if input_text != "":
@@ -1170,7 +1197,6 @@ def ask_model(prompt_text,
         }
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
-    
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
     # Режим 1: Подача строки (completions)
     if not do_chat_construct:
@@ -1491,6 +1517,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                             # вырезаем func_text_for_parse из начала контента
                             cleaned_content = content
                             if content_l.startswith(func_text_for_parse): cleaned_content = content[len(func_text_for_parse):].strip()
+                            elif func_text_for_parse in content: cleaned_content = content.replace(func_text_for_parse, '', 1).strip()
                             function_message = {
                                 "role": "function",
                                 "name": found_key,
@@ -1700,7 +1727,7 @@ def remove_commands_roles(cleaned_text): # TODO: перепроверь рабо
             if start_pos != -1:
                 # Нашли содержимое - удаляем всё начиная с этой позиции
                 cleaned_text = cleaned_text[:start_pos]
-                break  # Прерываем после первого найденного
+                break # Прерываем после первого найденного
     # Теперь ищем маркеры команд с помощью extract_command_markers
     # Для этого нам нужен словарь команд - используем пустой словарь
     markers = extract_command_markers(cleaned_text, {})
@@ -1781,7 +1808,6 @@ def text_cutter(text):
             traceprint()
             print(e)
             sys.exit(1)
-    # Когда все части обработаны, объединяем их
     return ' '.join(summarized_chunks)
 
 def load_info_loaders(info_loaders_names):
@@ -1801,8 +1827,6 @@ def load_info_loaders(info_loaders_names):
         let_log("✅ Модуль info_loaders успешно импортирован")
     except Exception as e:
         let_log(f"❌ ФАТАЛЬНО: Не удалось импортировать модуль info_loaders: {e}")
-        # Не создаем заглушек - просто оставляем пустой словарь
-        # Система продолжит работу, но файлы обрабатываться не будут
         return input_info_loaders
     # Загружаем только рабочие обработчики
     for ext, func_name in info_loaders_names.items():
@@ -1831,32 +1855,37 @@ def upload_user_data(files_list):
     Обрабатывает файлы, пропуская те, для которых нет обработчика или возникла ошибка.
     Возвращает только успешно обработанные результаты.
     """
+    # Проверяем, загружены ли обработчики
+    if not input_info_loaders:
+        let_log("⚠ Обработчики файлов не загружены. Загружаем...")
+        try: load_info_loaders(default_handlers_names)
+        except Exception as e:
+            let_log(f"❌ Ошибка загрузки обработчиков файлов: {e}")
+            send_output_message(text="Система обработки файлов недоступна", command='warning')
+            return []
     all_results = []  # Только успешные результаты
-    
+    processed_chunks = []  # Собираем все чанки из всех файлов
     if not files_list:
         let_log("Список файлов для загрузки пуст")
         return all_results
-    
-    # Проверяем, загружены ли обработчики
-    if not input_info_loaders:
-        let_log("⚠ Обработчики файлов не загружены. Пропускаем загрузку файлов.")
-        send_output_message(text="Система обработки файлов недоступна", command='warning')
-        return all_results
-    
     for filename in files_list:
         file_basename = os.path.basename(filename)
         let_log(f"Обработка файла: {file_basename}")
         try:
             # 1. Проверка существования файла
-            if not os.path.exists(filename):
-                raise FileNotFoundError(f"Файл не существует: {filename}")
+            if not os.path.exists(filename): raise FileNotFoundError(f"Файл не существует: {filename}")
             # 2. Получение расширения
             _, file_extension = os.path.splitext(filename)
             extension = file_extension[1:].lower() if file_extension else ''
             if not extension: raise ValueError(f"Файл не имеет расширения: {filename}")
             # 3. Проверка наличия обработчика
-            if extension not in input_info_loaders: raise KeyError(f"Нет обработчика для расширения .{extension}")
-            handler = input_info_loaders[extension]
+            if extension not in input_info_loaders:
+                # Пытаемся обработать как текстовый файл
+                handler = info_loaders.process_unknown
+                let_log(f"  Для расширения .{extension} нет обработчика, попытка открыть как текст")
+            else: handler = input_info_loaders[extension]
+            # 4. Получаем размер файла
+            file_size = os.path.getsize(filename)
             # 5. Использование кэша (если включено)
             result = read_cache()
             if result == [False]:
@@ -1867,31 +1896,23 @@ def upload_user_data(files_list):
             else:
                 let_log(f"  Используется кэшированный результат")
                 result_content = result[1]
-            # 6. Успешная обработка
+            # 6. Обработка результата (разбиение на чанки и сбор для последующего сохранения)
             if file_extension[1:].lower() == 'zip' and isinstance(result_content, list):
-                # Обработка ZIP-архива
+                # Обработка ZIP-архива (включая вложенные)
                 for file_data in result_content:
                     if file_data['type'] in ['file', 'unsupported']:
                         content = file_data['content']
                         if isinstance(content, str):
                             let_log(f"  Разбиение файла из ZIP: {file_data['filename']}")
                             chunks = split_text_with_cutting(content)
-                            if not chunks:
-                                continue
-                            for t, chunk in enumerate(chunks):
-                                set_common_save_id()
-                                coll_exec(
-                                    action="add",
-                                    coll_name="user_collection",
-                                    ids=[get_common_save_id()],
-                                    embeddings=[get_embs(chunk)],
-                                    metadatas=[{
-                                        'name': f"{filename}/{file_data['filename']}",
-                                        'part': t + 1,
-                                        'source': 'zip'
-                                    }],
-                                    documents=[chunk]
-                                )
+                            if chunks:
+                                for t, chunk in enumerate(chunks):
+                                    processed_chunks.append({
+                                        'chunk': chunk,
+                                        'metadata': {
+                                            'name': f"{filename}/{file_data['filename']}",
+                                            'part': t + 1,
+                                            'source': 'zip'}})
             else:
                 # Обработка обычного файла
                 if isinstance(result_content, str):
@@ -1899,26 +1920,18 @@ def upload_user_data(files_list):
                     chunks = split_text_with_cutting(result_content)
                     if chunks:
                         for t, chunk in enumerate(chunks):
-                            set_common_save_id()
-                            coll_exec(
-                                action="add",
-                                coll_name="user_collection",
-                                ids=[get_common_save_id()],
-                                embeddings=[get_embs(chunk)],
-                                metadatas=[{
+                            processed_chunks.append({
+                                'chunk': chunk,
+                                'metadata': {
                                     'name': filename,
                                     'part': t + 1,
-                                    'source': 'file'
-                                }],
-                                documents=[chunk]
-                            )
+                                    'source': 'file'}})
             # Добавляем в список успешных
             all_results.append({
                 'filename': filename,
                 'content': result_content,
                 'extension': extension,
-                'size': file_size
-            })
+                'size': file_size})
             let_log(f"✅ Файл {file_basename} успешно обработан")
         except (FileNotFoundError, ValueError, KeyError) as e:
             # Ожидаемые ошибки - пропускаем файл
@@ -1930,7 +1943,21 @@ def upload_user_data(files_list):
             let_log(f"⏭ Пропускаем {file_basename} из-за ошибки: {error_msg}")
             let_log(f"  Детали: {str(e)[:200]}")
             send_output_message(text=f"Ошибка при обработке {file_basename}", command='warning')
-    # Аннотация только успешно обработанных файлов
+    # 7. Сохраняем ВСЕ чанки из ВСЕХ успешно обработанных файлов в базу
+    if processed_chunks:
+        let_log(f"Сохраняем {len(processed_chunks)} чанков в базу...")
+        for chunk_info in processed_chunks:
+            set_common_save_id()
+            coll_exec(
+                action="add",
+                coll_name="user_collection",
+                ids=[get_common_save_id()],
+                embeddings=[get_embs(chunk_info['chunk'])],
+                metadatas=[chunk_info['metadata']],
+                documents=[chunk_info['chunk']])
+        let_log(f"✅ Все чанки сохранены в базу")
+    else: let_log("⚠ Нет чанков для сохранения в базу")
+    # 8. Аннотация только успешно обработанных файлов
     if all_results:
         try:
             annotation_text = ""
@@ -1939,20 +1966,17 @@ def upload_user_data(files_list):
                     annotation_text += f"\n\n--- {os.path.basename(result['filename'])} ---\n{result['content'][:5000]}"
                 elif isinstance(result['content'], list):
                     for file_data in result['content']:
-                        if isinstance(file_data.get('content'), str):
-                            annotation_text += f"\n\n--- {os.path.basename(result['filename'])}/{file_data['filename']} ---\n{file_data['content'][:5000]}"
+                        if isinstance(file_data.get('content'), str): annotation_text += f"\n\n--- {os.path.basename(result['filename'])}/{file_data['filename']} ---\n{file_data['content'][:5000]}"
             if annotation_text.strip():
                 try:
                     global_state.summ_attach = annotation_available_prompt + ask_model(
                         annotation_text, 
-                        system_prompt=summarize_text_some_phrases
-                    )
+                        system_prompt=summarize_text_some_phrases)
                 except:
                     try:
                         global_state.summ_attach = annotation_available_prompt + ask_model(
                             text_cutter(annotation_text), 
-                            system_prompt=summarize_text_some_phrases
-                        )
+                            system_prompt=summarize_text_some_phrases)
                     except: global_state.summ_attach = annotation_failed_text
             else: global_state.summ_attach = annotation_failed_text
         except Exception as e:
@@ -1961,7 +1985,7 @@ def upload_user_data(files_list):
     else:
         let_log("Нет успешно обработанных файлов для аннотации")
         global_state.summ_attach = annotation_failed_text
-    # Очистка ресурсов
+    # 9. Очистка ресурсов - выгружаем модель обработки изображений из ОЗУ
     try:
         if hasattr(info_loaders, 'cleanup_image_models'): info_loaders.cleanup_image_models()
     except Exception as e: let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
@@ -2031,8 +2055,7 @@ def next_executor():
 
 def get_executor_number():
     """Получить номер текущего исполнителя"""
-    if global_state.now_try == '/' or global_state.now_try == '':
-        return 0
+    if global_state.now_try == '/' or global_state.now_try == '': return 0
     parts = global_state.now_try.strip('/').split('/')
     last_part = parts[-1]
     if ':' in last_part:
@@ -2043,8 +2066,7 @@ def get_executor_number():
 
 def get_level():
     """Получить номер текущего уровня"""
-    if global_state.now_try == '/' or global_state.now_try == '':
-        return 1
+    if global_state.now_try == '/' or global_state.now_try == '': return 1
     parts = global_state.now_try.strip('/').split('/')
     last_part = parts[-1]
     if ':' in last_part:
@@ -2071,8 +2093,7 @@ def get_operator_id():
 
 def get_executor_id():
     """Полный ID исполнителя"""
-    if get_executor_number() == 0:
-        return None  # Исполнитель не создан
+    if get_executor_number() == 0: return None  # Исполнитель не создан
     return global_state.now_try
 
 def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
@@ -2352,40 +2373,27 @@ def gigo(base_task, roles=[]):
     except: plan = ask_model(gigo_make_plan + base_task + text_cutter(minds) + '\n' + text_cutter(additional_info), all_user=True)
     return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
 
-verdicts = [
-    """ВЕРДИКТ: ДОРАБОТАТЬ
-НОВАЯ ЗАДАЧА:
-Твоя предыдущая попытка решить задачу "написать функцию суммирования" была почти успешной, но в ней отсутствовала обработка нечисловых данных. Пожалуйста, доработай эту функцию, добавив блок try-except.
-""",
-    "ВЕРДИКТ: НЕ УВЕРЕН",
-    "ВЕРДИКТ: ПРИНЯТЬ",
-    """ВЕРДИКТ: ДОРАБОТАТЬ
-НОВАЯ ЗАДАЧА:
-Твоя предыдущая попытка решить задачу "написать функцию суммирования" была почти успешной, но в ней отсутствовала обработка нечисловых данных. Пожалуйста, доработай эту функцию, добавив блок try-except.
-""",
-    "ВЕРДИКТ: НЕ УВЕРЕН",
-    "ВЕРДИКТ: ПРИНЯТЬ",
-]
-
 def critic(task: str, result: str) -> int | str:
-    # TODO: может обработку текста и результат сюда засунуть?
     """
     Оценивает результат.
     - Возвращает 1, если результат приемлем, критик не уверен или произошла ошибка.
     - Возвращает строку с новой, доработанной задачей для исполнителя.
     """
-    # TODO: добавь текст каттер
+    if global_state.conversations % 2 == 0:
+        if global_state.conversations != 0: num_critic_reaction = 1
+        else: num_critic_reaction = global_state.conversations - 1
+    else: num_critic_reaction = global_state.conversations
     try:
-        now_critic_reactions = global_state.critic_reactions[global_state.conversations]
-        let_log(f"Текущие реакции для диалога {global_state.conversations}: {now_critic_reactions}")
+        now_critic_reactions = global_state.critic_reactions[num_critic_reaction]
+        let_log(f"Текущие реакции для диалога {num_critic_reaction}: {now_critic_reactions}")
         let_log(f"Реакций ({now_critic_reactions}), максимум ({global_state.max_critic_reactions}), запускаем критика")
     except:
         now_critic_reactions = 0
-        global_state.critic_reactions[global_state.conversations] = 0
-        let_log(f"Нет реакций для диалога {global_state.conversations}, установлено 0")
+        global_state.critic_reactions[num_critic_reaction] = 0
+        let_log(f"Нет реакций для диалога {num_critic_reaction}, установлено 0")
     if now_critic_reactions == global_state.max_critic_reactions:
         let_log(f"Достигнут максимум реакций ({now_critic_reactions}), пропускаем критика")
-        del global_state.critic_reactions[global_state.conversations]
+        del global_state.critic_reactions[num_critic_reaction]
         return 1
     # --- Этап 1 ---
     try:
@@ -2431,10 +2439,7 @@ def critic(task: str, result: str) -> int | str:
                      f"{prompt_decision_4} {evaluation_text}\n"
                      f"{librarian_context}" # <-- Сюда будет подставлен контекст от библиотекаря
                      f"{prompt_decision_5}")
-    #decision_response = ask_model(prompt_stage3, all_user=True)
-    decision_response = verdicts[0]
-    del verdicts[0]
-    # --- Парсинг ответа и возврат результата ---
+    decision_response = ask_model(prompt_stage3, all_user=True)
     if marker_decision_revise in decision_response:
         try:
             start_index = decision_response.index(marker_new_task) + len(marker_new_task)
@@ -2443,23 +2448,21 @@ def critic(task: str, result: str) -> int | str:
                 print("Критик: Требуется доработка. Сформулирована новая задача.")
                 global_state.critic_wants_retry = True
                 global_state.critic_comment = new_task
-                if global_state.conversations % 2 == 0: global_state.critic_reactions[global_state.conversations - 1] += 1
-                else: global_state.critic_reactions[global_state.conversations] += 1
+                global_state.critic_reactions[num_critic_reaction] += 1
                 return new_task
-        except ValueError:
-            del global_state.critic_reactions[global_state.conversations]
+        except Exception as e:
+            let_log(e)
+            del global_state.critic_reactions[num_critic_reaction]
             return 1
     elif marker_decision_approve in decision_response:
         print("Критик: Задача выполнена успешно.")
-        del global_state.critic_reactions[global_state.conversations]
+        del global_state.critic_reactions[num_critic_reaction]
         return 3
-    # <-- Новая, явная проверка на неуверенность
     elif marker_decision_unsure in decision_response:
         print("Критик: Не уверен в результате, требуется проверка человеком.")
-        del global_state.critic_reactions[global_state.conversations]
+        del global_state.critic_reactions[num_critic_reaction]
         return 2
-    # Если вердикт не распознан или ответ пустой
-    return 1
+    return 1 # Если вердикт не распознан или ответ пустой
 
 def find_all_commands(text: str, available_commands: list[str], cutoff: float = 0.75) -> list[str]:
     """
@@ -2485,8 +2488,7 @@ def find_all_commands(text: str, available_commands: list[str], cutoff: float = 
             word_from_text,
             available_commands,
             n=1,  # Ищем только одно, самое лучшее, совпадение для данного слова
-            cutoff=cutoff
-        )
+            cutoff=cutoff)
         if close_matches:
             # Если для слова найдено достаточно близкое совпадение,
             # добавляем соответствующую команду из списка `available_commands` в наше множество.
@@ -2540,8 +2542,7 @@ def find_and_match_command(text, commands_dict):
             # Определяем длину закрывающего маркера
             j = i
             while j < len(text) and j - i < 4:
-                if text[j] in exclamation_chars:
-                    j += 1
+                if text[j] in exclamation_chars: j += 1
                 else: break
             # Закрывающий маркер должен быть хотя бы из 1 символа
             if j - i >= 1:
@@ -2578,12 +2579,7 @@ def find_and_match_command(text, commands_dict):
             break
     if not found_key and key_map:
         try:
-            matches = difflib.get_close_matches(
-                raw_name, 
-                list(key_map.keys()), 
-                n=1, 
-                cutoff=0.7
-            )
+            matches = difflib.get_close_matches(raw_name, list(key_map.keys()), n=1, cutoff=0.7)
             if matches: found_key = matches[0]
         except: found_key = None
     if not found_key: return None
@@ -2671,6 +2667,7 @@ def tools_selector(text, sid):
     if found_key == start_dialog_command_name: global_state.task_delegated = True
     try: result = func_callable(content)
     except Exception as e: result = "__TOOL_ERROR__: " + str(e)
+    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
     let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
     # 10) кэшировать результат если не системная команда
     try:
@@ -2772,7 +2769,6 @@ def get_user_feedback_and_update_task(current_task, dialog_result):
     if not updated_task: raise # TODO: доделай тут или общение с пользователем или просто сообщение что текста нет
     if user_message['attachments']:
         send_output_message(text=start_load_attachments_text)
-        if not input_info_loaders: load_info_loaders(default_handlers_names)
         upload_user_data(user_message['attachments'])
         send_output_message(text=end_load_attachments_text)
     return updated_task
@@ -2809,6 +2805,7 @@ def worker(really_main_task):
                 let_log(global_state.conversations)
                 # нужно еще задачу в хрому записать
                 # TODO: вынеси эти 2 куска кода в функцию
+                let_log(global_state.conversations)
                 if global_state.conversations <= 0:
                     if global_state.critic_wants_retry: # TODO: в критике тоже добавь пояснения И ОН НЕ ВЕЗДЕ ДОЛЖЕН ИСПОЛЬЗОВАТЬ РИЛИ МАЙН ТАКС А ЕЩЁ НАДО УНИФИЦИРОВАТЬ ЕГО С КЛИЕНТСКИМИ ТЕКСТАМИ
                         if user_review_text1 in really_main_task or user_review_text2 in really_main_task or user_review_text3 in really_main_task or user_review_text4 in really_main_task:
@@ -2819,14 +2816,13 @@ def worker(really_main_task):
                 else:
                     global_state.dialog_state = True
                     if global_state.critic_wants_retry:
-                        global_state.critic_wants_retry = False
                         if user_review_text1 in global_state.main_now_task or user_review_text2 in global_state.main_now_task or user_review_text3 in global_state.main_now_task or user_review_text4 in global_state.main_now_task:
                             global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                         else: global_state.main_now_task = user_review_text1 + global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                         talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
                     else: talk_prompt = global_state.dialog_result
 
-def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pause_event, log_queue):
+def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global memory_sql
     global actual_handlers_names, another_tools_files_addresses
     global token_limit, emb_token_limit, most_often
@@ -2879,6 +2875,8 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pa
     use_rag = int(settings.get("use_rag", 1))
     global_state.write_results = int(settings.get("write_results", 0))
     if int(settings.get("write_log", 1)) == 0: is_save_log = False
+    # === ДОБАВЛЕНО: Получение максимального количества реакций критика ===
+    global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     # === Инициализация ChromaDB ===
     chroma_path = os.path.join(chat_path, "chroma_db")
     client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True, anonymized_telemetry=False))
@@ -2900,8 +2898,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pa
         create_chat,
         get_chat_context,
         update_history,
-        delete_chat
-    )
+        delete_chat)
     initialize_schema()
     default_tools_dir = os.path.join(base_dir, "default_tools")
     for rel_path in tool_paths:
@@ -2955,106 +2952,51 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, stop_event, pa
     clean_variables_content = []
     if filter_generations == 1:
         clean_variables_content = [operator_role_text, worker_role_text, func_role_text, system_role_text]
-        if unified_tags.get('bos') is not None: clean_variables_content.append(bos_tag)
-        if unified_tags.get('user_start') is not None: clean_variables_content.append(user_start_tag)
+        if unified_tags.get('bos') is not None: clean_variables_content.append(unified_tags.get('bos'))
+        if unified_tags.get('user_start') is not None: clean_variables_content.append(unified_tags.get('user_start'))
         filter_generations = True
     else: filter_generations = False
     global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
     # === Загружаем пользовательские модули ===
     let_log(f"\n=== ЗАГРУЗКА ПОЛЬЗОВАТЕЛЬСКИХ МОДУЛЕЙ ===")
-    let_log(f"Всего файлов для загрузки: {len(another_tools_files_addresses)}")
-    # 1. Объединенный поиск web_search и ask_user в одном цикле
-    web_search_module = None
-    ask_user_module = None
-    other_modules_files = []
+    # Разделяем файлы на специальные и обычные
+    special_files = {'web_search': None, 'ask_user': None}
+    other_files = []
     for file_path in another_tools_files_addresses:
         file_name = os.path.basename(file_path).lower()
         let_log(f"Проверка файла: {file_name}")
-        # Ищем веб-поиск (файл должен заканчиваться на web_search.py)
+        # Определяем тип файла
         if file_name.endswith('web_search.py'):
             let_log(f"✓ Найден файл веб-поиска: {file_path}")
-            try:
-                # Загружаем модуль веб-поиска отдельно
-                module_name = os.path.splitext(file_name)[0]
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if hasattr(module, 'main'):
-                    # Создаем обертку с именем web_search
-                    def web_search_wrapper(arg, func=module.main): return func(arg)
-                    web_search_module = (module, web_search_wrapper, file_path)
-                    let_log(f"  Модуль веб-поиска загружен: {module_name}")
-                else: let_log(f"  ⚠ Файл веб-поиска не содержит функцию main")
-            except Exception as e: let_log(f"  ⚠ Ошибка загрузки веб-поиска: {e}")
+            special_files['web_search'] = file_path
         elif file_name == 'ask_user.py':
             let_log(f"✓ Найден файл ask_user: {file_path}")
-            try:
-                module_name = os.path.splitext(file_name)[0]
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if hasattr(module, 'main'):
-                    ask_user_module = (module, module.main, file_path)
-                    let_log(f"  Модуль ask_user загружен: {module_name}")
-                else: let_log(f"  ⚠ Файл ask_user не содержит функцию main")
-            except Exception as e: let_log(f"  ⚠ Ошибка загрузки ask_user: {e}")
-        else: other_modules_files.append(file_path)
-    # 2. Загружаем остальные модули через mod_loader
-    loaded_tools = []
-    if other_modules_files:
-        let_log(f"\nЗагрузка остальных модулей ({len(other_modules_files)} файлов)")
-        loaded_tools = mod_loader(other_modules_files)
-    if web_search_module:
-        module, web_search_wrapper, file_path = web_search_module
-        # Загружаем локализацию для веб-поиска
-        current_lang = globals().get('language', 'en')
-        locale_data = load_locale(file_path, current_lang)
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
-                if match:
-                    command_name = match.group(1).strip()
-                    description = match.group(2).strip()
-                    # Применяем локализацию, если она есть
-                    if locale_data and 'module_doc' in locale_data:
-                        if len(locale_data['module_doc']) >= 2:
-                            command_name = locale_data['module_doc'][0] or command_name
-                            description = locale_data['module_doc'][1] or description
-                    # Добавляем в loaded_tools
-                    loaded_tools.append((command_name, description, module.main))
-                    let_log(f"  Веб-поиск добавлен в список инструментов: {command_name}")
-                    globals()['web_search'] = web_search_wrapper
-                    let_log(f"✅ Функция web_search глобализована")
-                else: let_log(f"  ⚠ Не удалось извлечь command_name из файла веб-поиска")
-        except Exception as e: let_log(f"  ⚠ Ошибка обработки файла веб-поиска: {e}")
-    else: let_log(f"⚠ Файл веб-поиска не найден в списке")
-    if ask_user_module:
-        module, ask_user_func, file_path = ask_user_module
-        # Загружаем локализацию для ask_user
-        current_lang = globals().get('language', 'en')
-        locale_data = load_locale(file_path, current_lang)
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
-                if match:
-                    command_name = match.group(1).strip()
-                    description = match.group(2).strip()
-                    # Применяем локализацию, если она есть
-                    if locale_data and 'module_doc' in locale_data:
-                        if len(locale_data['module_doc']) >= 2:
-                            command_name = locale_data['module_doc'][0] or command_name
-                            description = locale_data['module_doc'][1] or description
-                    # Добавляем в loaded_tools
-                    loaded_tools.append((command_name, description, ask_user_func))
-                    let_log(f"  Ask_user добавлен в список инструментов: {command_name}")
-                    # Глобализуем ask_user
-                    globals()['ask_user'] = ask_user_func
-                    let_log(f"✅ Функция ask_user глобализована")
-                else: let_log(f" ⚠ Не удалось извлечь command_name из файла ask_user")
-        except Exception as e: let_log(f" ⚠ Ошибка обработки файла ask_user: {e}")
-    # 4. Настраиваем global_state
+            special_files['ask_user'] = file_path
+        else: other_files.append(file_path)
+    # Сначала загружаем обычные модули
+    if other_files:
+        let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
+        loaded_tools = mod_loader(other_files)
+    else: loaded_tools = []
+    # Загружаем специальные модули через mod_loader
+    let_log(f"\nЗагрузка специальных модулей")
+    for module_type, file_path in special_files.items():
+        if file_path:
+            let_log(f"Загрузка {module_type}: {file_path}")
+            module_result = mod_loader([file_path])
+            if module_result:
+                for command_name, description, func in module_result:
+                    # Добавляем в общий список инструментов
+                    loaded_tools.append((command_name, description, func))
+                    # Глобализуем функцию по типу модуля
+                    if module_type == 'web_search':
+                        globals()['web_search'] = func
+                        let_log(f"✅ Функция web_search глобализована")
+                    elif module_type == 'ask_user':
+                        globals()['ask_user'] = func
+                        let_log(f"✅ Функция ask_user глобализована")
+            else: let_log(f"⚠ Не удалось загрузить {module_type}")
+    # Настраиваем global_state
     global_state.another_tools = loaded_tools
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
     let_log(f"Всего загружено инструментов: {len(loaded_tools)}")
