@@ -587,16 +587,19 @@ class Backend:
             return None
         finally:
             if 'conn' in locals(): conn.close()
-    def _get_localized_doc(self, mod_path: Path):
+    # ИСПРАВЛЕНО: добавлен параметр lang, используется переданный язык или глобальный
+    def _get_localized_doc(self, mod_path: Path, lang=None):
         localized_name, localized_desc = None, None
+        if lang is None:
+            lang = Lang.current_language
         lang_file = mod_path.with_name(f"{mod_path.stem}_lang.py")
-        if lang_file.exists() and Lang.current_language and Lang.current_language != "en":
+        if lang_file.exists() and lang and lang != "en":
             try:
                 spec = importlib.util.spec_from_file_location("lang_module", str(lang_file))
                 lang_module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(lang_module)
-                if hasattr(lang_module, 'locales') and Lang.current_language in lang_module.locales:
-                    locale_data = lang_module.locales[Lang.current_language]
+                if hasattr(lang_module, 'locales') and lang in lang_module.locales:
+                    locale_data = lang_module.locales[lang]
                     if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 4:
                         localized_name = locale_data['module_doc'][2]
                         localized_desc = locale_data['module_doc'][3]
@@ -611,8 +614,8 @@ class Backend:
     def rescan_and_localize_modules(self):
         db_path = self.db_path
         system_os = platform.system().lower()
-        current_language_row = self.sql_exec(db_path, "SELECT value FROM settings WHERE key = 'language'", fetchone=True)
-        current_language = current_language_row[0] if current_language_row else 'en'
+        # Используем текущий язык интерфейса для всех операций
+        current_language = Lang.current_language
         self._check_existing_modules(db_path, current_language)
         self._scan_default_tools(db_path, system_os, current_language)
         ModuleManager().load_modules(self)
@@ -625,7 +628,7 @@ class Backend:
                 self.sql_exec(db_path, "DELETE FROM default_mods WHERE id = ?", (mod_id,))
                 continue
             if mod_lang != current_language:
-                new_name, new_desc = self._get_localized_doc(mod_path)
+                new_name, new_desc = self._get_localized_doc(mod_path, lang=current_language)
                 self.sql_exec(db_path, "UPDATE default_mods SET name = ?, description = ?, lang = ? WHERE id = ?", (new_name, new_desc, current_language, mod_id))
         current_customs = self.sql_exec(db_path, "SELECT id, adress, lang FROM custom_mods", fetchall=True) or []
         for mod_id, mod_adress, mod_lang in current_customs:
@@ -634,7 +637,7 @@ class Backend:
                 self.sql_exec(db_path, "DELETE FROM custom_mods WHERE id = ?", (mod_id,))
                 continue
             if mod_lang != current_language:
-                new_name, new_desc = self._get_localized_doc(mod_path)
+                new_name, new_desc = self._get_localized_doc(mod_path, lang=current_language)
                 self.sql_exec(db_path, "UPDATE custom_mods SET name = ?, description = ?, lang = ? WHERE id = ?", (new_name, new_desc, current_language, mod_id))
     def _scan_default_tools(self, db_path, system_os, current_language):
         default_mods_dir = Path(resource_path("default_tools"))
@@ -651,7 +654,7 @@ class Backend:
             if existing: return
             valid, msg = ModuleValidator.validate_module(str(mod_file.resolve()))
             if not valid: print(f"Ошибка в модуле по умолчанию {mod_file.name}: {msg}"); return
-            name, description = self._get_localized_doc(mod_file)
+            name, description = self._get_localized_doc(mod_file, lang=current_language)
             self.sql_exec(db_path, "INSERT OR IGNORE INTO default_mods (name, description, adress, enabled, lang) VALUES (?, ?, ?, ?, ?)", (name, description, relative_path_str, 0, current_language))
         for item in default_mods_dir.rglob("*.py"):
             if item.is_file():
@@ -777,7 +780,7 @@ class Backend:
     def add_custom_mod(self, file_path):
         valid, error_msg = ModuleValidator.validate_module(file_path)
         if not valid: raise ValueError(Lang.get("module_validation_error", error_msg=error_msg))
-        name, description = self._get_localized_doc(Path(file_path))
+        name, description = self._get_localized_doc(Path(file_path), lang=Lang.current_language)
         self.sql_exec(self.db_path, "INSERT INTO custom_mods (name, description, adress, enabled) VALUES (?, ?, ?, ?)", (name, description, file_path, 1))
         return True
     def is_main_config_complete(self):
@@ -1808,7 +1811,7 @@ class CreateChatWindow(BaseSettingsWindow):
         if not valid:
             showerror(self, Lang.get("error"), msg)
             return
-        name, description = self.backend._get_localized_doc(Path(path))
+        name, description = self.backend._get_localized_doc(Path(path), lang=Lang.current_language)
         new_mod = {"id": self.backend.generate_id(6), "name": name, "description": description, "adress": path}
         self.newly_added_mods.append(new_mod)
         self.rebuild_mods_list()
@@ -1900,7 +1903,8 @@ def show_splash(app_ready_event: multiprocessing.Event):
 def run_main_app(app_ready_event: multiprocessing.Event):
     from cross_gpt import initialize_work
     if sys.platform == "darwin":
-        try: from AppKit import NSApp
+        try:
+            from AppKit import NSApp
         except ImportError:
             try:
                 print("PyObjC not found, attempting to install...")

@@ -14,7 +14,7 @@ from urllib.parse import quote_plus, urlparse, urljoin
 from ddgs import DDGS
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from cross_gpt import let_log, cacher
+from cross_gpt import let_log, cacher, text_cutter
 
 # Улучшенные заголовки для имитации реального браузера
 HEADERS = {
