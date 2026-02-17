@@ -2499,6 +2499,59 @@ def find_all_commands(text: str, available_commands: list[str], cutoff: float = 
 
 def find_and_match_command(text, commands_dict):
     """
+    Ищет в тексте маркер вида !!!команда!!! (допускается 1-3 знаков '!' или '¡' с обеих сторон).
+    Возвращает (найденный_ключ, содержимое_после_маркера) или None.
+    """
+    if not text or not commands_dict:
+        return None
+
+    # Паттерн: открывающий маркер (1-3 символа '!' или '¡'), 
+    # затем имя (буквы, цифры, пробелы, подчёркивания) — нежадно,
+    # затем закрывающий маркер (1-3 символа '!' или '¡').
+    # Пробелы вокруг имени допускаются, но они будут отброшены.
+    pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
+    matches = list(re.finditer(pattern, text))
+    if not matches:
+        return None
+
+    # Берём первое вхождение (можно доработать для обработки нескольких команд)
+    match = matches[0]
+    raw_name = match.group(1).strip()          # исходное имя с возможными пробелами
+    content = text[match.end():].lstrip()      # всё после закрывающего маркера (аргументы)
+
+    # Нормализуем имя: заменяем пробелы на подчёркивания, приводим к нижнему регистру
+    normalized_name = re.sub(r'\s+', '_', raw_name).lower()
+
+    # Получаем список доступных ключей
+    available_keys = [str(k) for k in commands_dict.keys()]
+
+    # 1. Точное совпадение после нормализации
+    for key in available_keys:
+        if normalized_name == key.lower():
+            return (key, content)
+
+    # 2. Нечёткое сравнение с учётом длины
+    best_match = None
+    best_ratio = 0.0
+    threshold = 0.8  # можно повысить до 0.85 при необходимости
+
+    for key in available_keys:
+        key_lower = key.lower()
+        # Отклонение длины не более 2 символов
+        if abs(len(normalized_name) - len(key_lower)) > 2:
+            continue
+        ratio = difflib.SequenceMatcher(None, normalized_name, key_lower).ratio()
+        if ratio > best_ratio and ratio >= threshold:
+            best_ratio = ratio
+            best_match = key
+
+    if best_match:
+        return (best_match, content)
+
+    return None
+'''
+def find_and_match_command(text, commands_dict):
+    """
     Ищет маркер !!!name!!! в тексте и пытается сопоставить имя с commands_dict.
     Возвращает (found_key, content_str) или None.
     commands_dict ожидается в формате: {'name': ('description', func), ...}
@@ -2584,7 +2637,7 @@ def find_and_match_command(text, commands_dict):
         except: found_key = None
     if not found_key: return None
     return (found_key, content)
-
+'''
 def tools_selector(text, sid):
     """
     Вызывает инструменты, используя поиск маркеров и словарь команд в global_state.tools_commands_dict[sid].

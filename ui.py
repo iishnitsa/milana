@@ -550,8 +550,8 @@ class ModuleManager:
             self.custom_modules = []
             self.initialized = True
             self.loaded = False
-    def load_modules(self, backend):
-        if self.loaded:
+    def load_modules(self, backend, reload_m=False):
+        if self.loaded and not reload_m:
             print("Modules already loaded, skipping")
             return
         try:
@@ -1642,6 +1642,7 @@ class SettingsWindow(BaseSettingsWindow):
             self.backend.update_global_settings(settings_to_save)
             new_language = self.settings_vars['language'].get()
             if new_language != self.original_language: Lang.load_language(new_language)
+            ModuleManager().load_modules(self.backend, reload_m=True)
             self.on_close()
         finally:
             if self.master.winfo_exists():
