@@ -154,12 +154,21 @@ user_review_text3 = '\nClient reaction:\n'
 user_review_text4 = '\nAI critic reaction:\n'
 
 what_is_func_text = '''
-
+To call a command, write three exclamation marks at the beginning of the message, then the command name, then three more exclamation marks, and then the information for the command.
+Do not use json or markdown to call functions.
+If you are writing a command, write only the command, do not comment on your actions.
 If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message
-or a response from a function if it was called by you.
-The interlocutor does not know that you are calling a function and does not see the function's response.
+or a function response if it was called by you.
 
 '''
+
+only_one_func_text = """
+Only one command is allowed per message. A command cannot be combined with a message for the interlocutor.
+The interlocutor will not receive a message containing a correctly written and system-recognized command.
+The interlocutor will not see the function's response to your command.
+You can only call commands available in the system instruction. In parentheses they have a description of their functions:
+
+"""
 
 last_messages_marker = "\nLast messages:"
 
@@ -258,6 +267,7 @@ class SystemTextContainer:
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4
         self.what_is_func_text = what_is_func_text
+        self.only_one_func_text = only_one_func_text
         self.last_messages_marker = last_messages_marker
         self.rag_context_marker = rag_context_marker
         self.global_summary_marker = global_summary_marker

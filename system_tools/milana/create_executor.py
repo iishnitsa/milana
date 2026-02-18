@@ -7,6 +7,7 @@ import difflib
 from cross_gpt import (
     found_info_1,
     find_all_commands,
+    only_one_func_text,
     what_is_func_text,
     native_func_call,
     let_log,
@@ -37,7 +38,7 @@ def main(text):
             'create_executor_select_tools_1',
             'create_executor_select_tools_2',
             'worker_tool_prompt_1',
-            'worker_tool_prompt_2',
+            'command_example',
             'create_executor_return_text_1',
             'create_executor_return_text_2',
         )
@@ -72,21 +73,17 @@ Task description:
 
 '''
         main.worker_tool_prompt_1 = '''
-You are the AI executor "Ivan".
-You work with your curator - the AI operator "Milana". Perform the task assigned by "Milana". She controls the execution.
+You are an AI executor "Ivan".
+You work with your curator - AI operator "Milana". Perform the task assigned by "Milana". She monitors the execution.
 Perform the task, discussing each step with "Milana", listening to her comments.
-Only if the task is too complex and extensive, or only if "Milana" is dissatisfied with the result after several attempts and hard work, call the task delegation command and after the command, describe the task (in detail, with an unambiguous interpretation, with the interpretation of abbreviations, if any), problems, and the reason for dissatisfaction, if any.
-This will create a similar dialogue between "Milana" and "Ivan" further down the hierarchy, create a plan with subtasks based on this task, and transfer this plan to them.
-In response to the delegation command, you will only receive the result or a failure message.
+Only if the task is too complex and extensive, or only if "Milana" is dissatisfied with the result after several attempts and hard work, call the task delegation command and describe the task (in detail, with unambiguous interpretation, with explanation of abbreviations if any), problems, and the reason for dissatisfaction if any.
+This will create a similar dialog of "Milana" and "Ivan" lower in the hierarchy, create a plan with subtasks based on this task, and pass this plan to them.
+In response to the delegation command, you will receive only the result or a failure message.
 
 '''
-        main.worker_tool_prompt_2 = '''
-
-To call a command, write three exclamation marks at the beginning of the message, then the command name, then three more exclamation marks, and then the information for the command.
+        main.command_example = '''
 Example of a command call - "!!!delegate_task!!! Implement a warehouse accounting system for an online store"
-You can only call the commands available below. Their description of work is in parentheses:
-
-'''
+''',
         main.create_executor_return_text_1 = "Executor has been created, welcome him (write a welcome message, don't write a command)"
         main.create_executor_return_text_2 = "Executor has been recreated, welcome the new executor(write a welcome message, don't write a command)"
         return
@@ -163,9 +160,9 @@ You can only call the commands available below. Their description of work is in 
         all_user=True
     )
     # Формируем финальный промпт для исполнителя
-    prompt = main.worker_tool_prompt_1 + instructions
-    if ivan_tools: prompt += main.worker_tool_prompt_2 + selected_ivan_tools
-    if not native_func_call: prompt += what_is_func_text
+    prompt = main.worker_tool_prompt_1 + instructions + only_one_func_text
+    if ivan_tools: prompt += selected_ivan_tools
+    if not native_func_call: prompt += what_is_func_text + main.command_example
     # Сохраняем инструменты для этого чата
     global_state.tools_commands_dict[global_state.conversations] = ivan_tools
     let_log('ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ ИСПОЛНИТЕЛЯ:')

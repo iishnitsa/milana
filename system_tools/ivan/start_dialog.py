@@ -13,6 +13,7 @@ from cross_gpt import (
     start_dialog_history,
     remove_commands_roles,
     find_all_commands,
+    only_one_func_text,
     what_is_func_text,
     last_messages_marker,
     native_func_call,
@@ -45,20 +46,20 @@ def main(client_task):
             'start_dialog_tool_text_1',
             'start_dialog_tool_text_2',
             'milana_template',
+            'command_example',
             'conversations_limit_reached_text',
         )
 
         main.milana_template = '''
-You are the AI operator "Milana".
- You are given a task plan from a client or a dialogue higher up in the hierarchy. Create an AI executor "Ivan" for the task by writing the create executor command and the task after the command (in detail, with an unambiguous interpretation, with the interpretation of abbreviations, if any).
- It is advisable to create a separate executor for each task, but not mandatory.
- Then work with the executor, control the execution of the task, sometimes recreate it if necessary, the old executor will be disconnected from the dialogue.
- "Ivan" can transfer one of the tasks from the plan that he is performing further down the hierarchy if he cannot cope. This will create a similar dialogue, you will not have access to it. Only "Ivan" has the right to do this.
- When you are confident that the overall task (all or almost all of the plan) is completed - write the end dialogue command and pass a detailed response after the command.
- To call a command, write three exclamation marks at the beginning of the message, then the command name, then three more exclamation marks, and then the information for the command.
- Example of a command call - "!!!create_executor!!! Write the frontend for an online store"
- You can only call the commands available below. Their description of work is in parentheses:\n'''
-
+You are an AI operator "Milana".
+You are given a task plan from a client or a higher-level dialog. Create an AI executor "Ivan" for the task by writing the executor creation command and the task (detailed, with unambiguous interpretation, with explanation of abbreviations if any).
+Then work with the executor, monitor task execution, sometimes recreate him if necessary, for example, when you start working on the next item of the plan, the old executor will be disconnected from the dialog.
+"Ivan" can pass one of the tasks from the plan he is executing down the hierarchy if he cannot handle it. This will create a similar dialog, and you will not have access to it. Only "Ivan" has the right to do so.
+When you are confident that the overall task (the entire or almost entire plan) is completed - write the dialog completion command and pass the detailed result to the function.
+'''
+        main.command_example = '''
+Command example – "!!!create_executor!!! Write frontend for an online store"
+''',
         main.start_dialog_tool_text_1 = '''You read the description of a task for an operator who will control the work of an executor. Based on the task description, select tools from the list of allowed tools.
 
 Output data:
@@ -129,11 +130,12 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     # Формирование финального промпта
     full_prompt = main.milana_template
     let_log(milana_tools)
+    prompt += only_one_func_text
     for tool in milana_tools: full_prompt += tool + ' (' + milana_tools[tool][0] + '), '
     let_log(full_prompt)
     let_log(global_state.another_tools)
     if full_prompt and full_prompt[-1] == ',': full_prompt = full_prompt[:-1]
-    if not native_func_call: prompt += what_is_func_text
+    if not native_func_call: prompt += what_is_func_text + main.command_example
     full_prompt += prompt
     global_state.conversations += 1
     create_chat(global_state.conversations, system_role_text + full_prompt)
