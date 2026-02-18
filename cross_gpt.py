@@ -58,6 +58,7 @@ do_chat_construct = False
 native_func_call = False
 use_rag = None
 ui_conn = None
+remove_loops = True
 cache_path = ''
 cache_can_write = False
 agent_func = None
@@ -1702,6 +1703,30 @@ def _serialize_messages_to_prompt(messages):
             serialized_prompt.append(unified_tags.get('eos', ''))
     return "".join(serialized_prompt)
 
+def detect_and_remove_loops(text, min_len=2, max_len=50, min_repeats=3, min_fraction=0.3):
+    """
+    Ищет в тексте повторяющиеся последовательности символов (паттерны).
+    Если найден участок, где один и тот же паттерн повторяется подряд не менее min_repeats раз,
+    и длина этого участка составляет не менее min_fraction от оставшейся части текста,
+    то текст обрезается до начала первого повторения.
+    """
+    n = len(text)
+    if n < min_len * min_repeats: return text
+    for start in range(n - min_len * min_repeats + 1):
+        for length in range(min_len, min(max_len, (n - start) // min_repeats + 1)):
+            pattern = text[start:start+length]
+            repeats = 1
+            pos = start + length
+            while pos + length <= n and text[pos:pos+length] == pattern:
+                repeats += 1
+                pos += length
+                if repeats >= min_repeats:
+                    total_loop_len = repeats * length
+                    remaining_len = n - start
+                    if total_loop_len / remaining_len >= min_fraction: return text[:start]
+                    break
+    return text
+
 def remove_commands_roles(cleaned_text): # TODO: перепроверь работоспособность, учти отступы и что-то напоминающее команды
     if not filter_generations: return cleaned_text
     # Проверяем все переменные по порядку
@@ -1720,6 +1745,7 @@ def remove_commands_roles(cleaned_text): # TODO: перепроверь рабо
     if len(markers) >= 2:
         second_marker_start = markers[1]['start']
         cleaned_text = cleaned_text[:second_marker_start]
+    if remove_loops: cleaned_text = detect_and_remove_loops(cleaned_text)
     return cleaned_text
 
 def split_text_with_cutting(text, min_chunk_percentage=0.8):
