@@ -148,7 +148,6 @@ excel_empty_text = "Файл Excel не содержит данных или п�
 excel_error_text = "Ошибка при обработке Excel файла:"
 annotation_failed_text = "Не удалось создать аннотацию для загруженных файлов"
 
-user_review_text1 = 'Задача:\n'
 user_review_text2 = '\nРезультат:\n'
 user_review_text3 = '\nРеакция клиента:\n'
 user_review_text4 = '\nРеакция ИИ-критика:\n'
@@ -254,7 +253,6 @@ class SystemTextContainer:
         self.excel_empty_text = excel_empty_text
         self.excel_error_text = excel_error_text
         self.annotation_failed_text = annotation_failed_text
-        self.user_review_text1 = user_review_text1
         self.user_review_text2 = user_review_text2
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4

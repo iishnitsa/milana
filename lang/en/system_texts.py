@@ -149,7 +149,6 @@ excel_empty_text = "Excel file contains no data or an error occurred while readi
 excel_error_text = "Error processing Excel file:"
 annotation_failed_text = "Failed to create annotation for uploaded files"
 
-user_review_text1 = 'Task:\n'
 user_review_text2 = '\nResult:\n'
 user_review_text3 = '\nClient reaction:\n'
 user_review_text4 = '\nAI critic reaction:\n'
@@ -255,7 +254,6 @@ class SystemTextContainer:
         self.excel_empty_text = excel_empty_text
         self.excel_error_text = excel_error_text
         self.annotation_failed_text = annotation_failed_text
-        self.user_review_text1 = user_review_text1
         self.user_review_text2 = user_review_text2
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4

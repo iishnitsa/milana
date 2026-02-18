@@ -185,16 +185,9 @@ def load_locale(module_file, current_lang='en'):
     elif current_lang != 'en': let_log(f"Файл локализации {lang_file} не найден")
     return locale_data
 
-def update_task(original_task, dialog_result, user_feedback, critic_feedback=None, is_critic=False):
-    """Обновляет задачу с учетом фидбэка пользователя или критика"""
-    review_texts = [user_review_text1, user_review_text2, user_review_text3, user_review_text4]
-    has_review = any(text in original_task for text in review_texts)
-    if is_critic and critic_feedback:
-        if has_review: return original_task + user_review_text2 + dialog_result + user_review_text4 + critic_feedback
-        else: return user_review_text1 + original_task + user_review_text2 + dialog_result + user_review_text4 + critic_feedback
-    else:
-        if has_review: return original_task + user_review_text2 + dialog_result + user_review_text3 + user_feedback
-        else: return user_review_text1 + original_task + user_review_text2 + dialog_result + user_review_text3 + user_feedback
+def update_task(original_task, dialog_result, user_feedback, critic_feedback=None, is_critic=False): """Обновляет задачу с учетом фидбэка пользователя или критика"""
+    if is_critic and critic_feedback: return original_task + user_review_text2 + dialog_result + user_review_text4 + critic_feedback
+    else: return original_task + user_review_text2 + dialog_result + user_review_text3 + user_feedback
 
 def load_special_mod(file_path, mod_type):
     """Загружает специальный модуль (web_search, ask_user)"""
@@ -2796,10 +2789,7 @@ def get_user_feedback_and_update_task(current_task, dialog_result):
         if get_input_message() == None: break
     send_output_message(text=dialog_result, command='end')
     user_message = get_input_message(wait=True)
-    if user_review_text1 in current_task or user_review_text2 in current_task or user_review_text3 in current_task or user_review_text4 in current_task:
-        updated_task = current_task + user_review_text2 + dialog_result + user_review_text3 + user_message['text']
-    else: updated_task = user_review_text1 + current_task + user_review_text2 + dialog_result + user_review_text3 + user_message['text']
-    if not updated_task: raise # TODO: доделай тут или общение с пользователем или просто сообщение что текста нет
+    updated_task = current_task + user_review_text2 + dialog_result + user_review_text3 + user_message['text']
     if user_message['attachments']:
         send_output_message(text=start_load_attachments_text)
         upload_user_data(user_message['attachments'])
@@ -2819,10 +2809,7 @@ def worker(really_main_task):
         global_state.gigo_web_search_allowed = True
         if not global_state.dialog_state:
             let_log('worker диалог завершился не начавшись')
-            if global_state.critic_wants_retry:
-                if user_review_text1 in really_main_task or user_review_text2 in really_main_task or user_review_text3 in really_main_task or user_review_text4 in really_main_task:
-                    really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                else: really_main_task = user_review_text1 + really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+            if global_state.critic_wants_retry: really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
             else: really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
             continue
         while True:
@@ -2840,18 +2827,13 @@ def worker(really_main_task):
                 # TODO: вынеси эти 2 куска кода в функцию
                 let_log(global_state.conversations)
                 if global_state.conversations <= 0:
-                    if global_state.critic_wants_retry: # TODO: в критике тоже добавь пояснения И ОН НЕ ВЕЗДЕ ДОЛЖЕН ИСПОЛЬЗОВАТЬ РИЛИ МАЙН ТАКС А ЕЩЁ НАДО УНИФИЦИРОВАТЬ ЕГО С КЛИЕНТСКИМИ ТЕКСТАМИ
-                        if user_review_text1 in really_main_task or user_review_text2 in really_main_task or user_review_text3 in really_main_task or user_review_text4 in really_main_task:
-                            really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                        else: really_main_task = user_review_text1 + really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+                    if global_state.critic_wants_retry: really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                     else: really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
                     break
                 else:
                     global_state.dialog_state = True
                     if global_state.critic_wants_retry:
-                        if user_review_text1 in global_state.main_now_task or user_review_text2 in global_state.main_now_task or user_review_text3 in global_state.main_now_task or user_review_text4 in global_state.main_now_task:
-                            global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                        else: global_state.main_now_task = user_review_text1 + global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+                        global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                         talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
                     else: talk_prompt = global_state.dialog_result
 
