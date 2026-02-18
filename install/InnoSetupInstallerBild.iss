@@ -1,13 +1,9 @@
-; ===========================================
-; Inno Setup Script for Milana Application
-; ============================================
-
 [Setup]
 AppName=Milana
 AppVersion=2026.02
 AppPublisher=iishnitsa
 AppPublisherURL=https://github.com/iishnitsa/milana
-DefaultDirName={pf}\Milana
+DefaultDirName={userpf}\Milana
 DefaultGroupName=Milana
 OutputBaseFilename=MilanaSetup
 Compression=lzma2
@@ -17,12 +13,14 @@ UninstallDisplayIcon={app}\data\icons\icon.ico
 AppID={{74bec6ac-6270-4f46-a420-eb3a0d86a788}}
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-
+PrivilegesRequired=lowest
 DisableDirPage=no
 ExtraDiskSpaceRequired=0
 AllowRootDirectory=no
 AllowUNCPath=no
 UsedUserAreasWarning=no
+AllowNetworkDrive=no
+AllowNoIcons=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"
