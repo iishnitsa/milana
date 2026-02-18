@@ -296,66 +296,6 @@ def get_page_text(url):
         return text
     except Exception as e: return ''
 
-@cacher
-def pages_handler(text):
-    # Константы
-    TARGET_SUCCESSFUL_SITES = 10
-    MAX_ADDITIONAL_REQUESTS = 5  # Максимальное количество дополнительных запросов к поисковику
-    MAX_TOTAL_LINKS = 30  # Максимальное общее количество ссылок для обработки
-    all_links = []
-    successful_texts = []  # Список успешных текстов [(url, text), ...]
-    processed_links = set()  # Множество обработанных ссылок
-    additional_requests_made = 0  # Счетчик дополнительных запросов
-    # Функция для получения дополнительных ссылок
-    def get_more_links(count):
-        nonlocal additional_requests_made
-        if additional_requests_made >= MAX_ADDITIONAL_REQUESTS: return []
-        try:
-            additional_requests_made += 1
-            # Запрашиваем на count больше, так как некоторые могут не сработать
-            new_links = fetch_links_ddg(text, max_results=count + 2)
-            # Исключаем уже обработанные ссылки
-            fresh_links = [link for link in new_links if link not in processed_links]
-            return fresh_links
-        except: return []
-    # Получаем первоначальные ссылки
-    try:
-        initial_links = fetch_links_ddg(text, LINKS_PER_ENGINE)
-        all_links.extend(initial_links)
-    except Exception as e: let_log(f'{main.search_error_msg}{str(e)}'); return f'{main.search_error_msg}{str(e)}'
-    if not all_links: return main.no_results_msg
-    # Основной цикл обработки ссылок
-    link_index = 0
-    while len(successful_texts) < TARGET_SUCCESSFUL_SITES and link_index < len(all_links):
-        # Проверяем, не превысили ли максимальное количество ссылок
-        if len(processed_links) >= MAX_TOTAL_LINKS:
-            let_log(f'[main] Достигнут максимальный лимит ссылок ({MAX_TOTAL_LINKS})')
-            break
-        link = all_links[link_index]
-        # Пропускаем уже обработанные ссылки (на всякий случай)
-        if link in processed_links:
-            link_index += 1
-            continue
-        page_text = get_page_text(link)
-        processed_links.add(link)
-        if page_text: successful_texts.append((link, page_text))
-        else:
-            # Если текст не получен, запрашиваем дополнительную ссылку
-            if len(successful_texts) < TARGET_SUCCESSFUL_SITES:
-                additional_links = get_more_links(1)
-                if additional_links: all_links.extend(additional_links)
-        link_index += 1
-        # Пауза между запросами (кроме последнего)
-        if link_index < len(all_links) and link_index < MAX_TOTAL_LINKS:
-            sleep_time = random.uniform(2, 4)
-            time.sleep(sleep_time)
-    # Формируем итоговый текст
-    if not successful_texts: return main.search_failed
-    collected_text = ""
-    for link, text in successful_texts[:TARGET_SUCCESSFUL_SITES]: collected_text += f"=== {link} ===\n{text}\n\n"
-    let_log(f'Обработано ссылок: {len(processed_links)}, всего получено ссылок: {len(all_links)}')
-    return collected_text
-
 def main(text):
     if not hasattr(main, 'attr_names'):
         let_log('INITIALIZATION')
@@ -370,5 +310,64 @@ def main(text):
         main.search_error_msg = 'Search error: '
         main.no_results_msg = 'No results found. Try refining your query or using different keywords.'
         return
-    let_log('WEB SEARCH CALLED')
+    let_log('WEB SEARCH CALLED')    
+    @cacher
+    def pages_handler(text):
+        # Константы
+        TARGET_SUCCESSFUL_SITES = 10
+        MAX_ADDITIONAL_REQUESTS = 5  # Максимальное количество дополнительных запросов к поисковику
+        MAX_TOTAL_LINKS = 30  # Максимальное общее количество ссылок для обработки
+        all_links = []
+        successful_texts = []  # Список успешных текстов [(url, text), ...]
+        processed_links = set()  # Множество обработанных ссылок
+        additional_requests_made = 0  # Счетчик дополнительных запросов
+        # Функция для получения дополнительных ссылок
+        def get_more_links(count):
+            nonlocal additional_requests_made
+            if additional_requests_made >= MAX_ADDITIONAL_REQUESTS: return []
+            try:
+                additional_requests_made += 1
+                # Запрашиваем на count больше, так как некоторые могут не сработать
+                new_links = fetch_links_ddg(text, max_results=count + 2)
+                # Исключаем уже обработанные ссылки
+                fresh_links = [link for link in new_links if link not in processed_links]
+                return fresh_links
+            except: return []
+        # Получаем первоначальные ссылки
+        try:
+            initial_links = fetch_links_ddg(text, LINKS_PER_ENGINE)
+            all_links.extend(initial_links)
+        except Exception as e: let_log(f'{main.search_error_msg}{str(e)}'); return f'{main.search_error_msg}{str(e)}'
+        if not all_links: return main.no_results_msg
+        # Основной цикл обработки ссылок
+        link_index = 0
+        while len(successful_texts) < TARGET_SUCCESSFUL_SITES and link_index < len(all_links):
+            # Проверяем, не превысили ли максимальное количество ссылок
+            if len(processed_links) >= MAX_TOTAL_LINKS:
+                let_log(f'[main] Достигнут максимальный лимит ссылок ({MAX_TOTAL_LINKS})')
+                break
+            link = all_links[link_index]
+            # Пропускаем уже обработанные ссылки (на всякий случай)
+            if link in processed_links:
+                link_index += 1
+                continue
+            page_text = get_page_text(link)
+            processed_links.add(link)
+            if page_text: successful_texts.append((link, page_text))
+            else:
+                # Если текст не получен, запрашиваем дополнительную ссылку
+                if len(successful_texts) < TARGET_SUCCESSFUL_SITES:
+                    additional_links = get_more_links(1)
+                    if additional_links: all_links.extend(additional_links)
+            link_index += 1
+            # Пауза между запросами (кроме последнего)
+            if link_index < len(all_links) and link_index < MAX_TOTAL_LINKS:
+                sleep_time = random.uniform(2, 4)
+                time.sleep(sleep_time)
+        # Формируем итоговый текст
+        if not successful_texts: return main.search_failed
+        collected_text = ""
+        for link, text in successful_texts[:TARGET_SUCCESSFUL_SITES]: collected_text += f"=== {link} ===\n{text}\n\n"
+        let_log(f'Обработано ссылок: {len(processed_links)}, всего получено ссылок: {len(all_links)}')
+        return collected_text
     return main.results_prefix + text_cutter(pages_handler(text))

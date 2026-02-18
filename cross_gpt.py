@@ -1149,8 +1149,7 @@ def ask_model(prompt_text,
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
     # Проверка длины контекста
-    if len(prompt_text) * text_tokens_coefficient > token_limit - 1000:
-        raise RuntimeError("ContextOverflowError")
+    if len(prompt_text) * text_tokens_coefficient > token_limit - 1000: raise RuntimeError("ContextOverflowError")
     # --- Обработка пользовательского ввода ---
     if use_user:
         import tkinter as tk
@@ -1161,8 +1160,7 @@ def ask_model(prompt_text,
         input_text = simpledialog.askstring("Ввод текста", "Пожалуйста, введите текст:", parent=root)
         root.destroy()
         if input_text is not None:
-            if input_text != "":
-                return input_text
+            if input_text != "": return input_text
         let_log("[Пользователь нажал Cancel, используется генерация моделью]")
     # --- Обработка особых случаев (system_prompt и all_user) ---
     # Особый случай 1: system_prompt
@@ -1170,13 +1168,11 @@ def ask_model(prompt_text,
         let_log("Режим (Особый случай): system_prompt -> chat/completions")
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt_text}
-        ]
+            {"role": "user", "content": prompt_text}]
         generation_params = {
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": limit or token_limit
-        }
+            "max_tokens": limit or token_limit}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
     # Особый случай 2: all_user
@@ -1186,8 +1182,7 @@ def ask_model(prompt_text,
         generation_params = {
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": limit or token_limit
-        }
+            "max_tokens": limit or token_limit}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
@@ -1200,8 +1195,7 @@ def ask_model(prompt_text,
             "prompt": _serialize_messages_to_prompt(parsed_msgs),
             "temperature": temperature,
             "max_tokens": limit or token_limit,
-            "echo": False
-        }
+            "echo": False}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: ask_provider_model(generation_params))
     # Режим 2: Парсинг чата БЕЗ function call
@@ -1211,8 +1205,7 @@ def ask_model(prompt_text,
         generation_params = {
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": limit or token_limit
-        }
+            "max_tokens": limit or token_limit}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
     # Режим 3: Парсинг чата С function call
@@ -1228,8 +1221,7 @@ def ask_model(prompt_text,
         generation_params = {
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": limit or token_limit
-        }
+            "max_tokens": limit or token_limit}
         # 3. Добавляем инструменты в запрос, если они есть
         let_log(formatted_tools)
         if formatted_tools:
