@@ -1357,14 +1357,14 @@ class ChatApp(CTk):
             self.create_chat_window_show()
             return
         attachments_paths = [str(a.resolve()) for a in self.attachments] if self.attachments else []
-        message_data = {'text': text, 'attachments': attachments_paths or None, 'command': 'answer_user' if self.waiting_for_answer.get(self.current_chat_id) else None}
         if self.waiting_for_answer.get(self.current_chat_id): self.waiting_for_answer[self.current_chat_id] = False
         if self.backend.add_message(self.current_chat_id, text, True, attachments_paths):
-            self.add_message_to_ui(text, True, attachments=attachments_paths)
-            self.input_text.delete("1.0", "end")
             self.attachments.clear()
             self.show_attachments()
+            self.add_message_to_ui(text, True, attachments=attachments_paths)
+            self.input_text.delete("1.0", "end")
             self.adjust_input_height()
+            message_data = {'text': text, 'attachments': attachments_paths or None, 'command': 'answer_user' if self.waiting_for_answer.get(self.current_chat_id) else None}
             if self.current_chat_id in self.input_queues: self.input_queues[self.current_chat_id].put(message_data)
             if self.current_chat_id not in self.chat_processes: self.resume_chat()
             else: self.update_chat_controls()
