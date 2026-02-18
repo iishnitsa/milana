@@ -148,20 +148,18 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                 # Если ничего не найдено, пробуем поиск в интернете
                 if (not results) and global_state.gigo_web_search_allowed:
                     try:
-                        from cross_gpt import web_search, split_text_with_cutting
+                        from cross_gpt import web_search, split_text_with_cutting, set_common_save_id, get_common_save_id
                         web_result = web_search(i)
                         if web_result and web_result != found_info_1:
                             # Сохраняем результат в user_collection
                             chunks = split_text_with_cutting(web_result)
                             if chunks:
                                 for t, chunk in enumerate(chunks):
-                                    # Генерируем уникальный ID
-                                    import hashlib # TODO: избавься от этого
-                                    chunk_id = hashlib.md5(f"{i}_{t}".encode()).hexdigest()
+                                    set_common_save_id()
                                     coll_exec(
                                         action="add",
                                         coll_name="user_collection",
-                                        ids=[chunk_id],
+                                        ids=[get_common_save_id()],
                                         embeddings=[get_embs(chunk)],
                                         metadatas=[{
                                             'name': i,  # текст запроса

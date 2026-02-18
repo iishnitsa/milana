@@ -185,7 +185,7 @@ def load_locale(module_file, current_lang='en'):
     elif current_lang != 'en': let_log(f"Файл локализации {lang_file} не найден")
     return locale_data
 
-def update_task(original_task, dialog_result, user_feedback, critic_feedback=None, is_critic=False): """Обновляет задачу с учетом фидбэка пользователя или критика"""
+def update_task(original_task, dialog_result, user_feedback, critic_feedback=None, is_critic=False):
     if is_critic and critic_feedback: return original_task + user_review_text2 + dialog_result + user_review_text4 + critic_feedback
     else: return original_task + user_review_text2 + dialog_result + user_review_text3 + user_feedback
 
