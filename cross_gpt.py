@@ -221,6 +221,13 @@ def load_special_mod(file_path, mod_type):
     except Exception as e: let_log(f"⚠ Ошибка загрузки {mod_type}: {e}"); return None
 
 def extract_command_markers(text, commands_dict):
+    """
+    Извлекает все маркеры команд из текста.
+    Возвращает список словарей с ключами 'key', 'content', 'start', 'end', 'full_match'.
+    """
+    return _find_command_markers(text, commands_dict, return_all=True, start_limit=None)
+'''
+def extract_command_markers(text, commands_dict):
     """Извлекает все маркеры команд из текста с использованием find_and_match_command"""
     if not text or not commands_dict: return []
     markers = []
@@ -249,7 +256,7 @@ def extract_command_markers(text, commands_dict):
             else: pos = next_marker + 3
         else: pos = next_marker + 3
     return markers
-
+'''
 def find_work_folder(file_name):
     real_path = os.path.realpath(file_name)
     if real_path.find('\\') != -1: slash = '\\'
@@ -2508,6 +2515,94 @@ def find_all_commands(text: str, available_commands: list[str], cutoff: float = 
     # Преобразуем множество обратно в список перед возвратом.
     return list(found_commands_set)
 
+def _find_command_markers(text, commands_dict, return_all=False, start_limit=None):
+    """
+    Ищет маркеры команд вида !!!name!!! (с вариациями символов '!' и '¡').
+    Возвращает:
+        если return_all=False: кортеж (key, content, start, end) для первого найденного маркера или None.
+        если return_all=True: список словарей с ключами 'key', 'content', 'start', 'end', 'full_match'.
+    Параметр start_limit ограничивает поиск маркеров, начинающихся не дальше этой позиции.
+    """
+    if not text or not commands_dict:
+        return [] if return_all else None
+
+    exclamation_chars = {'!', '¡'}
+    pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
+    markers = []
+
+    for match in re.finditer(pattern, text):
+        start = match.start()
+        if start_limit is not None and start > start_limit:
+            continue
+
+        raw_name = match.group(1).strip()
+        # Нормализуем имя: заменяем пробелы на подчёркивания, приводим к нижнему регистру
+        normalized_name = re.sub(r'\s+', '_', raw_name).lower()
+
+        # Поиск соответствия в commands_dict
+        found_key = None
+        # 1. Точное совпадение по нормализованному имени
+        for key in commands_dict:
+            if normalized_name == key.lower():
+                found_key = key
+                break
+
+        # 2. Нечёткое сравнение, если точного нет
+        if not found_key:
+            best_match = None
+            best_ratio = 0.0
+            threshold = 0.8
+            for key in commands_dict:
+                key_lower = key.lower()
+                if abs(len(normalized_name) - len(key_lower)) > 2:
+                    continue
+                ratio = difflib.SequenceMatcher(None, normalized_name, key_lower).ratio()
+                if ratio > best_ratio and ratio >= threshold:
+                    best_ratio = ratio
+                    best_match = key
+            if best_match:
+                found_key = best_match
+
+        if not found_key:
+            continue
+
+        # Определяем конец маркера (позиция после закрывающих символов)
+        end = match.end()
+        # Содержимое после маркера (до следующего маркера или конца текста)
+        next_match = re.search(pattern, text[end:])
+        if next_match:
+            content_end = end + next_match.start()
+        else:
+            content_end = len(text)
+        content = text[end:content_end].strip()
+
+        marker_info = {
+            'key': found_key,
+            'content': content,
+            'start': start,
+            'end': end,
+            'full_match': text[start:end]
+        }
+
+        if not return_all:
+            return (found_key, content, start, end)
+        markers.append(marker_info)
+
+    if return_all:
+        return markers
+    return None
+
+def find_and_match_command(text, commands_dict):
+    """
+    Ищет в тексте первый маркер команды, начинающийся в первых 5 символах.
+    Возвращает (найденный_ключ, содержимое_после_маркера) или None.
+    """
+    result = _find_command_markers(text, commands_dict, return_all=False, start_limit=5)
+    if result:
+        key, content, _, _ = result
+        return (key, content)
+    return None
+'''
 def find_and_match_command(text, commands_dict):
     """
     Ищет в тексте маркер вида !!!команда!!! (допускается 1-3 знаков '!' или '¡' с обеих сторон).
@@ -2540,6 +2635,7 @@ def find_and_match_command(text, commands_dict):
             best_match = key
     if best_match: return (best_match, content)
     return None
+'''
 '''
 def find_and_match_command(text, commands_dict):
     """
@@ -2629,6 +2725,95 @@ def find_and_match_command(text, commands_dict):
     if not found_key: return None
     return (found_key, content)
 '''
+def analyze_protocol(text): # TODO: ПРОВЕРЬ, ВЫЗЫВАЕТСЯ ЛИ ЭТО ИЗ СОЗДАНИЯ ЧАТА
+    """
+    Анализирует текст ответа модели на соответствие протоколу вызова инструментов.
+    Возвращает:
+        None - нет команд (можно завершить цикл и отправить сообщение пользователю)
+        True - есть команды и они корректны (можно вызывать tools_selector)
+        str - предупреждение о нарушении (нужно отправить модели и повторить цикл)
+    """
+    if global_state.stop_agent: return None
+
+    # Текущий словарь команд для данного агента
+    sid = global_state.now_agent_id
+    commands_dict = global_state.tools_commands_dict.get(sid, {})
+
+    # 1. Поиск маркерных команд !!!...!!! через улучшенный extract_command_markers
+    markers = extract_command_markers(text, commands_dict)  # список с ключами 'key', 'content', 'start', 'end', 'full_match'
+
+    # 2. Если native отключён, ищем JSON-попытки (неформатные вызовы)
+    json_attempts = []
+    if not native_func_call:
+        stripped = text.lstrip()
+        if stripped.startswith('{'):
+            try:
+                obj = json.loads(stripped)
+                # Проверяем, похоже ли на tool call
+                if isinstance(obj, dict) and any(k in obj for k in ('name', 'tool', 'function', 'arguments')):
+                    start_pos = text.find('{')
+                    if start_pos == -1:
+                        start_pos = 0
+                    json_attempts.append({
+                        'type': 'json',
+                        'start': start_pos,
+                        'end': len(text)  # приблизительно, для проверок достаточно
+                    })
+            except json.JSONDecodeError:
+                pass
+
+    # Объединяем все обнаруженные вызовы
+    all_calls = markers + json_attempts
+
+    if not all_calls:
+        return None  # команд нет
+
+    violations = []
+
+    # Проверка множественности (всегда)
+    if len(all_calls) > 1: violations.append("multiple_commands")
+    # Проверка позиции первой команды (только если не native)
+    if not native_func_call:
+        first_call = all_calls[0]
+        if first_call['start'] > 5: violations.append("not_at_start")
+    # Поиск Markdown-блоков (для проверки маркерных команд)
+    markdown_ranges = []
+    md_positions = [m.start() for m in re.finditer(r'```', text)]
+    for i in range(0, len(md_positions), 2):
+        if i + 1 < len(md_positions): markdown_ranges.append((md_positions[i], md_positions[i+1] + 3))
+    # Грубый поиск JSON-диапазонов (для проверки маркерных команд)
+    json_ranges = []
+    stack = []
+    for i, ch in enumerate(text):
+        if ch == '{':
+            stack.append(i)
+        elif ch == '}':
+            if stack:
+                start = stack.pop()
+                json_ranges.append((start, i + 1))
+    # Проверяем каждую маркерную команду на попадание в Markdown или JSON
+    for cmd in markers:
+        pos = cmd['start']
+        for start, end in markdown_ranges:
+            if start <= pos <= end:
+                violations.append("inside_markdown")
+                break
+        for start, end in json_ranges:
+            if start <= pos <= end:
+                violations.append("inside_json")
+                break
+    # Если есть нарушения – формируем предупреждение
+    if violations:
+        warning_lines = [warn_command_text_1]
+        if "multiple_commands" in violations: warning_lines.append(warn_command_text_2)
+        if "not_at_start" in violations: warning_lines.append(warn_command_text_3)
+        if "inside_markdown" in violations: warning_lines.append(warn_command_text_4)
+        if "inside_json" in violations: warning_lines.append(warn_command_text_5)
+        # Упоминаем команду пропуска (она не обрабатывается здесь)
+        warn_command_text
+        warning_lines.append(warn_command_text_6)
+        return " ".join(warning_lines)
+
 def tools_selector(text, sid):
     """
     Вызывает инструменты, используя поиск маркеров и словарь команд в global_state.tools_commands_dict[sid].
@@ -2640,6 +2825,9 @@ def tools_selector(text, sid):
     cached = read_cache()
     let_log(f"[TOOLS_SELECTOR] кэш: {cached}")
     if cached == [True, [False, False]]: return None
+    try:
+        if isinstance(cached[1][1], str): return cached[1][1]
+    except: pass
     # 2) получить словарь команд для сессии
     try: now_commands = global_state.tools_commands_dict.get(sid, {})
     except Exception: now_commands = {}
@@ -2651,6 +2839,10 @@ def tools_selector(text, sid):
     if not match:
         let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
         let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+        is_warn = analyze_protocol(text)
+        if is_warn != None:
+            write_cache([False, is_warn])
+            return is_warn
         write_cache([False, False])
         return None
     found_key, content = match
@@ -2688,6 +2880,10 @@ def tools_selector(text, sid):
     if entry == None:
         let_log("[TOOLS_SELECTOR] команда не найдена в словаре сессии (после сопоставления)")
         let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+        is_warn = analyze_protocol(text)
+        if is_warn != None:
+            write_cache([False, is_warn])
+            return is_warn
         write_cache([False, False])
         return None
     func_callable = None
