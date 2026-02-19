@@ -59,7 +59,7 @@ When you are confident that the overall task (the entire or almost entire plan) 
 '''
         main.command_example = '''
 Command example – "!!!create_executor!!! Write frontend for an online store"
-''',
+'''
         main.start_dialog_tool_text_1 = '''You read the description of a task for an operator who will control the work of an executor. Based on the task description, select tools from the list of allowed tools.
 
 Output data:

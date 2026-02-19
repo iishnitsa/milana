@@ -183,6 +183,18 @@ success_in_provider = 'Ошибка исчезла, продолжаю рабо�
 
 wrong_command = 'Неправильная команда'
 
+warn_command_text_1 = "Обнаружено нарушение протокола:"
+
+warn_command_text_2 = "Разрешена только одна команда в сообщении."
+
+warn_command_text_3 = "Команда должна начинаться с начала сообщения."
+
+warn_command_text_4 = "Команда находится внутри Markdown-блока. Вызывайте команды вне форматирования."
+
+warn_command_text_5 = "Команда находится внутри JSON-структуры. Используйте чистый формат !!!команда!!!."
+
+warn_command_text_6 = "Если вы НЕ пытались вызвать команду, используйте !!!пропустить!!! и затем напишите ваше сообщение ещё раз — оно будет отправлено собеседнику."
+
 text_tokens_coefficient = 0.5 # усреднённый коэффициент для русского языка
 
 class SystemTextContainer:
@@ -274,6 +286,12 @@ class SystemTextContainer:
         self.error_in_provider = error_in_provider
         self.success_in_provider = success_in_provider
         self.wrong_command = wrong_command
+        self.warn_command_text_1 = warn_command_text_1
+        self.warn_command_text_1 = warn_command_text_2
+        self.warn_command_text_1 = warn_command_text_3
+        self.warn_command_text_1 = warn_command_text_4
+        self.warn_command_text_1 = warn_command_text_5
+        self.warn_command_text_1 = warn_command_text_6
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

@@ -184,6 +184,18 @@ success_in_provider = 'The error has been resolved, continuing work'
 
 wrong_command = 'Wrong command'
 
+warn_command_text_1 = "Protocol violation detected:"
+
+warn_command_text_2 = "Only one command per message is allowed."
+
+warn_command_text_3 = "Command must start at the beginning of the message."
+
+warn_command_text_4 = "Command is inside a Markdown block. Call commands outside formatting."
+
+warn_command_text_5 = "Command is inside a JSON structure. Use pure !!!command!!! format."
+
+warn_command_text_6 = "If you were NOT trying to call a command, use !!!skip!!! and then write your message again — it will be sent to the user."
+
 text_tokens_coefficient = 0.5 # middle coefficient for english
 
 class SystemTextContainer:
@@ -275,6 +287,12 @@ class SystemTextContainer:
         self.error_in_provider = error_in_provider
         self.success_in_provider = success_in_provider
         self.wrong_command = wrong_command
+        self.warn_command_text_1 = warn_command_text_1
+        self.warn_command_text_1 = warn_command_text_2
+        self.warn_command_text_1 = warn_command_text_3
+        self.warn_command_text_1 = warn_command_text_4
+        self.warn_command_text_1 = warn_command_text_5
+        self.warn_command_text_1 = warn_command_text_6
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

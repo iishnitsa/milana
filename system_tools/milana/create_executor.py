@@ -83,7 +83,7 @@ In response to the delegation command, you will receive only the result or a fai
 '''
         main.command_example = '''
 Example of a command call - "!!!delegate_task!!! Implement a warehouse accounting system for an online store"
-''',
+'''
         main.create_executor_return_text_1 = "Executor has been created, welcome him (write a welcome message, don't write a command)"
         main.create_executor_return_text_2 = "Executor has been recreated, welcome the new executor(write a welcome message, don't write a command)"
         return
