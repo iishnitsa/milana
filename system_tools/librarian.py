@@ -29,6 +29,7 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             'answer_l_1',
             'answer_l_2',
             'answer_l_3',
+            'answer_l_4'
         )
         main.best_result_l_1 = 'Which of these fragments is most relevant to the query:"'
         main.best_result_l_2 = '"Return only the most suitable one: '
@@ -182,7 +183,11 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                 main.best_result_l_1 + '\n' + i + '\n' +
                                 main.best_result_l_2 + '\n' + text_cutter('\n'.join(results)), all_user=True
                             )
-                        return best_result # TODO: нужно условие что ничего не найдено
+                        # Проверяем, что результат корректен
+                        if best_result and best_result.strip() and best_result != found_info_1:
+                            return best_result
+                        else:
+                            return found_info_1
                     prompt_satisfies = main.request_l_1 + '\n' + i + '\n' + main.information_l_1 + '\n' + results[0] + '\n' + main.satisfies_l_1
                     answer_val = parse_prompt_response(prompt_satisfies, 0)
                     if answer_val == 1:
@@ -190,7 +195,7 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                         return results[0]
                     for r in results:
                         let_log('убрал сокращение каждого результата перед проверкой на полезность')
-                        prompt_answer = main.answer_l_1 + '\n' + i + '\n' + main.answer_l_2 + '\n' + r
+                        prompt_answer = main.answer_l_1 + '\n' + i + '\n' + main.answer_l_2 + '\n' + r + '\n' + main.answer_l_4
                         answer_val = parse_prompt_response(prompt_answer, 0)
                         if answer_val == 1:
                             complex_result += r + '\n'
@@ -262,9 +267,10 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
         if not question_lines: question_lines = lines
         cleaned_questions = []
         for question in question_lines:
-            # Убираем нумерацию вида "1. ", "2) " и т.п. в начале строки
-            cleaned = re.sub(r'^\s*\d+[\.\)]\s*', '', question.strip())
-            if cleaned: cleaned_questions.append(cleaned)
+            # Убираем нумерацию вида "1. ", "2) " и маркеры списка "- ", "* ", "• "
+            cleaned = re.sub(r'^\s*(?:\d+[\.\)]\s*|[-*•]\s*)*', '', question.strip())
+            if cleaned:
+                cleaned_questions.append(cleaned)
         # Обрабатываем каждый вопрос отдельно
         additional_info = ''
         for question in cleaned_questions:
