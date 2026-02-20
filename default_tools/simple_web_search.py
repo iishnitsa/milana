@@ -310,7 +310,8 @@ def main(text):
         main.search_error_msg = 'Search error: '
         main.no_results_msg = 'No results found. Try refining your query or using different keywords.'
         return
-    let_log('WEB SEARCH CALLED')    
+    let_log('WEB SEARCH CALLED')
+    let_log(text)
     @cacher
     def pages_handler(text):
         # Константы

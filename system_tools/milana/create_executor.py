@@ -43,7 +43,7 @@ def main(text):
             'create_executor_return_text_2',
         )
 
-        main.create_executor_param_1 = 'Are the tasks the same? If they are different, send "1", if they are the same - "0". Task 1:\n'
+        main.create_executor_param_1 = 'Are the tasks the same? Task 1:\n'
         main.create_executor_param_2 = '\nTask 2:\n'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
         main.additional_info_text = 'Additional information:\n'

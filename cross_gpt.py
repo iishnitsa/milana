@@ -201,7 +201,6 @@ def load_special_mod(file_path, mod_type):
             # Загружаем локализацию для специального модуля
             current_lang = globals().get('language', 'en')
             locale_data = load_locale(file_path, current_lang)
-
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)

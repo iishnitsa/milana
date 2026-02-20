@@ -11,6 +11,7 @@ from cross_gpt import (
     coll_exec,
     let_log,
     found_info_1,
+    parse_prompt_response,
 )
 import re
 
@@ -28,19 +29,17 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             'answer_l_1',
             'answer_l_2',
             'answer_l_3',
-            'answer_l_4'
         )
         main.best_result_l_1 = 'Which of these fragments is most relevant to the query:"'
         main.best_result_l_2 = '"Return only the most suitable one: '
         main.request_l_1 = 'Query:'
         main.information_l_1 = 'Answer:'
-        main.satisfies_l_1 = 'Fully satisfies? "1" - yes, no - "0"'
+        main.satisfies_l_1 = 'Fully satisfies?'
         main.select_matter_l_1 = 'Highlight the important. If the answer is already quite short, then just return the received answer unchanged. Query:'
         main.select_matter_l_2 = 'Answer:'
         main.answer_l_1 = 'Does the answer:'
         main.answer_l_2 = 'match the query'
-        main.answer_l_3 = 'if yes, send "1", otherwise we received one or more additional reformulated requests for additional information'
-        main.answer_l_4 = '"1" - yes, "0" - no'
+        main.answer_l_3 = 'If the answer fully satisfies the query, output exactly "1". If the answer is incomplete or insufficient, output one or more reformulated queries (each on a new line) that would help find the missing information. Do not output any explanations or additional text.'
         return
     let_log('БИБЛИОТЕКАРЬ ВЫЗВАН')
     def find_engine(ask_text, attempts_left, donee='correct', search_target=1, full_output=True):
@@ -184,33 +183,17 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                 main.best_result_l_2 + '\n' + text_cutter('\n'.join(results)), all_user=True
                             )
                         return best_result # TODO: нужно условие что ничего не найдено
-                    answer = ask_model(
-                        main.request_l_1 + '\n' + i + '\n' +
-                        main.information_l_1 + '\n' + results[0] + '\n' +
-                        main.satisfies_l_1, all_user=True
-                    )
-                    try:
-                        if '1' in answer[0:3]:
-                            let_log('удовлетворяет')
-                            return results[0]
-                    except: pass
+                    prompt_satisfies = main.request_l_1 + '\n' + i + '\n' + main.information_l_1 + '\n' + results[0] + '\n' + main.satisfies_l_1
+                    answer_val = parse_prompt_response(prompt_satisfies, 0)
+                    if answer_val == 1:
+                        let_log('удовлетворяет')
+                        return results[0]
                     for r in results:
                         let_log('убрал сокращение каждого результата перед проверкой на полезность')
-                        try: 
-                            answer = ask_model(
-                                main.answer_l_1 + '\n' + i + '\n' +
-                                main.answer_l_2 + '\n' + r + '\n' +
-                                main.answer_l_4, all_user=True
-                            )
-                        except:
-                            answer = ask_model(
-                                main.answer_l_1 + '\n' + i + '\n' +
-                                main.answer_l_2 + '\n' + text_cutter(r) + '\n' +
-                                main.answer_l_4, all_user=True
-                            )
-                        try:
-                            if '1' in answer[0:3]: complex_result += r + '\n'
-                        except: pass
+                        prompt_answer = main.answer_l_1 + '\n' + i + '\n' + main.answer_l_2 + '\n' + r
+                        answer_val = parse_prompt_response(prompt_answer, 0)
+                        if answer_val == 1:
+                            complex_result += r + '\n'
                     try:
                         complex_result = ask_model(
                             main.select_matter_l_1 + '\n' + i + '\n' +
