@@ -29,7 +29,6 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             'answer_l_1',
             'answer_l_2',
             'answer_l_3',
-            'answer_l_4'
         )
         main.best_result_l_1 = 'Which of these fragments is most relevant to the query:"'
         main.best_result_l_2 = '"Return only the most suitable one: '
@@ -195,7 +194,7 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                         return results[0]
                     for r in results:
                         let_log('убрал сокращение каждого результата перед проверкой на полезность')
-                        prompt_answer = main.answer_l_1 + '\n' + i + '\n' + main.answer_l_2 + '\n' + r + '\n' + main.answer_l_4
+                        prompt_answer = main.answer_l_1 + '\n' + i + '\n' + main.answer_l_2 + '\n' + r
                         answer_val = parse_prompt_response(prompt_answer, 0)
                         if answer_val == 1:
                             complex_result += r + '\n'

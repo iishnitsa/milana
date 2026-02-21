@@ -15,6 +15,7 @@ from ddgs import DDGS
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from cross_gpt import let_log, cacher, text_cutter
+from cross_gpt import input_info_loaders, load_info_loaders, default_handlers_names
 
 # Улучшенные заголовки для имитации реального браузера
 HEADERS = {
@@ -133,6 +134,31 @@ def get_page_text(url):
             let_log(f'[get_page_text] Error parsing URL {url}: {str(e)}')
             headers['Referer'] = 'https://www.google.com/'
         r = session.get(url, headers=headers, timeout=(10, 30), stream=True)
+        
+        # --- Обработка PDF файлов ---
+        content_type = r.headers.get('Content-Type', '').lower()
+        if 'application/pdf' in content_type:
+            # Проверяем, загружен ли обработчик PDF
+            if 'pdf' not in input_info_loaders:
+                # Загружаем обработчики файлов один раз
+                load_info_loaders(default_handlers_names)
+            pdf_handler = input_info_loaders.get('pdf')
+            if pdf_handler:
+                try:
+                    text_result = pdf_handler(r.content, input_info_loaders)
+                    if text_result and len(text_result) > 100 and is_reasonable_text(text_result[:2000]):
+                        return text_result
+                    else:
+                        let_log(f"[get_page_text] PDF processing returned insufficient text for {url}")
+                        return ''
+                except Exception as e:
+                    let_log(f"[get_page_text] Error processing PDF {url}: {e}")
+                    return ''
+            else:
+                let_log("[get_page_text] PDF handler not available, skipping PDF")
+                return ''
+        # --- Конец обработки PDF ---
+
         raw_content = r.content
         encoding = None
         detection_method = "unknown"
