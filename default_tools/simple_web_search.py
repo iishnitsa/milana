@@ -138,6 +138,7 @@ def get_page_text(url):
         # --- Обработка PDF файлов ---
         content_type = r.headers.get('Content-Type', '').lower()
         if 'application/pdf' in content_type:
+            let_log('PDF НА САЙТЕ!!!!!!!!!!!!')
             # Проверяем, загружен ли обработчик PDF
             if 'pdf' not in input_info_loaders:
                 # Загружаем обработчики файлов один раз

@@ -1,3 +1,4 @@
+# librarian.py
 '''
 need_information
 call to get missing information
@@ -15,10 +16,23 @@ from cross_gpt import (
 )
 import re
 
+def _extract_first_digit(text, default):
+    """Извлекает первую цифру из текста (аналог parse_prompt_response для готового ответа)."""
+    if not text:
+        return default
+    for ch in text[:5]:
+        if ch.isdigit():
+            try:
+                return int(ch)
+            except ValueError:
+                continue
+    return default
+
 def main(quest): # TODO: нужно удалять дубликаты информации
     # Инициализация атрибутов модуля при первом вызове
     if not hasattr(main, 'attr_names'):
         main.attr_names = (
+            #原有的
             'best_result_l_1',
             'best_result_l_2',
             'request_l_1',
@@ -29,7 +43,15 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             'answer_l_1',
             'answer_l_2',
             'answer_l_3',
+            # новые для системных промптов и меток
+            'best_result_system',
+            'select_matter_system',
+            'answer_system',
+            'label_query',
+            'label_answer',
+            'label_fragments',
         )
+        # Значения по умолчанию (английские)
         main.best_result_l_1 = 'Which of these fragments is most relevant to the query:"'
         main.best_result_l_2 = '"Return only the most suitable one: '
         main.request_l_1 = 'Query:'
@@ -40,6 +62,14 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
         main.answer_l_1 = 'Does the answer:'
         main.answer_l_2 = 'match the query'
         main.answer_l_3 = 'If the answer fully satisfies the query, output exactly "1". If the answer is incomplete or insufficient, output one or more reformulated queries (each on a new line) that would help find the missing information. Do not output any explanations or additional text.'
+
+        # Новые атрибуты
+        main.best_result_system = main.best_result_l_1 + ' ' + main.best_result_l_2
+        main.select_matter_system = main.select_matter_l_1
+        main.answer_system = main.answer_l_1 + ' ' + main.answer_l_2 + '\n' + main.answer_l_3
+        main.label_query = 'Query:'
+        main.label_answer = 'Answer:'
+        main.label_fragments = 'Fragments:'
         return
     let_log('БИБЛИОТЕКАРЬ ВЫЗВАН')
     def find_engine(ask_text, attempts_left, donee='correct', search_target=1, full_output=True):
@@ -172,51 +202,58 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                 let_log(results)
                 if results:
                     if full_output:
-                        try: 
-                            best_result = ask_model(
-                                main.best_result_l_1 + '\n' + i + '\n' +
-                                main.best_result_l_2 + '\n' + '\n'.join(results), all_user=True
-                            )
-                        except: 
-                            best_result = ask_model(
-                                main.best_result_l_1 + '\n' + i + '\n' +
-                                main.best_result_l_2 + '\n' + text_cutter('\n'.join(results)), all_user=True
-                            )
+                        # Используем системный промпт для выбора лучшего результата
+                        system_prompt = main.best_result_system
+                        # Формируем пользовательское сообщение по частям
+                        user_prompt = (main.label_query + ' ' + i + '\n' +
+                                       main.label_fragments + '\n' + "\n".join(results))
+                        try:
+                            best_result = ask_model(user_prompt, system_prompt=system_prompt)
+                        except:
+                            best_result = ask_model(text_cutter(user_prompt), system_prompt=system_prompt)
                         # Проверяем, что результат корректен
                         if best_result and best_result.strip() and best_result != found_info_1:
                             return best_result
                         else:
                             return found_info_1
-                    prompt_satisfies = main.request_l_1 + '\n' + i + '\n' + main.information_l_1 + '\n' + results[0] + '\n' + main.satisfies_l_1
-                    answer_val = parse_prompt_response(prompt_satisfies, 0)
+                    # Проверка на полное удовлетворение (используем parse_prompt_response как в старом коде)
+                    prompt_satisfies = (main.request_l_1 + '\n' + i + '\n' +
+                                        main.information_l_1 + '\n' + results[0] + '\n' +
+                                        main.satisfies_l_1)
+                    answer_val = parse_prompt_response(prompt_satisfies, 1)
                     if answer_val == 1:
                         let_log('удовлетворяет')
                         return results[0]
                     for r in results:
                         let_log('убрал сокращение каждого результата перед проверкой на полезность')
-                        prompt_answer = main.answer_l_1 + '\n' + i + '\n' + main.answer_l_2 + '\n' + r
-                        answer_val = parse_prompt_response(prompt_answer, 0)
+                        # Проверка полезности каждого результата (используем parse_prompt_response)
+                        prompt_answer = (main.answer_l_1 + '\n' + i + '\n' +
+                                         main.answer_l_2 + '\n' + r)
+                        answer_val = parse_prompt_response(prompt_answer, 1)
                         if answer_val == 1:
                             complex_result += r + '\n'
+                    # Выделение важного (используем системный промпт)
+                    if complex_result:
+                        system_select = main.select_matter_system
+                        user_select = (main.label_query + ' ' + i + '\n' +
+                                       main.label_answer + '\n' + complex_result)
+                        try:
+                            complex_result = ask_model(user_select, system_prompt=system_select)
+                        except:
+                            complex_result = ask_model(text_cutter(user_select), system_prompt=system_select)
+                    # Финальная оценка и генерация новых запросов
+                    system_answer = main.answer_system
+                    user_answer = (main.label_answer + ' ' + complex_result + '\n' +
+                                   main.label_query + ' ' + i)
                     try:
-                        complex_result = ask_model(
-                            main.select_matter_l_1 + '\n' + i + '\n' +
-                            main.select_matter_l_2 + '\n' + complex_result, all_user=True
-                        )
+                        answer = ask_model(user_answer, system_prompt=system_answer)
                     except:
-                        complex_result = ask_model(
-                            main.select_matter_l_1 + '\n' + i + '\n' +
-                            main.select_matter_l_2 + '\n' + text_cutter(complex_result), all_user=True
-                        )
-                    answer = ask_model(
-                        main.answer_l_1 + '\n' + complex_result + '\n' +
-                        main.answer_l_2 + '\n' + i + '\n' +
-                        main.answer_l_3, all_user=True
-                    )
-                    try:
-                        if '1' in answer[0:12]: return complex_result
-                        else: new_requests_to_libraries.extend(answer.splitlines())
-                    except: pass
+                        answer = ask_model(text_cutter(user_answer), system_prompt=system_answer)
+                    # Анализируем ответ: если первая цифра не 0 — считаем подтверждением
+                    if _extract_first_digit(answer, 0) != 0:
+                        return complex_result
+                    else:
+                        new_requests_to_libraries.extend(answer.splitlines())
             if new_requests_to_libraries:
                 requests_to_libraries = new_requests_to_libraries
                 embeddings = [get_embs(req) for req in requests_to_libraries]

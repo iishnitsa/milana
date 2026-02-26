@@ -60,7 +60,8 @@ When you are confident that the overall task (the entire or almost entire plan) 
         main.command_example = '''
 Command example – "!!!create_executor!!! Write frontend for an online store"
 '''
-        main.start_dialog_tool_text_1 = '''You read the description of a task for an operator who will control the work of an executor. Based on the task description, select tools from the list of allowed tools.
+        # Уточнено: пользователь пришлёт план и задачу
+        main.start_dialog_tool_text_1 = '''You will receive a plan and a task from the user. Based on the task description, select tools from the list of allowed tools.
 
 Output data:
 
@@ -112,11 +113,12 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     # Выбор инструментов для Миланы
     milana_tools = global_state.milana_module_tools
     if global_state.module_tools_keys:
+        # Изменено: используется system_prompt + user message (план/задача) аналогично gigo
         need_tools_raw = ask_model(
-            main.start_dialog_tool_text_1 +
-            global_state.tools_str +
-            main.start_dialog_tool_text_2 +
-            prompt, all_user=True
+            prompt,  # user message: план и задача
+            system_prompt=main.start_dialog_tool_text_1 +
+                          global_state.tools_str +
+                          main.start_dialog_tool_text_2
         )
         let_log(need_tools_raw)
         tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
@@ -169,7 +171,7 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     answer = tools_selector(talk_prompt_for_tools, global_state.conversations)
     global_state.now_agent_id = global_state.conversations
     #if answer and answer != wrong_command and global_state.dialog_state: talk_prompt = answer
-    if answer != wrong_command and global_state.dialog_state: talk_prompt = answer
+    if answer != wrong_command and global_state.dialog_state and answer != None: talk_prompt = answer
     elif global_state.dialog_state:
         let_log('СОЗДАНИЕ НОВОГО СПЕЦИАЛИСТА...')
         talk_prompt = create_executor(talk_prompt)

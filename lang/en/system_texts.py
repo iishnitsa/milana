@@ -49,15 +49,26 @@ udp_exec_if_needed = '\nUpdate executor if needed'
 gigo_dreamer = 'dreamer'
 gigo_realist = 'realist'
 gigo_critic = 'critic'
-gigo_questions = 'Write a question or questions, one per line, what information is missing to complete the task: '
-gigo_found_info = 'Only the following information is available, there will be no other information, and you can not request more or ask questions either: '
-gigo_not_found_info = "There is no more information about the task and there won't be, and you can't request information or ask questions either."
+gigo_questions = 'The user will send you a task. In response, write a question or questions about what information is missing to complete the task. One question per line. Ask all questions at once in one message if there are several questions. Send only questions, no other text should be present'
+gigo_found_info = 'Only the following information is available:'
+gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how the task could be completed in the best possible way to leave the client completely delighted'
+gigo_realist_note = '. Your task is to propose a practical, feasible solution. Describe how to effectively complete the task, avoiding unnecessary complications'
+gigo_critic_note = '. Your task is to analyze possible solutions and point out their weaknesses, risks, and potential problems. Identify what could go wrong and suggest how to avoid or mitigate the consequences'
 gigo_role_answer_1 = 'You are a '
-gigo_role_answer_2 = '. Tell me how to fully satisfy the client who set the task: '
-gigo_make_plan = 'Come up with a task completion plan based on the following data:\n'
+gigo_role_answer_2 = '. The user will send you a task and, possibly, additional information to complete the task. Respond immediately with how to perfectly complete the task, how to fully satisfy the client whose task the user has sent. You cannot ask the user questions or discuss anything with them. An answer is needed immediately. The answer should not contain interrogative sentences.'
+gigo_make_plan_1 = '''The user will send you the thoughts of various entities on solving the given task.
+As soon as they send the thoughts of the last entity, immediately write a plan for solving the task.
+Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
+The answer should not contain interrogative sentences.
+Just the plan.
+
+'''
+gigo_make_plan_2 = '\nEntities: '
 gigo_return_1 = 'Task:\n'
 gigo_return_2 = 'Plan:\n'
-gigo_reaction = 'Thoughts of different people about the task:'
+gigo_next_role = 'Next: '
+gigo_final_role = ". That's it! I'll send you a plan right after your message."
+gigo_final_role_2 = "This is the last one. I'm waiting for a plan from you right now!"
 
 start_load_attachments_text = 'Attachments are being downloaded, which may take a long time...'
 end_load_attachments_text = 'Attachments uploaded'
@@ -220,13 +231,18 @@ class SystemTextContainer:
         self.gigo_critic = gigo_critic
         self.gigo_questions = gigo_questions
         self.gigo_found_info = gigo_found_info
-        self.gigo_not_found_info = gigo_not_found_info
+        self.gigo_dreamer_note = gigo_dreamer_note
+        self.gigo_realist_note = gigo_realist_note
+        self.gigo_critic_note = gigo_critic_note
         self.gigo_role_answer_1 = gigo_role_answer_1
         self.gigo_role_answer_2 = gigo_role_answer_2
-        self.gigo_make_plan = gigo_make_plan
+        self.gigo_make_plan_1 = gigo_make_plan_1
+        self.gigo_make_plan_2 = gigo_make_plan_2
         self.gigo_return_1 = gigo_return_1
         self.gigo_return_2 = gigo_return_2
-        self.gigo_reaction = gigo_reaction
+        self.gigo_next_role = gigo_next_role
+        self.gigo_final_role = gigo_final_role
+        self.gigo_final_role_2 = gigo_final_role_2
         self.start_load_attachments_text = start_load_attachments_text
         self.end_load_attachments_text = end_load_attachments_text
         self.marker_decision_approve = marker_decision_approve
@@ -288,11 +304,11 @@ class SystemTextContainer:
         self.success_in_provider = success_in_provider
         self.wrong_command = wrong_command
         self.warn_command_text_1 = warn_command_text_1
-        self.warn_command_text_1 = warn_command_text_2
-        self.warn_command_text_1 = warn_command_text_3
-        self.warn_command_text_1 = warn_command_text_4
-        self.warn_command_text_1 = warn_command_text_5
-        self.warn_command_text_1 = warn_command_text_6
+        self.warn_command_text_2 = warn_command_text_2
+        self.warn_command_text_3 = warn_command_text_3
+        self.warn_command_text_4 = warn_command_text_4
+        self.warn_command_text_5 = warn_command_text_5
+        self.warn_command_text_6 = warn_command_text_6
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

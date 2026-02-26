@@ -115,7 +115,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = False
+use_user = True
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
@@ -2113,6 +2113,8 @@ def get_executor_id():
     if get_executor_number() == 0: return None  # Исполнитель не создан
     return global_state.now_try
 
+# cross_gpt.py (фрагмент функции save_emb_dialog с изменениями)
+
 def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     """
     Сохраняет диалог с новой системой ID
@@ -2169,7 +2171,9 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
             else: message_preview = content_only
             numbered_text += f"\n{i}. {message_preview}"
         return numbered_text
-    def _create_grouping_prompt(numbered_messages_text, total_messages): return grouping_prompt_1 + numbered_messages_text + grouping_prompt_2
+    def _create_grouping_prompt(numbered_messages_text, total_messages): 
+        # больше не используется напрямую, оставлено для совместимости, если где-то ещё вызывается
+        return grouping_prompt_1 + numbered_messages_text + grouping_prompt_2
     def _parse_ranges_from_response(response):
         """Парсит ответ модели в список диапазонов."""
         cleaned = re.sub(r'[^\d,\-]', '', response)
@@ -2220,18 +2224,20 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
             end_index = min(start_index + batch_size, total_messages)
             batch_messages = msgs[start_index:end_index]
             numbered_text = _create_numbered_messages_text(batch_messages)
-            prompt = _create_grouping_prompt(numbered_text, len(batch_messages))
-            estimated_tokens = len(prompt) * get_text_tokens_coefficient()
+            # Оцениваем размер промпта: системный (группировка) + пользовательский (numbered_text)
+            system_prompt = grouping_prompt_1 + grouping_prompt_2
+            estimated_tokens = (len(system_prompt) + len(numbered_text)) * get_text_tokens_coefficient()
             if estimated_tokens <= (token_limit - 1000): return batch_size
         return 1
     def _process_messages_batch(msgs, batch_offset):
         """Обрабатывает один батч сообщений."""
         let_log(f"  Внутри батча (смещение: {batch_offset}): Создание промпта и вызов ask_model...")
         numbered_text = _create_numbered_messages_text(msgs)
-        prompt = _create_grouping_prompt(numbered_text, len(msgs))
+        # Изменено: grouping_prompt_1 и grouping_prompt_2 теперь в system_prompt
+        system_prompt = grouping_prompt_1 + grouping_prompt_2
         try:
-            # Используем ask_model из cross_gpt.py с all_user=True
-            response = ask_model(prompt, all_user=True)
+            # Используем ask_model с system_prompt
+            response = ask_model(numbered_text, system_prompt=system_prompt)
             ranges = _parse_ranges_from_response(response)
             return _create_groups_from_ranges(msgs, ranges, batch_offset)
         except Exception as e:
@@ -2319,8 +2325,9 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     current_index = 0
     chunks_info = []
     # Проверяем, помещаются ли все сообщения в один запрос
-    test_prompt = _create_grouping_prompt(_create_numbered_messages_text(messages), total_messages)
-    estimated_tokens = len(test_prompt) * get_text_tokens_coefficient()
+    numbered_text_all = _create_numbered_messages_text(messages)
+    system_prompt_all = grouping_prompt_1 + grouping_prompt_2
+    estimated_tokens = (len(system_prompt_all) + len(numbered_text_all)) * get_text_tokens_coefficient()
     if estimated_tokens <= (get_token_limit() - 1000):
         let_log("Все сообщения помещаются в один запрос")
         all_groups = _process_messages_batch(messages, 0)
@@ -2372,22 +2379,44 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     let_log(f"Всего сохранено {len(all_groups)} групп сообщений для {doc_id}")
     let_log(f"{'='*60}")
 
-def gigo(base_task, roles=[]):
-    gigo_now_questions = gigo_questions
-    try: questions = ask_model(gigo_now_questions + base_task + global_state.summ_attach, all_user=True)
-    except:
-        base_task = text_cutter(base_task)
-        questions = ask_model(gigo_now_questions + base_task + text_cutter(global_state.summ_attach), all_user=True)
+def gigo(base_task):
+    try: questions = ask_model(base_task + global_state.summ_attach, system_prompt=gigo_questions)
+    except RuntimeError as e:
+        if 'ContextOverflowError' in str(e):
+            base_task = text_cutter(base_task)
+            questions = ask_model(text_cutter(base_task + global_state.summ_attach), system_prompt=gigo_questions)
+        else: raise
     additional_info = librarian(questions)
-    if additional_info != found_info_1: additional_info = gigo_found_info + additional_info
-    else: additional_info = gigo_not_found_info; let_log(found_info_1)
-    minds = ''
-    if not roles: roles = [gigo_dreamer, gigo_realist, gigo_critic]
-    for role in roles:
-        try: minds += '\n' + ask_model(gigo_role_answer_1 + role + gigo_role_answer_2 + base_task + '\n' + additional_info, all_user=True)
-        except: minds += '\n' + ask_model(gigo_role_answer_1 + role + gigo_role_answer_2 + base_task + '\n' + text_cutter(additional_info), all_user=True)
-    try: plan = ask_model(gigo_make_plan + base_task + '\n' + gigo_reaction + minds + '\n' + additional_info, all_user=True)
-    except: plan = ask_model(gigo_make_plan + base_task + text_cutter(minds) + '\n' + text_cutter(additional_info), all_user=True)
+    if additional_info != found_info_1: additional_info = '\n' + gigo_found_info + '\n' + additional_info
+    else: additional_info = ''; let_log(found_info_1)
+    minds_text = ''
+    minds = []
+    roles = [gigo_dreamer, gigo_realist, gigo_critic]
+    ents_roles = ', '.join(roles) + '\n'
+    role_notes = [gigo_dreamer_note, gigo_realist_note, gigo_critic_note]
+    for role, role_note in zip(roles, role_notes):
+        try: minds.append(ask_model(base_task + additional_info, system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2))
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2))
+            else: raise
+    for role, mind in zip(roles, minds):
+        minds_text += worker_role_text + mind + operator_role_text
+        if role == roles[-1]: minds_text + '\n' * 3 + gigo_final_role_2
+        else:
+            minds_text += gigo_next_role + role
+            if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
+    try: plan = ask_model(system_role_text + gigo_make_plan_1 + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
+    except RuntimeError as e:
+        if 'ContextOverflowError' in str(e):
+            minds_text = ''
+            for role, mind in zip(roles, minds):
+                minds_text += worker_role_text + text_cutter(mind) + operator_role_text
+                if role == roles[-1]:  minds_text + '\n' * 3 + gigo_final_role_2
+                else:
+                    minds_text += gigo_next_role + role
+                    if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
+            plan = ask_model(system_role_text + gigo_make_plan_1 + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + text_cutter(additional_info) + minds_text)
+        else: raise
     return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
 
 def critic(task: str, result: str) -> int | str:
@@ -2412,51 +2441,57 @@ def critic(task: str, result: str) -> int | str:
         let_log(f"Достигнут максимум реакций ({now_critic_reactions}), пропускаем критика")
         del global_state.critic_reactions[num_critic_reaction]
         return 1
-    # --- Этап 1 ---
+
+    # --- Этап 1: Декомпозиция задачи на критерии ---
     try:
-        prompt_stage1 = f"{prompt_decomposition_1}\n{task}\n{prompt_decomposition_2}"
-        criteria_text = ask_model(prompt_stage1, all_user=True)
+        system_prompt1 = prompt_decomposition_1 + "\n" + prompt_decomposition_2
+        criteria_text = ask_model(task, system_prompt=system_prompt1)
     except:
-        task = text_cutter(task)
-        prompt_stage1 = f"{prompt_decomposition_1}\n{task}\n{prompt_decomposition_2}"
-        criteria_text = ask_model(prompt_stage1, all_user=True)
-    if not criteria_text or not criteria_text.strip(): return 1
-    # --- Этап 2 ---
-    prompt_stage2 = (f"{prompt_evaluation_1}\n"
-                     f"{prompt_evaluation_2} {task}\n"
-                     f"{prompt_evaluation_3} {result}\n"
-                     f"{prompt_evaluation_4} {criteria_text}\n"
-                     f"{prompt_evaluation_5}")
-    evaluation_text = ask_model(prompt_stage2, all_user=True)
-    if not evaluation_text or not evaluation_text.strip(): return 1
+        task_cut = text_cutter(task)
+        criteria_text = ask_model(task_cut, system_prompt=system_prompt1)
+    if not criteria_text or not criteria_text.strip():
+        return 1
+
+    # --- Этап 2: Оценка по критериям ---
+    user_prompt2 = f"{prompt_evaluation_2}\n{task}\n{prompt_evaluation_3}\n{result}\n{prompt_evaluation_4}\n{criteria_text}"
+    system_prompt2 = prompt_evaluation_1 + "\n" + prompt_evaluation_5
+    try:
+        evaluation_text = ask_model(user_prompt2, system_prompt=system_prompt2)
+    except:
+        user_prompt2_cut = text_cutter(user_prompt2)
+        evaluation_text = ask_model(user_prompt2_cut, system_prompt=system_prompt2)
+    if not evaluation_text or not evaluation_text.strip():
+        return 1
+
     # --- Этап 2.5: Обращение к Библиотекарю (закомментировано) ---
     """
-    # Создаем промпт для генерации вопросов к библиотекарю
-    prompt_librarian_q = (f"{prompt_librarian_questions_1}\\n{task}\\n"
-                          f"{prompt_librarian_questions_2}\\n{result}\\n"
-                          f"{prompt_librarian_questions_3}\\n{evaluation_text}\\n"
-                          f"{prompt_librarian_questions_4}")
-    # Получаем от модели текст с вопросами (и возможным мусором)
-    questions_text = ask_model(prompt_librarian_q)
+    # Формируем запрос к модели для генерации вопросов к библиотекарю
+    system_prompt_librarian = prompt_librarian_questions_1 + "\n" + prompt_librarian_questions_4
+    user_prompt_librarian = f"{prompt_librarian_questions_2}\n{task}\n{prompt_librarian_questions_3}\n{result}\nEvaluation report:\n{evaluation_text}"
+    try:
+        questions_text = ask_model(user_prompt_librarian, system_prompt=system_prompt_librarian)
+    except:
+        questions_text = ask_model(text_cutter(user_prompt_librarian), system_prompt=system_prompt_librarian)
+
     librarian_context = ""
     if questions_text and questions_text.strip():
-        # Отправляем ВЕСЬ текст в библиотекаря, он сам отфильтрует нужное
         print("Критик -> Библиотекарь: Запрос на проверку информации...")
         librarian_answers = librarian(questions_text)
-        # Если библиотекарь вернул какие-то ответы, формируем контекст для финального решения
         if librarian_answers and librarian_answers.strip():
-            librarian_context = f"{prompt_decision_librarian_context}{librarian_answers}\\n"
+            librarian_context = f"{prompt_decision_librarian_context}{librarian_answers}\n"
     """
-    # Временно устанавливаем пустой контекст, пока логика выше закомментирована
-    librarian_context = ""
-    # --- Этап 3 и 4 ---
-    prompt_stage3 = (f"{prompt_decision_1}\n"
-                     f"{prompt_decision_2} {task}\n"
-                     f"{prompt_decision_3} {result}\n"
-                     f"{prompt_decision_4} {evaluation_text}\n"
-                     f"{librarian_context}" # <-- Сюда будет подставлен контекст от библиотекаря
-                     f"{prompt_decision_5}")
-    decision_response = ask_model(prompt_stage3, all_user=True)
+
+    # --- Этап 3 и 4: Принятие решения ---
+    user_prompt3 = f"{prompt_decision_2}\n{task}\n{prompt_decision_3}\n{result}\n{prompt_decision_4}\n{evaluation_text}"
+    # Если блок выше раскомментирован, можно добавить librarian_context:
+    # user_prompt3 += f"\n{librarian_context}"
+    system_prompt3 = prompt_decision_1 + "\n" + prompt_decision_5
+    try:
+        decision_response = ask_model(user_prompt3, system_prompt=system_prompt3)
+    except:
+        user_prompt3_cut = text_cutter(user_prompt3)
+        decision_response = ask_model(user_prompt3_cut, system_prompt=system_prompt3)
+
     if marker_decision_revise in decision_response:
         try:
             start_index = decision_response.index(marker_new_task) + len(marker_new_task)
@@ -2479,7 +2514,7 @@ def critic(task: str, result: str) -> int | str:
         print("Критик: Не уверен в результате, требуется проверка человеком.")
         del global_state.critic_reactions[num_critic_reaction]
         return 2
-    return 1 # Если вердикт не распознан или ответ пустой
+    return 1  # Если вердикт не распознан или ответ пустой
 
 def find_all_commands(text: str, available_commands: list[str], cutoff: float = 0.75) -> list[str]:
     """
@@ -2884,7 +2919,7 @@ def tools_selector(text, sid):
             write_cache([False, is_warn])
             return is_warn
         write_cache([False, False])
-        return None
+        return wrong_command
     func_callable = None
     try:
         if isinstance(entry, tuple) or isinstance(entry, list):

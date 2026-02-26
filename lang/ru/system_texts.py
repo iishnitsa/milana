@@ -48,16 +48,26 @@ udp_exec_if_needed = '\nОбнови исполнителя, если нужно
 gigo_dreamer = 'мечтатель'
 gigo_realist = 'реалист'
 gigo_critic = 'критик'
-gigo_questions = 'Напиши вопрос или вопросы, по одному на строку, какой информации нехватает для выполнения задачи: '
-gigo_found_info = 'Доступна только следующая информация, другой не будет, запрашивать ещё или задавать вопросы тоже нельзя: '
-gigo_not_found_info = 'Больше информации о задаче нет и не будет, запрашивать информацию или задавать вопросы тоже нельзя.'
+gigo_questions = 'Пользователь пришлёт тебе задачу. В ответ напиши вопрос или вопросы, какой информации нехватает для выполнения задачи. По одному вопросу на строку. Задавай сразу все вопросы в одном сообщении, если вопросов несколько. Пришли только вопросы, никакого другого другого текста быть не должно'
+gigo_found_info = 'Доступна только следующая информация:'
+gigo_dreamer_note = '. Твоя задача — предложить самое смелое, амбициозное и идеальное решение, не ограниченное ресурсами или текущими возможностями. Представь, как можно выполнить задачу наилучшим образом, чтобы клиент был в полном восторге'
+gigo_realist_note = '. Твоя задача — предложить практичное, выполнимое решение. Опиши, как эффективно выполнить задачу, избегая излишних сложностей'
+gigo_critic_note = '. Твоя задача — проанализировать возможные решения и указать на их слабые места, риски, потенциальные проблемы. Выяви, что может пойти не так, и предложи, как этого избежать или смягчить последствия'
 gigo_role_answer_1 = 'Ты - '
-gigo_role_answer_2 = '. Ответь, как сполна удовлетворить клиента, поставившего задачу: '
-gigo_make_plan = 'Придумай план выполнения задачи на основе следующих данных:\n'
+gigo_role_answer_2 = '. Пользователь пришлёт тебе задачу и, возможно, дополнительную информацию для выполнения задачи. Ответь сразу, как идеально выполнить задачу, как сполна удовлетворить клиента, задачу которого прислал пользователь. Нельзя задавать вопросов пользователю, или обсуждать с ним что-то. Нужен сразу ответ. Ответ не должен содержать вопросительных предложений.'
+gigo_make_plan_1 = '''Пользователь будет присылать тебе мысли разных сущностей о решении поставленной задачи.
+Как только он пришлёт мысли последней сущности, сразу напиши план решения задачи.
+Не комментируй его, не пиши что-то вроде "Вот план по решению...", не задавай вопросов.
+Ответ не должен содержать вопросительных предложений.
+Просто план.
+
+'''
+gigo_make_plan_2 = '\nСущности: '
 gigo_return_1 = 'Задача:\n'
 gigo_return_2 = 'План:\n'
-gigo_reaction = 'Мысли разных людей об исполнении задачи:'
-
+gigo_next_role = 'Далее: '
+gigo_final_role = '. Всё! Сразу после твоего сообщения я пришлю план.'
+gigo_final_role_2 = 'Это последнее. Жду от тебя план прямо сейчас!'
 start_load_attachments_text = 'Происходит загрузка вложений, может занять много времени...'
 end_load_attachments_text = 'Вложения загружены'
 
@@ -219,13 +229,18 @@ class SystemTextContainer:
         self.gigo_critic = gigo_critic
         self.gigo_questions = gigo_questions
         self.gigo_found_info = gigo_found_info
-        self.gigo_not_found_info = gigo_not_found_info
+        self.gigo_dreamer_note = gigo_dreamer_note
+        self.gigo_realist_note = gigo_realist_note
+        self.gigo_critic_note = gigo_critic_note
         self.gigo_role_answer_1 = gigo_role_answer_1
         self.gigo_role_answer_2 = gigo_role_answer_2
-        self.gigo_make_plan = gigo_make_plan
+        self.gigo_make_plan_1 = gigo_make_plan_1
+        self.gigo_make_plan_2 = gigo_make_plan_2
         self.gigo_return_1 = gigo_return_1
         self.gigo_return_2 = gigo_return_2
-        self.gigo_reaction = gigo_reaction
+        self.gigo_next_role = gigo_next_role
+        self.gigo_final_role = gigo_final_role
+        self.gigo_final_role_2 = gigo_final_role_2
         self.start_load_attachments_text = start_load_attachments_text
         self.end_load_attachments_text = end_load_attachments_text
         self.marker_decision_approve = marker_decision_approve
@@ -287,11 +302,11 @@ class SystemTextContainer:
         self.success_in_provider = success_in_provider
         self.wrong_command = wrong_command
         self.warn_command_text_1 = warn_command_text_1
-        self.warn_command_text_1 = warn_command_text_2
-        self.warn_command_text_1 = warn_command_text_3
-        self.warn_command_text_1 = warn_command_text_4
-        self.warn_command_text_1 = warn_command_text_5
-        self.warn_command_text_1 = warn_command_text_6
+        self.warn_command_text_2 = warn_command_text_2
+        self.warn_command_text_3 = warn_command_text_3
+        self.warn_command_text_4 = warn_command_text_4
+        self.warn_command_text_5 = warn_command_text_5
+        self.warn_command_text_6 = warn_command_text_6
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()
