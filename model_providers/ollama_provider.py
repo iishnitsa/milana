@@ -2,6 +2,7 @@ import requests
 import re
 import json
 import time
+import urllib.parse
 from cross_gpt import let_log
 
 # === Глобальные переменные состояния ===
@@ -22,6 +23,27 @@ tags = {}
 MAX_RETRIES = 20          # Максимальное количество попыток
 MAX_WAIT_TOTAL = 420      # 7 минут в секундах
 BASE_BACKOFF = 2.0        # Основание экспоненты
+
+def normalize_url(url, default_port, default_scheme="http"):
+    """Добавляет схему и порт по умолчанию, если они отсутствуют."""
+    if not url:
+        return url
+    if "://" not in url:
+        url = default_scheme + "://" + url
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.port:  # порт не указан
+        # пересобираем netloc с портом
+        host = parsed.hostname or ""
+        new_netloc = f"{host}:{default_port}"
+        # если есть username:password, сохраняем (но у нас их нет)
+        parsed = parsed._replace(netloc=new_netloc)
+    return parsed.geturl()
+
+def normalize_model(model):
+    """Добавляет :latest, если в имени модели нет двоеточия."""
+    if model and ":" not in model:
+        return model + ":latest"
+    return model
 
 def find_context_size(model_data, base_url, headers):
     """
@@ -140,6 +162,12 @@ def connect(connection_string, timeout=30):
         key = key.strip().lower()
         value = value.strip()
         if key in params: params[key] = value
+
+    # === НОРМАЛИЗАЦИЯ ===
+    params["url"] = normalize_url(params["url"], default_port=11434)
+    params["model"] = normalize_model(params["model"])
+    params["emb_model"] = normalize_model(params["emb_model"])
+
     base_url = params["url"].strip('/')
     emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"

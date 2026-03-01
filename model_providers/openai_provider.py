@@ -4,6 +4,7 @@ import os
 import json
 import time
 import random
+import urllib.parse
 from cross_gpt import let_log
 
 # === Глобальные переменные ===
@@ -43,6 +44,25 @@ last_wait_time = 0.0      # "Память" о задержке между выз
 OLLAMA_MAX_RETRIES = 20      # Максимальное количество попыток
 OLLAMA_MAX_WAIT_TOTAL = 420  # 7 минут в секундах
 OLLAMA_BASE_BACKOFF = 2.0    # Основание экспоненты
+
+def normalize_url(url, default_port=None, default_scheme="http"):
+    """Добавляет схему по умолчанию, если отсутствует. Порт добавляется только если указан default_port."""
+    if not url:
+        return url
+    if "://" not in url:
+        url = default_scheme + "://" + url
+    parsed = urllib.parse.urlparse(url)
+    if default_port is not None and not parsed.port:
+        host = parsed.hostname or ""
+        new_netloc = f"{host}:{default_port}"
+        parsed = parsed._replace(netloc=new_netloc)
+    return parsed.geturl()
+
+def normalize_model(model):
+    """Добавляет :latest, если в имени модели нет двоеточия."""
+    if model and ":" not in model:
+        return model + ":latest"
+    return model
 
 def _get_timeout_value():
     """Возвращает значение таймаута для использования в запросах"""
@@ -229,6 +249,18 @@ def connect(connection_string, timeout=30):
         if "=" not in part: continue
         k, v = part.split("=", 1)
         if k.strip().lower() in params: params[k.strip().lower()] = v.strip()
+    
+    # === НОРМАЛИЗАЦИЯ URL ===
+    # OpenAI URL: порт не добавляем (используем стандартный 443 через https)
+    params["url"] = normalize_url(params["url"], default_port=None, default_scheme="https")
+    # Ollama URL: добавляем порт 11434, если не указан
+    params["ollama_url"] = normalize_url(params["ollama_url"], default_port=11434)
+    
+    # === НОРМАЛИЗАЦИЯ МОДЕЛЕЙ ===
+    # Для OpenAI моделей latest не добавляем
+    # Для Ollama эмбеддингов добавляем latest при необходимости
+    params["ollama_emb_model"] = normalize_model(params["ollama_emb_model"])
+    
     openai_base_url = params["url"].rstrip("/")
     ollama_base_url = params["ollama_url"].rstrip("/")
     default_chat_model = params["model"]
