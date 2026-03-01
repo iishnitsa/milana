@@ -187,7 +187,6 @@ def cleanup_image_models():
     _CLIP_MODEL = None
     _OCR_INSTANCE = None
     _IMAGE_MODELS_LOADED = False
-    _IMAGE_MODELS_LOAD_FAILED = False  # Сбрасываем маркер ошибки при очистке
     # Принудительный вызов сборщика мусора
     gc.collect()
     let_log("Модели очищены, сборщик мусора вызван")
