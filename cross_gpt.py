@@ -51,6 +51,7 @@ class GlobalState:
         self.need_owerwrite_executor = False
         self.task_delegated = False
         self.dialog_ended = False
+        self.start_dialog_command_name = ''
 global_state = GlobalState()
 
 chat_path = ''
@@ -62,7 +63,7 @@ remove_loops = True
 cache_path = ''
 cache_can_write = False
 agent_func = None
-start_dialog_command_name = ''
+
 default_handlers_names = { # это из настроек должно выгружаться
     'doc': 'process_docx',
     'docx': 'process_docx',
@@ -115,7 +116,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = False
+use_user = True
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
@@ -1011,10 +1012,7 @@ def system_tools_loader():
             found_start_dialog_index = i
             found_start_dialog_command = cmd_t
             break
-    # Устанавливаем глобальную переменную start_dialog_command_name
-    if found_start_dialog_index != -1:
-        global start_dialog_command_name
-        start_dialog_command_name = found_start_dialog_command
+    if found_start_dialog_index != -1: global_state.start_dialog_command_name = found_start_dialog_command
     # Формируем словари с ключом — кортеж токенов имени команды
     def to_dict(modules):
         d = {}
@@ -1436,7 +1434,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
         single_message = non_system_messages[0]
         content = single_message.get("content", "")
         # Проверяем, является ли это сообщение ответом функции (содержит func_text_for_parse)
-        if (start_dialog_command_name != '' and 
+        if (global_state.start_dialog_command_name != '' and 
             global_state.now_agent_id % 2 != 0 and  # Проверяем чётность now_agent_id вместо conversations
             func_text_for_parse in content):
             let_log("Обнаружено одно сообщение с ответом функции - выполняем замену")
@@ -1447,7 +1445,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
             # Создаем сообщение с ответом функции
             function_response_message = {
                 "role": "function",
-                "name": start_dialog_command_name,
+                "name": global_state.start_dialog_command_name,
                 "content": cleaned_content
             }
             # Заменяем исходное сообщение на ответ функции в base_messages
@@ -2938,7 +2936,7 @@ def tools_selector(text, sid):
         return None
     # 9) выполнить функцию
     let_log("[TOOLS_SELECTOR] Выполняем функцию...")
-    if found_key == start_dialog_command_name: global_state.task_delegated = True
+    if found_key == global_state.start_dialog_command_name: global_state.task_delegated = True
     try: result = func_callable(content)
     except Exception as e: result = "__TOOL_ERROR__: " + str(e)
     if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
@@ -3154,7 +3152,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         use_rag = False
         agent_func = _standard_agent_func
     filter_generations = int(settings.get("filter_generations", 0))
-    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0)) * 2
+    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0)) #TODO:* 2
     global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
     from chat_manager import (
         initialize_schema,
@@ -3267,7 +3265,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     let_log(f"Ask_user доступен: {'ask_user' in globals()}")
     let_log("Список инструментов:")
     for tt, t, _ in global_state.another_tools:
-        global_state.tools_str += tt + ' ' + t + '\n'
+        global_state.tools_str += tt + ' (' + t + ')\n'
         global_state.module_tools_keys.append(tt)
         let_log(tt)
     # === Загрузка пользовательских данных ===

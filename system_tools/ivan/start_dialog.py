@@ -3,7 +3,6 @@ delegate_task
 transfers the task for division into subtasks and execution
 '''
 
-import difflib
 from cross_gpt import (
     make_exec_first,
     system_role_text,
@@ -45,17 +44,25 @@ def main(client_task):
         main.attr_names = (
             'start_dialog_tool_text_1',
             'start_dialog_tool_text_2',
-            'milana_template',
+            'milana_base_1',
+            'milana_base_2',
+            'milana_base_3',
+            'milana_delegation_part',
             'command_example',
-            'conversations_limit_reached_text',
+            'hierarchy_limit_info',
+            'delegate_unavailable_for_operator',
         )
 
-        main.milana_template = '''
+        main.milana_base_1 = '''
 You are an AI operator "Milana".
-You are given a task plan from a client or a higher-level dialog. Create an AI executor "Ivan" for the task by writing the executor creation command and the task (detailed, with unambiguous interpretation, with explanation of abbreviations if any).
+You are given a task plan from a client'''
+        main.milana_base_2 = ''' or a higher-level dialog'''
+        main.milana_base_3 = '''. Create an AI executor "Ivan" for the task by writing the executor creation command and the task (detailed, with unambiguous interpretation, with explanation of abbreviations if any).
 Then work with the executor, monitor task execution, sometimes recreate him if necessary, for example, when you start working on the next item of the plan, the old executor will be disconnected from the dialog.
-"Ivan" can pass one of the tasks from the plan he is executing down the hierarchy if he cannot handle it. This will create a similar dialog, and you will not have access to it. Only "Ivan" has the right to do so.
 When you are confident that the overall task (the entire or almost entire plan) is completed - write the dialog completion command and pass the detailed result to the function.
+'''
+        main.milana_delegation_part = '''
+"Ivan" can pass one of the tasks from the plan he is executing down the hierarchy if he cannot handle it. This will create a similar dialog, and you will not have access to it. Only "Ivan" has the right to do so.
 '''
         main.command_example = '''
 Command example – "!!!create_executor!!! Write frontend for an online store"
@@ -81,12 +88,12 @@ You cannot invent new commands.
 Any typo or incorrect entry in the list is sufficient reason to output None.
 
 '''
+        main.hierarchy_limit_info = 'Hierarchy levels are limited. Current level'
+        main.delegate_unavailable_for_operator = 'The task delegation function down the hierarchy is not available to you.'
         main.conversations_limit_reached_text = 'The limit of delegation levels has been reached. The task has not been transferred.'
         return
-    if global_state.hierarchy_limit != 0:
-        current_level = get_level()
-        if current_level >= global_state.hierarchy_limit: return main.conversations_limit_reached_text
     let_log('начинается диалог')
+    if global_state.hierarchy_limit != 0 and global_state.hierarchy_limit == get_level(): return main.conversations_limit_reached_text
     global_state.dialog_ended = False
     if global_state.critic_wants_retry: global_state.critic_wants_retry = False
     else:
@@ -109,11 +116,19 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
         global_state.summ_attach = ''
     # === ДЕЛЕГИРОВАНИЕ: добавляем новый уровень ===
     down_hierarchy()
-    let_log(f"После делегирования: {global_state.now_try}")
+    current_level = get_level()
+    let_log(f"После делегирования: {global_state.now_try}, текущий уровень: {current_level}")
+    
+    # Определяем, сможет ли будущий исполнитель делегировать
+    if global_state.hierarchy_limit == 0:
+        ivan_can_delegate = True
+    else:
+        ivan_can_delegate = (current_level + 1) < global_state.hierarchy_limit
+
     # Выбор инструментов для Миланы
-    milana_tools = global_state.milana_module_tools
+    milana_tools = global_state.milana_module_tools.copy()
+    
     if global_state.module_tools_keys:
-        # Изменено: используется system_prompt + user message (план/задача) аналогично gigo
         need_tools_raw = ask_model(
             prompt,  # user message: план и задача
             system_prompt=main.start_dialog_tool_text_1 +
@@ -122,23 +137,49 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
         )
         let_log(need_tools_raw)
         tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
+        
+        # Удаляем команду делегирования из списка выбранных, если она случайно попала
+        if not ivan_can_delegate and global_state.start_dialog_command_name in tools_names:
+            tools_names.remove(global_state.start_dialog_command_name)
+            let_log(f"Удалена команда делегирования из выбранных инструментов")
+        
         for name in tools_names:
-            # Ищем инструмент по точному имени в исходном списке
             for tool_tokens, tool_desc, tool_func in global_state.another_tools:
                 if name == tool_tokens:
                     milana_tools[tool_tokens] = (tool_desc, tool_func)
                     break
         let_log('ошибки нет')
-    # Формирование финального промпта
-    full_prompt = main.milana_template
+    
+    # Удаляем команду делегирования из инструментов Миланы, если следующий уровень недоступен
+    if not ivan_can_delegate and global_state.start_dialog_command_name in milana_tools:
+        del milana_tools[global_state.start_dialog_command_name]
+        let_log("Удалена команда делегирования из инструментов Миланы")
+    
+    # === ФОРМИРОВАНИЕ ПРОМПТА ===
+    full_prompt = main.milana_base_1
+    # 1. Информация о том, что Иван может делегировать (добавляется ВСЕГДА, кроме случая, когда делегирование полностью отключено - лимит=1)
+    if global_state.hierarchy_limit != 1:
+        full_prompt += main.milana_base_2
+        full_prompt += main.milana_delegation_part
+        full_prompt = main.milana_base_3
+        full_prompt += f"\n{main.delegate_unavailable_for_operator}\n"
+        # 2. Сообщение для Миланы: она не может делегировать (добавляется ВСЕГДА, кроме случая, когда делегирование полностью отключено - лимит=1)
+    else: full_prompt = main.milana_base_3
+
+    # 3. Добавляем информацию об иерархии, если лимит больше 1
+    if global_state.hierarchy_limit > 1:
+        full_prompt += f"\n{main.hierarchy_limit_info} {current_level}/{global_state.hierarchy_limit}.\n"
+
     let_log(milana_tools)
     prompt += only_one_func_text
-    for tool in milana_tools: full_prompt += tool + ' (' + milana_tools[tool][0] + '), '
+    for tool in milana_tools:
+        prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
+    if not native_func_call:
+        prompt += what_is_func_text + main.command_example
+    full_prompt += prompt
     let_log(full_prompt)
     let_log(global_state.another_tools)
-    if full_prompt and full_prompt[-1] == ',': full_prompt = full_prompt[:-1]
-    if not native_func_call: prompt += what_is_func_text + main.command_example
-    full_prompt += prompt
+    let_log(milana_tools)
     global_state.conversations += 1
     create_chat(global_state.conversations, system_role_text + full_prompt)
     update_history(global_state.conversations, make_exec_first, func_role_text)
@@ -170,7 +211,6 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     talk_prompt_for_tools = remove_commands_roles(talk_prompt)
     answer = tools_selector(talk_prompt_for_tools, global_state.conversations)
     global_state.now_agent_id = global_state.conversations
-    #if answer and answer != wrong_command and global_state.dialog_state: talk_prompt = answer
     if answer != wrong_command and global_state.dialog_state and answer != None: talk_prompt = answer
     elif global_state.dialog_state:
         let_log('СОЗДАНИЕ НОВОГО СПЕЦИАЛИСТА...')
