@@ -132,6 +132,47 @@ def is_binary_text(text, threshold=0.5, max_chars=1024):
     ratio = printable_count / len(check_text)
     return ratio < threshold
 
+# --- Вспомогательные функции для декодирования текста (скопированы из simple_web_search.py) ---
+def is_reasonable_text(text, min_ratio=0.3):
+    """
+    Проверяет, выглядит ли текст разумным (не кракозябры).
+    Возвращает True, если текст содержит достаточно "нормальных" символов.
+    """
+    if not text or len(text) < 10: return False
+    total_chars = len(text)
+    letters = sum(1 for c in text if c.isalpha())
+    spaces = text.count(' ')
+    punctuation = sum(1 for c in text if c in '.,!?;:-()[]{}"\'' and c.isprintable())
+    replacement_chars = text.count('�')
+    control_chars = sum(1 for c in text if ord(c) < 32 and c not in '\n\r\t')
+    good_chars = letters + spaces + punctuation
+    good_ratio = good_chars / total_chars if total_chars > 0 else 0
+    bad_chars = replacement_chars + control_chars
+    bad_ratio = bad_chars / total_chars if total_chars > 0 else 1
+    return (good_ratio >= min_ratio and 
+            bad_ratio < 0.1 and 
+            letters > 10 and 
+            letters > total_chars * 0.1)
+
+def decode_with_fallback(content):
+    """Пробует разные стратегии декодирования сложного контента"""
+    strategies = [
+        lambda: content.decode('utf-8', errors='strict'),
+        lambda: content.decode('utf-8-sig', errors='strict'),
+        lambda: content.decode('windows-1251', errors='strict'),
+        lambda: content.decode('cp1251', errors='strict'),
+        lambda: content.decode('koi8-r', errors='strict'),
+        lambda: content.decode('iso-8859-1', errors='strict'),
+        lambda: content.decode('cp1252', errors='strict'),
+    ]
+    for strategy in strategies:
+        try:
+            result = strategy()
+            if is_reasonable_text(result[:2000]): return result
+        except: continue
+    return content.decode('utf-8', errors='replace')
+# --------------------------------------------------------------------------------------------
+
 def process_image(file_path_or_data, input_file_handlers):
     """Обработка изображения с использованием BLIP и EasyOCR"""
     let_log('Обработка изображения')
@@ -451,11 +492,30 @@ def process_excel(file_path_or_data, input_file_handlers):
 def process_unknown(file_path_or_data, input_file_handlers):
     """
     Обработчик для файлов с неизвестными расширениями.
-    Пытается обработать файл как текстовый.
+    Пытается обработать файл как текстовый, используя расширенное определение кодировки.
+    Если файл не открывается или не является текстовым, выбрасывает исключение.
     """
-    let_log('Попытка обработки неизвестного файла как текстового')
-    text = process_text(file_path_or_data, input_file_handlers)
-    if is_binary_text(text): raise ValueError("Файл не является текстовым или имеет неизвестную кодировку.")
-    else:
+    let_log('Попытка обработки неизвестного файла как текстового с определением кодировки')
+    try:
+        # Получаем байты
+        if isinstance(file_path_or_data, bytes):
+            raw_data = file_path_or_data
+        else:
+            try:
+                with open(file_path_or_data, 'rb') as f:
+                    raw_data = f.read()
+            except (FileNotFoundError, IOError) as e:
+                raise ValueError(f"Не удалось открыть файл: {e}")
+
+        # Пытаемся декодировать с помощью эвристик
+        text = decode_with_fallback(raw_data)
+
+        # Проверка на бинарность
+        if is_binary_text(text):
+            raise ValueError("Файл не является текстовым или имеет неизвестную кодировку.")
+
         let_log('Файл обработан как текстовый')
         return text
+    except Exception as e:
+        let_log(f"Ошибка обработки неизвестного файла: {e}")
+        raise
