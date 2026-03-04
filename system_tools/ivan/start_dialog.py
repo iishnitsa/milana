@@ -149,7 +149,6 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
                     milana_tools[tool_tokens] = (tool_desc, tool_func)
                     break
         let_log('ошибки нет')
-    
     # Удаляем команду делегирования из инструментов Миланы, если следующий уровень недоступен
     if not ivan_can_delegate and global_state.start_dialog_command_name in milana_tools:
         del milana_tools[global_state.start_dialog_command_name]

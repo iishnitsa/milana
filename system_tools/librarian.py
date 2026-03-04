@@ -1,9 +1,11 @@
 # librarian.py
 '''
-need_information
-call to get missing information
+нужна_информация
+вызови для получения недостающей информации
 '''
 
+import os
+import re
 from cross_gpt import (
     global_state,
     ask_model,
@@ -13,8 +15,9 @@ from cross_gpt import (
     let_log,
     found_info_1,
     parse_prompt_response,
+    language,
+    load_locale,
 )
-import re
 
 def _extract_first_digit(text, default):
     """Извлекает первую цифру из текста (аналог parse_prompt_response для готового ответа)."""
@@ -28,11 +31,11 @@ def _extract_first_digit(text, default):
                 continue
     return default
 
-def main(quest): # TODO: нужно удалять дубликаты информации
+def main(quest):
     # Инициализация атрибутов модуля при первом вызове
     if not hasattr(main, 'attr_names'):
+        let_log('ЛИБРАРИАН')
         main.attr_names = (
-            #原有的
             'best_result_l_1',
             'best_result_l_2',
             'request_l_1',
@@ -43,13 +46,17 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
             'answer_l_1',
             'answer_l_2',
             'answer_l_3',
-            # новые для системных промптов и меток
             'best_result_system',
             'select_matter_system',
             'answer_system',
             'label_query',
             'label_answer',
             'label_fragments',
+            'source_milana',
+            'source_user_file',
+            'source_web',
+            'source_unknown',
+            'web_search_available',
         )
         # Значения по умолчанию (английские)
         main.best_result_l_1 = 'Which of these fragments is most relevant to the query:"'
@@ -63,119 +70,88 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
         main.answer_l_2 = 'match the query'
         main.answer_l_3 = 'If the answer fully satisfies the query, output exactly "1". If the answer is incomplete or insufficient, output one or more reformulated queries (each on a new line) that would help find the missing information. Do not output any explanations or additional text.'
 
-        # Новые атрибуты
         main.best_result_system = main.best_result_l_1 + ' ' + main.best_result_l_2
         main.select_matter_system = main.select_matter_l_1
         main.answer_system = main.answer_l_1 + ' ' + main.answer_l_2 + '\n' + main.answer_l_3
         main.label_query = 'Query:'
         main.label_answer = 'Answer:'
         main.label_fragments = 'Fragments:'
+
+        main.source_milana = 'System generated info'
+        main.source_user_file = 'User files'
+        main.source_web = 'Internet'
+        main.source_unknown = 'Unknown source'
+        main.web_search_available = ' (can also search on the internet)'
         return
+
     let_log('БИБЛИОТЕКАРЬ ВЫЗВАН')
+
     def find_engine(ask_text, attempts_left, donee='correct', search_target=1, full_output=True):
         requests_to_libraries = [ask_text]
-        complex_result = ''
         embeddings = [get_embs(req) for req in requests_to_libraries]
+
         while attempts_left > 0:
             new_requests_to_libraries = []
-            maybe_new_requests_to_libraries = []
             for i, emb in zip(requests_to_libraries, embeddings):
                 let_log(i)
-                results = []
+                # Список найденных элементов с источником
+                items = []
+
                 try:
-                    if search_target == 1:
+                    if search_target == 1:  # milana_collection
                         base_filter = {}
                         if not global_state.gigo_web_search_allowed:
                             base_filter = {'source': {'$ne': 'web'}}
-                        # Копируем базовый фильтр и добавляем специфичные условия
-                        where1 = base_filter.copy()
-                        where1.update({"done": donee, "result": True})
-                        where2 = base_filter.copy()
-                        where2.update({"done": donee})
-                        where3 = base_filter.copy()
-                        if donee == 'correct': where3 = {"done": 'incorrect'}
-                        results = coll_exec(
-                            "query",
-                            "milana_collection",
-                            query_embeddings=[emb],
-                            filters=where1,
-                            fetch="documents",
-                            first=False
-                        ) or []
-                        # Фильтруем None значения
-                        filtered_results = []
-                        if results is not None:
-                            for item in results:
-                                if item is not None:
-                                    # Также фильтруем пустые строки или строки "None"
-                                    if isinstance(item, str):
-                                        item_clean = item.strip()
-                                        if item_clean and item_clean.lower() != "none":
-                                            filtered_results.append(item)
-                                    else:
-                                        filtered_results.append(item)
-                        results = filtered_results
-                        results2 = coll_exec(
-                            "query",
-                            "milana_collection",
-                            query_embeddings=[emb],
-                            filters=where2,
-                            fetch="documents",
-                            first=False
-                        ) or []
-                        # Фильтруем None значения
-                        filtered_results2 = []
-                        if results2 is not None:
-                            for item in results2:
-                                if item is not None:
-                                    if isinstance(item, str):
-                                        item_clean = item.strip()
-                                        if item_clean and item_clean.lower() != "none": filtered_results2.append(item)
-                                    else: filtered_results2.append(item)
-                        results2 = filtered_results2
-                        results.extend(results2)
-                        if where3:
-                            results3 = coll_exec(
-                                "query",
-                                "milana_collection",
+
+                        def query_collection(where_clause):
+                            res_dict = coll_exec(
+                                "query", "milana_collection",
                                 query_embeddings=[emb],
-                                filters=where3,
-                                fetch="documents",
+                                filters=where_clause,
+                                fetch=["documents", "metadatas"],
                                 first=False
-                            ) or []
-                            # Фильтруем None значения
-                            filtered_results3 = []
-                            if results3 is not None:
-                                for item in results3:
-                                    if item is not None:
-                                        if isinstance(item, str):
-                                            item_clean = item.strip()
-                                            if item_clean and item_clean.lower() != "none": filtered_results3.append(item)
-                                        else: filtered_results3.append(item)
-                            results3 = filtered_results3
-                            results.extend(results3)
-                    elif search_target == 2:
-                        results = coll_exec(
-                            "query",
-                            "user_collection",
+                            ) or {}
+                            docs = res_dict.get('documents', []) or []
+                            metas = res_dict.get('metadatas', []) or []
+                            for meta, doc in zip(metas, docs):
+                                if doc and doc.strip():
+                                    items.append({
+                                        'text': doc,
+                                        'source': main.source_milana
+                                    })
+
+                        query_collection({"done": donee, "result": True})
+                        query_collection({"done": donee})
+                        if donee == 'correct':
+                            query_collection({"done": 'incorrect'})
+
+                    elif search_target == 2:  # user_collection
+                        res_dict = coll_exec(
+                            "query", "user_collection",
                             query_embeddings=[emb],
-                            fetch="documents",
+                            fetch=["documents", "metadatas"],
                             first=False
-                        ) or []
-                        # Фильтруем None значения
-                        filtered_results = []
-                        if results is not None:
-                            for item in results:
-                                if item is not None:
-                                    if isinstance(item, str):
-                                        item_clean = item.strip()
-                                        if item_clean and item_clean.lower() != "none": filtered_results.append(item)
-                                    else: filtered_results.append(item)
-                        results = filtered_results
-                    elif search_target == 3: pass
-                except Exception as e: let_log(f"[find_engine] Ошибка запроса: {e}"); results = []
-                # Если ничего не найдено, пробуем поиск в интернете
-                if (not results) and global_state.gigo_web_search_allowed:
+                        ) or {}
+                        docs = res_dict.get('documents', []) or []
+                        metas = res_dict.get('metadatas', []) or []
+                        for meta, doc in zip(metas, docs):
+                            if doc and doc.strip():
+                                src = meta.get('source', '')
+                                if src == 'web':
+                                    source_str = main.source_web
+                                elif src == 'file':
+                                    fname = meta.get('name', 'unknown')
+                                    source_str = f"{main.source_user_file} ({fname})"
+                                else:
+                                    source_str = main.source_unknown
+                                items.append({'text': doc, 'source': source_str})
+
+                except Exception as e:
+                    let_log(f"[find_engine] Ошибка запроса: {e}")
+                    items = []
+
+                # Если ничего не найдено, пробуем веб-поиск
+                if not items and global_state.gigo_web_search_allowed:
                     try:
                         from cross_gpt import web_search, split_text_with_cutting, set_common_save_id, get_common_save_id
                         web_result = web_search(i)
@@ -191,127 +167,147 @@ def main(quest): # TODO: нужно удалять дубликаты инфор
                                         ids=[get_common_save_id()],
                                         embeddings=[get_embs(chunk)],
                                         metadatas=[{
-                                            'name': i,  # текст запроса
+                                            'name': i,
                                             'part': t + 1,
                                             'source': 'web'
                                         }],
                                         documents=[chunk]
                                     )
-                            results = [web_result]
-                    except Exception as e: let_log(f"Web search error: {e}")
-                let_log(results)
-                if results:
+                            items.append({'text': web_result, 'source': main.source_web})
+                    except Exception as e:
+                        let_log(f"Web search error: {e}")
+
+                # Фильтруем пустые и "None"
+                items = [it for it in items if it['text'].strip() and it['text'].strip().lower() != "none"]
+
+                if items:
                     if full_output:
-                        # Используем системный промпт для выбора лучшего результата
+                        # Выбор лучшего результата
                         system_prompt = main.best_result_system
-                        # Формируем пользовательское сообщение по частям
+                        fragments = '\n'.join(it['text'] for it in items)
                         user_prompt = (main.label_query + ' ' + i + '\n' +
-                                       main.label_fragments + '\n' + "\n".join(results))
+                                       main.label_fragments + '\n' + fragments)
                         try:
                             best_result = ask_model(user_prompt, system_prompt=system_prompt)
                         except:
                             best_result = ask_model(text_cutter(user_prompt), system_prompt=system_prompt)
-                        # Проверяем, что результат корректен
+
                         if best_result and best_result.strip() and best_result != found_info_1:
-                            return best_result
+                            # Ищем элемент с таким текстом
+                            source_line = main.source_unknown
+                            for it in items:
+                                if it['text'] == best_result:
+                                    source_line = it['source']
+                                    break
+                            if source_line == main.source_unknown and items:
+                                source_line = items[0]['source']
+                            return f"{source_line}\n{best_result}"
                         else:
                             return found_info_1
-                    # Проверка на полное удовлетворение (используем parse_prompt_response как в старом коде)
+
+                    # Проверка на полное удовлетворение (берём первый элемент)
                     prompt_satisfies = (main.request_l_1 + '\n' + i + '\n' +
-                                        main.information_l_1 + '\n' + results[0] + '\n' +
+                                        main.information_l_1 + '\n' + items[0]['text'] + '\n' +
                                         main.satisfies_l_1)
                     answer_val = parse_prompt_response(prompt_satisfies, 1)
                     if answer_val == 1:
                         let_log('удовлетворяет')
-                        return results[0]
-                    for r in results:
-                        let_log('убрал сокращение каждого результата перед проверкой на полезность')
-                        # Проверка полезности каждого результата (используем parse_prompt_response)
+                        return f"{items[0]['source']}\n{items[0]['text']}"
+
+                    # Собираем полезные элементы
+                    useful_items = []
+                    for it in items:
                         prompt_answer = (main.answer_l_1 + '\n' + i + '\n' +
-                                         main.answer_l_2 + '\n' + r)
+                                         main.answer_l_2 + '\n' + it['text'])
                         answer_val = parse_prompt_response(prompt_answer, 1)
                         if answer_val == 1:
-                            complex_result += r + '\n'
-                    # Выделение важного (используем системный промпт)
-                    if complex_result:
+                            useful_items.append(it)
+
+                    # Выделение важного
+                    if useful_items:
+                        combined_text = '\n'.join(it['text'] for it in useful_items)
                         system_select = main.select_matter_system
                         user_select = (main.label_query + ' ' + i + '\n' +
-                                       main.label_answer + '\n' + complex_result)
+                                       main.label_answer + '\n' + combined_text)
                         try:
-                            complex_result = ask_model(user_select, system_prompt=system_select)
+                            selected_text = ask_model(user_select, system_prompt=system_select)
                         except:
-                            complex_result = ask_model(text_cutter(user_select), system_prompt=system_select)
+                            selected_text = ask_model(text_cutter(user_select), system_prompt=system_select)
+                        # Сохраняем источник от первого полезного элемента
+                        if useful_items:
+                            useful_items = [{'text': selected_text, 'source': useful_items[0]['source']}]
+
                     # Финальная оценка и генерация новых запросов
-                    system_answer = main.answer_system
-                    user_answer = (main.label_answer + ' ' + complex_result + '\n' +
-                                   main.label_query + ' ' + i)
-                    try:
-                        answer = ask_model(user_answer, system_prompt=system_answer)
-                    except:
-                        answer = ask_model(text_cutter(user_answer), system_prompt=system_answer)
-                    # Анализируем ответ: если первая цифра не 0 — считаем подтверждением
-                    if _extract_first_digit(answer, 0) != 0:
-                        return complex_result
-                    else:
-                        new_requests_to_libraries.extend(answer.splitlines())
+                    if useful_items:
+                        combined_useful = '\n'.join(it['text'] for it in useful_items)
+                        system_answer = main.answer_system
+                        user_answer = (main.label_answer + ' ' + combined_useful + '\n' +
+                                       main.label_query + ' ' + i)
+                        try:
+                            answer = ask_model(user_answer, system_prompt=system_answer)
+                        except:
+                            answer = ask_model(text_cutter(user_answer), system_prompt=system_answer)
+
+                        if _extract_first_digit(answer, 0) != 0:
+                            # Возвращаем все полезные элементы с источниками
+                            return '\n\n'.join(f"{it['source']}\n{it['text']}" for it in useful_items)
+                        else:
+                            new_requests_to_libraries.extend(answer.splitlines())
+                    # Если полезных нет, но были элементы – ничего не добавляем (цикл продолжится)
+                # else: items пуст – ничего не добавляем
+
             if new_requests_to_libraries:
                 requests_to_libraries = new_requests_to_libraries
                 embeddings = [get_embs(req) for req in requests_to_libraries]
                 attempts_left -= 1
-            else: break
-        if not complex_result: return found_info_1
-        return complex_result
+            else:
+                break
+
+        return found_info_1
+
     def process_single_question(quest):
         # Обработка входящего запроса для одиночного вопроса
         first_request_target = 1
         full_output = False
         if quest and quest[0] in ('1', '2', '3'):
-            first_request_target = quest[0]
+            first_request_target = int(quest[0])
             if len(quest) > 1 and quest[1] == '1':
                 full_output = True
                 quest = quest[2:]
-            elif len(quest) > 1 and quest[1] == '2': quest = quest[2:]
-            else: quest = quest[1:]
-        # Первый проход — milana_collection
-        result_primary = find_engine(
-            quest,
-            global_state.librarian_max_attempts,
-            search_target=1,
-            full_output=full_output
-        ) or ""
-        # Второй проход — user_collection
-        result_user = find_engine(
-            quest,
-            global_state.librarian_max_attempts,
-            search_target=2,
-            full_output=full_output
-        ) or ""
+            elif len(quest) > 1 and quest[1] == '2':
+                quest = quest[2:]
+            else:
+                quest = quest[1:]
+
+        result_primary = find_engine(quest, global_state.librarian_max_attempts,
+                                     search_target=1, full_output=full_output) or ""
+        result_user = find_engine(quest, global_state.librarian_max_attempts,
+                                  search_target=2, full_output=full_output) or ""
+
         parts = [result_primary, result_user]
-        def is_valid(x):
-            if not x: return False
-            if x.lower() == "none": return False
-            if x == found_info_1: return False
-            return True
         final_res = ''
         for p in parts:
-            if is_valid(p): final_res += p + '\n'
-        if final_res == '': final_res = found_info_1
-        return final_res
+            if p and p != found_info_1 and p.lower() != "none":
+                final_res += p + '\n\n---\n\n'
+        if not final_res:
+            final_res = found_info_1
+        return final_res.strip()
+
     if isinstance(quest, str) and '\n' in quest:
         lines = quest.splitlines()
         question_lines = [line for line in lines if '?' in line]
-        if not question_lines: question_lines = lines
+        if not question_lines:
+            question_lines = lines
         cleaned_questions = []
         for question in question_lines:
-            # Убираем нумерацию вида "1. ", "2) " и маркеры списка "- ", "* ", "• "
             cleaned = re.sub(r'^\s*(?:\d+[\.\)]\s*|[-*•]\s*)*', '', question.strip())
             if cleaned:
                 cleaned_questions.append(cleaned)
-        # Обрабатываем каждый вопрос отдельно
         additional_info = ''
         for question in cleaned_questions:
             answer = process_single_question(question)
-            let_log(found_info_1)
-            if answer != found_info_1: additional_info += '\n' + answer
+            if answer != found_info_1:
+                additional_info += '\n' + answer
         return additional_info.strip() if additional_info else found_info_1
-    else: return process_single_question(quest)
+    else:
+        return process_single_question(quest)

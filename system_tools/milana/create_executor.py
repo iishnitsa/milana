@@ -141,9 +141,8 @@ Example of a command call - "!!!need_information!!! Documentation for React hook
         delegation_allowed = True
     else:
         delegation_allowed = current_level < global_state.hierarchy_limit
-    
     # Удаляем команду делегирования, если недоступна
-    if global_state.hierarchy_limit != 1 and global_state.start_dialog_command_name in ivan_tools:
+    if global_state.hierarchy_limit == 1 and global_state.start_dialog_command_name in ivan_tools:
         del ivan_tools[global_state.start_dialog_command_name]
         let_log("Удалена команда делегирования из инструментов исполнителя")
     

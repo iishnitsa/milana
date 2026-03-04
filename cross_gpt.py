@@ -963,6 +963,15 @@ def mod_loader(adrs):
                     let_log(f"⚠ Ошибка при инициализации {mod_file}: {e}")
                     continue
             else: let_log('НЕ ДОЛЖЕН')
+
+            # --- ДОБАВЛЕНО: Проверка на librarian и обновление описания, если доступен web_search ---
+            if os.path.basename(mod_file) == 'librarian.py':
+                if 'web_search' in globals() and callable(globals()['web_search']):
+                    note = getattr(main_func, 'web_search_available', '')
+                    if note:
+                        description = description + note
+                        let_log(f"✓ Добавлено примечание о веб-поиске к описанию librarian")
+
             if _check_module_uses_cross_gpt(file_contents): global_state.system_tools_keys.append(command_name)
             # Добавляем модуль в список
             loaded_modules.append((command_name, description, main_func))
@@ -3103,21 +3112,25 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global clean_variables_content
     global filter_generations
     global is_save_log
+
     ui_conn = [input_queue, output_queue, log_queue]
+
     # === Загружаем параметры чата ===
-    chat_path = os.path.join(base_dir, "data", "chats", chat_id)  # ИСПРАВЛЕНО: используем base_dir
+    chat_path = os.path.join(base_dir, "data", "chats", chat_id)
     cache_path = os.path.join(chat_path, "cache.db")
+
     # Обновляем пути для system_tools
     global folder_path, slash
-    folder_path = base_dir  # Устанавливаем folder_path в base_dir для корректной загрузки system_tools
-    # Обновляем sys.path для system_tools
-    sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]  # Удаляем старые пути
+    folder_path = base_dir
+    sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]
     sys.path.append(os.path.join(folder_path, 'system_tools'))
     sys.path.append(os.path.join(folder_path, 'system_tools', 'milana'))
     sys.path.append(os.path.join(folder_path, 'system_tools', 'ivan'))
+
     let_log(f"Base directory: {base_dir}")
     let_log(f"Chat path: {chat_path}")
     let_log(f"Folder path: {folder_path}")
+
     # === Подготовка SQLite БД ===
     db_path = os.path.join(chat_path, "chatsettings.db")
     let_log(f"Database path: {db_path}")
@@ -3126,18 +3139,23 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         info TEXT NOT NULL
     )''')
+
     initial_text, fl = load_initial_data(chat_id)
     settings = load_chat_settings(chat_id)
     tool_paths = settings.get("another_tools", [])
+
     # === Настройки из settings ===
     token_limit = int(settings.get("token_limit", 8192))
     most_often = int(settings.get("frequent_response", 0))
     need_best_result = int(settings.get("best_response", 0))
     use_rag = int(settings.get("use_rag", 1))
     global_state.write_results = int(settings.get("write_results", 0))
-    if int(settings.get("write_log", 1)) == 0: is_save_log = False
+    if int(settings.get("write_log", 1)) == 0:
+        is_save_log = False
+
     # === ДОБАВЛЕНО: Получение максимального количества реакций критика ===
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
+
     # === Инициализация ChromaDB ===
     chroma_path = os.path.join(chat_path, "chroma_db")
     client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True, anonymized_telemetry=False))
@@ -3151,30 +3169,37 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     else:
         use_rag = False
         agent_func = _standard_agent_func
+
     filter_generations = int(settings.get("filter_generations", 0))
-    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0)) #TODO:* 2
+    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
+
     global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
     from chat_manager import (
         initialize_schema,
         create_chat,
         get_chat_context,
         update_history,
-        delete_chat)
+        delete_chat
+    )
     initialize_schema()
+
     default_tools_dir = os.path.join(base_dir, "default_tools")
     for rel_path in tool_paths:
-        # Если в списке уже могут быть абсолютные пути, можно проверить:
-        if os.path.isabs(rel_path): full_path = rel_path
-        else: full_path = os.path.join(default_tools_dir, rel_path)
+        if os.path.isabs(rel_path):
+            full_path = rel_path
+        else:
+            full_path = os.path.join(default_tools_dir, rel_path)
         full_path = os.path.normpath(full_path)
         another_tools_files_addresses.append(full_path)
+
     # === Инициализация модели ===
     model_type = settings.get("model_type", "ollama")
     language = settings.get("language", "ru")
     try:
-        # Обновляем путь для импорта model_providers
         model_providers_path = os.path.join(base_dir, "model_providers")
-        if model_providers_path not in sys.path: sys.path.append(model_providers_path)
+        if model_providers_path not in sys.path:
+            sys.path.append(model_providers_path)
+
         model_providers_module = importlib.import_module(f"model_providers.{model_type}")
         ask_model = model_providers_module.ask_model
         ask_model_chat = model_providers_module.ask_model_chat
@@ -3182,83 +3207,97 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         model_connect = model_providers_module.connect
         model_disconnect = model_providers_module.disconnect
         connect_params = settings.get("model_provider_params", "")
-        # Подключение модели
+
         connection_result = model_connect(connect_params)
         if not connection_result or not connection_result[0]:
             let_log(f"Ошибка подключения модели: {connection_result[1] if len(connection_result) > 1 else 'Unknown error'}")
             return
-        # Успешное подключение - получаем теги
+
         success, _, tags = connection_result
-        if tags: 
+        if tags:
             global unified_tags
             unified_tags = tags
-        # Делаем функции модели глобальными
+
         globals().update({
             'ask_provider_model': ask_model,
             'ask_provider_model_chat': ask_model_chat,
             'get_provider_embs': create_embeddings,
         })
+
         provider_module_name = f"model_providers.{model_type}"
         provider_module = sys.modules.get(provider_module_name)
         setattr(provider_module, "token_limit", token_limit)
         emb_token_limit = provider_module.emb_token_limit
         do_chat_construct = provider_module.do_chat_construct
         native_func_call = provider_module.native_func_call
+
     except Exception as e:
         let_log(f"Ошибка инициализации модели: {str(e)}")
         traceback.print_exc()
         return
+
     # === Загрузка модели и инструментов ===
     globalize_language_packet(language)
+
     clean_variables_content = []
     if filter_generations == 1:
         clean_variables_content = [operator_role_text, worker_role_text, func_role_text, system_role_text]
-        if unified_tags.get('bos') is not None: clean_variables_content.append(unified_tags.get('bos'))
-        if unified_tags.get('user_start') is not None: clean_variables_content.append(unified_tags.get('user_start'))
+        if unified_tags.get('bos') is not None:
+            clean_variables_content.append(unified_tags.get('bos'))
+        if unified_tags.get('user_start') is not None:
+            clean_variables_content.append(unified_tags.get('user_start'))
         filter_generations = True
-    else: filter_generations = False
-    global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
-    # === Загружаем пользовательские модули ===
-    let_log(f"\n=== ЗАГРУЗКА ПОЛЬЗОВАТЕЛЬСКИХ МОДУЛЕЙ ===")
-    # Разделяем файлы на специальные и обычные
+    else:
+        filter_generations = False
+
+    # === ИЗМЕНЁННЫЙ ПОРЯДОК ЗАГРУЗКИ МОДУЛЕЙ ===
+
+    # 1. Сначала загружаем специальные модули (web_search, ask_user), чтобы они были доступны librarian
+    let_log(f"\n=== ЗАГРУЗКА СПЕЦИАЛЬНЫХ МОДУЛЕЙ (до системных) ===")
     special_files = {'web_search': None, 'ask_user': None}
     other_files = []
     for file_path in another_tools_files_addresses:
         file_name = os.path.basename(file_path).lower()
-        let_log(f"Проверка файла: {file_name}")
-        # Определяем тип файла
         if file_name.endswith('web_search.py'):
-            let_log(f"✓ Найден файл веб-поиска: {file_path}")
             special_files['web_search'] = file_path
         elif file_name == 'ask_user.py':
-            let_log(f"✓ Найден файл ask_user: {file_path}")
             special_files['ask_user'] = file_path
-        else: other_files.append(file_path)
-    # Сначала загружаем обычные модули
-    if other_files:
-        let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
-        loaded_tools = mod_loader(other_files)
-    else: loaded_tools = []
-    # Загружаем специальные модули через mod_loader
-    let_log(f"\nЗагрузка специальных модулей")
+        else:
+            other_files.append(file_path)
+
+    loaded_tools = []  # сюда будут добавлены все пользовательские инструменты (special + other)
     for module_type, file_path in special_files.items():
         if file_path:
             let_log(f"Загрузка {module_type}: {file_path}")
             module_result = mod_loader([file_path])
             if module_result:
                 for command_name, description, func in module_result:
-                    # Добавляем в общий список инструментов
                     loaded_tools.append((command_name, description, func))
-                    # Глобализуем функцию по типу модуля
                     if module_type == 'web_search':
                         globals()['web_search'] = func
                         let_log(f"✅ Функция web_search глобализована")
                     elif module_type == 'ask_user':
                         globals()['ask_user'] = func
                         let_log(f"✅ Функция ask_user глобализована")
-            else: let_log(f"⚠ Не удалось загрузить {module_type}")
+            else:
+                let_log(f"⚠ Не удалось загрузить {module_type}")
+
+    # 2. Загружаем системные инструменты (теперь они видят web_search в globals)
+    global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
+
+    # 3. Загружаем остальные пользовательские модули
+    if other_files:
+        let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
+        other_loaded = mod_loader(other_files)
+        loaded_tools.extend(other_loaded)
+    else:
+        let_log("Нет обычных модулей для загрузки")
+
     # Настраиваем global_state
     global_state.another_tools = loaded_tools
+
+    # ========== УДАЛЁН старый блок, так как порядок изменён ==========
+
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
     let_log(f"Всего загружено инструментов: {len(loaded_tools)}")
     let_log(f"Веб-поиск доступен: {'web_search' in globals()}")
@@ -3268,14 +3307,17 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         global_state.tools_str += tt + ' (' + t + ')\n'
         global_state.module_tools_keys.append(tt)
         let_log(tt)
+
     # === Загрузка пользовательских данных ===
     if fl:
         send_output_message(text=start_load_attachments_text)
         upload_user_data(fl)
         send_output_message(text=end_load_attachments_text)
+
     # === Запуск обработки ===
     let_log("ЗАПУСК")
-    try: worker(initial_text)
+    try:
+        worker(initial_text)
     except Exception as e:
         print(f"Ошибка: {e}")
         tb = traceback.extract_tb(e.__traceback__)[-1]
@@ -3284,6 +3326,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         t = f"{e} | {tb.filename}:{tb.lineno}"
         send_ui_no_cache(t)
         log_file = os.path.join(chat_path, 'log.txt')
-        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{t}\n')
-    try: model_disconnect()
-    except: pass
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f'{t}\n')
+    try:
+        model_disconnect()
+    except:
+        pass
