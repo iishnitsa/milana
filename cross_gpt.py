@@ -505,13 +505,13 @@ def coll_exec(action: str,
     Сжатие происходит ВСЕГДА для документов в milana_collection/user_collection.
     Формат: 'z' + Base64(gzip(данные)) для сжатых, 'n' + текст для несжатых.
     """
-    '''
     def _empty_result(fetch):
         """Возвращает пустой результат в нужном формате"""
         include = fetch if isinstance(fetch, list) else [fetch]
         if len(include) > 1:
             out = {}
-            for key in include: out[key] = [] if key != "distances" else [[]]
+            for key in include:
+                out[key] = [] if key != "distances" else [[]]
             return out
         else:
             key = include[0]
@@ -521,18 +521,16 @@ def coll_exec(action: str,
             elif key == "embeddings": return []
             elif key == "distances": return [[]]
             else: return None
-    # 1. Для операций ЗАПИСИ (add, update) - заменяем пустые эмбеддинги на None
+
+    # 1. Для операций ЗАПИСИ (add, update) - проверяем эмбеддинги
     if action in ("add", "update") and embeddings is not None:
-        new_embeddings = []
+        # Проверяем каждый эмбеддинг
         for i, emb in enumerate(embeddings):
             if emb is None or (isinstance(emb, list) and len(emb) == 0):
-                let_log(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, документ: {documents[i] if documents and i < len(documents) else 'unknown'}")
-                # Ставим None - ChromaDB выдаст ошибку, но это лучше чем пустой список
-                # Пользователь увидит ошибку и исправит данные
-                new_embeddings.append(None)
-            else: new_embeddings.append(emb)
-        embeddings = new_embeddings
-    # 2. Для операций ПОИСКА (query) - сразу возвращаем пустой результат
+                let_log(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}, документ: {documents[i] if documents and i < len(documents) else 'unknown'}")
+                let_log(f"[coll_exec] Ошибка: пустые эмбеддинги недопустимы для {action}")
+                return None
+    # 2. Для операций ПОИСКА (query) - проверяем query_embeddings
     if action == "query":
         if query_embeddings is None:
             let_log("[coll_exec] ⚠ query_embeddings is None, возвращаем пустой результат")
@@ -546,7 +544,7 @@ def coll_exec(action: str,
         if all_empty:
             let_log("[coll_exec] ⚠ Все query_embeddings пустые, возвращаем пустой результат")
             return _empty_result(fetch)
-    '''
+
     def _compress_doc_always(doc: str | bytes) -> str:
         """
         Всегда пытается сжать документ.
@@ -574,6 +572,7 @@ def coll_exec(action: str,
             if compressed_size < uncompressed_size: return compressed_str
             else: return uncompressed_str
         except: return uncompressed_str
+    
     def _decompress_doc_always(comp: str) -> str:
         """
         Распаковывает документ с защитой от ложного распознавания.
@@ -589,6 +588,7 @@ def coll_exec(action: str,
             with gzip.GzipFile(fileobj=buf, mode='rb') as gz: decompressed_bytes = gz.read()
             return decompressed_bytes.decode("utf-8")
         elif first_char == 'n': return content
+    
     def _compress_documents_always(coll_name_local, documents_list):
         """Всегда сжимает список документов с проверкой выгоды"""
         if documents_list is None: return None
@@ -601,6 +601,7 @@ def coll_exec(action: str,
             compressed = _compress_doc_always(d)
             out.append(compressed)
         return out
+    
     def _decompress_documents_always(coll_name_local, documents_list):
         """Распаковывает список документов"""
         if documents_list is None: return None
@@ -613,8 +614,10 @@ def coll_exec(action: str,
             decompressed = _decompress_doc_always(d)
             out.append(decompressed)
         return out
+    
     coll = globals().get(coll_name) or (client and client.get_collection(coll_name))
     if coll is None and action != "delete_collection": raise NameError(f"Collection '{coll_name}' not found")
+    
     def _make_where(d):
         if not d: return None
         clauses = []
@@ -624,6 +627,7 @@ def coll_exec(action: str,
                 clauses.append({k: v})
             else: clauses.append({k: v})
         return clauses[0] if len(clauses) == 1 else {"$and": clauses}
+    
     def _extract(resp, include):
         if len(include) > 1:
             out = {}
@@ -641,6 +645,7 @@ def coll_exec(action: str,
         if first: return data[0] if data else None
         if isinstance(data, list) and data and isinstance(data[0], list): return [i for sub in data for i in sub]
         return data
+    
     def _filter_relevance(resp, coeff: float):
         if "distances" not in resp or resp["distances"] is None or not resp["distances"]: return resp
         dists = resp["distances"][0]
@@ -656,6 +661,7 @@ def coll_exec(action: str,
             elif isinstance(v, list): out[k] = [v[i] for i in keep_idx]
             else: out[k] = v
         return out
+    
     def _process_in_nin_operators(coll, filters, coll_name_local, get_results=True):
         let_log(f"[{coll_name_local}] Запуск обхода (in/nin) для ID с фильтрами: {filters}")
         nin_ids = set(filters.get('$nin', {}).get('vector_id', []))
@@ -694,6 +700,7 @@ def coll_exec(action: str,
                 include=['metadatas', 'documents', 'embeddings']
             )
         return {'ids': [], 'metadatas': [], 'documents': [], 'embeddings': []}
+    
     try:
         id_filters_present = (
             filters and

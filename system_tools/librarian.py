@@ -85,8 +85,12 @@ def main(quest):
         return
 
     let_log('БИБЛИОТЕКАРЬ ВЫЗВАН')
+    
+    # Множество для отслеживания текстов запросов, по которым уже выполнялся веб-поиск
+    web_search_done_texts = set()
 
     def find_engine(ask_text, attempts_left, donee='correct', search_target=1, full_output=True):
+        nonlocal web_search_done_texts
         requests_to_libraries = [ask_text]
         embeddings = [get_embs(req) for req in requests_to_libraries]
 
@@ -152,30 +156,34 @@ def main(quest):
 
                 # Если ничего не найдено, пробуем веб-поиск
                 if not items and global_state.gigo_web_search_allowed:
-                    try:
-                        from cross_gpt import web_search, split_text_with_cutting, set_common_save_id, get_common_save_id
-                        web_result = web_search(i)
-                        if web_result and web_result != found_info_1:
-                            # Сохраняем результат в user_collection
-                            chunks = split_text_with_cutting(web_result)
-                            if chunks:
-                                for t, chunk in enumerate(chunks):
-                                    set_common_save_id()
-                                    coll_exec(
-                                        action="add",
-                                        coll_name="user_collection",
-                                        ids=[get_common_save_id()],
-                                        embeddings=[get_embs(chunk)],
-                                        metadatas=[{
-                                            'name': i,
-                                            'part': t + 1,
-                                            'source': 'web'
-                                        }],
-                                        documents=[chunk]
-                                    )
-                            items.append({'text': web_result, 'source': main.source_web})
-                    except Exception as e:
-                        let_log(f"Web search error: {e}")
+                    # Проверяем, не выполняли ли уже веб-поиск для этого текста запроса
+                    if i not in web_search_done_texts:
+                        try:
+                            from cross_gpt import web_search, split_text_with_cutting, set_common_save_id, get_common_save_id
+                            web_result = web_search(i)
+                            if web_result and web_result != found_info_1:
+                                # Сохраняем результат в user_collection
+                                chunks = split_text_with_cutting(web_result)
+                                if chunks:
+                                    for t, chunk in enumerate(chunks):
+                                        set_common_save_id()
+                                        coll_exec(
+                                            action="add",
+                                            coll_name="user_collection",
+                                            ids=[get_common_save_id()],
+                                            embeddings=[get_embs(chunk)],
+                                            metadatas=[{
+                                                'name': i,
+                                                'part': t + 1,
+                                                'source': 'web'
+                                            }],
+                                            documents=[chunk]
+                                        )
+                                items.append({'text': web_result, 'source': main.source_web})
+                                # Запоминаем, что для этого текста веб-поиск уже выполнен
+                                web_search_done_texts.add(i)
+                        except Exception as e:
+                            let_log(f"Web search error: {e}")
 
                 # Фильтруем пустые и "None"
                 items = [it for it in items if it['text'].strip() and it['text'].strip().lower() != "none"]

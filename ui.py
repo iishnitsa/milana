@@ -5,7 +5,6 @@ from pathlib import Path
 import multiprocessing
 import sys
 import customtkinter
-import inspect
 import importlib.util
 import ast
 import os
