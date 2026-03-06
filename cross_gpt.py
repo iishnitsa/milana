@@ -116,7 +116,7 @@ unified_tags = {
     "tool_result_start": "",
     "tool_result_end": "",
 }
-use_user = True
+use_user = False
 chunk_size = 1000 # TODO:
 get_provider_embs = None
 ask_provider_model = None
@@ -1048,7 +1048,6 @@ def system_tools_loader():
 @cacher
 def get_embs(text: str):  # TODO: протестировать
     # 1) кеширование
-    send_log_to_ui('embeddings:\n' + text)
     start = time.time()
     # Удаляем начальные/конечные пробелы
     text = text.strip()
@@ -1153,7 +1152,7 @@ def _execute_with_cache_and_error_handling(generation_func):
             except Exception as e:
                 if 'ContextOverflowError' in str(e): raise RuntimeError("ContextOverflowError")
     elapsed = time.time() - start
-    send_log_to_ui('model:\n' + generated)
+    send_log_to_ui(generated)
     traceprint()
     let_log(generated)
     let_log(f'СГЕНЕРИРОВАНО {len(generated)} токенов за {elapsed:.2f}s')

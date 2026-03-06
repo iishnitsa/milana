@@ -126,13 +126,13 @@ def create_module_ui_item(parent, module_data, module_type, enabled_var=None, on
         remove_btn.grid(row=0, column=2, rowspan=2, padx=10)
     return frame
 def create_chat_message_bubble(parent, text, is_my, attachments=None, is_question=False):
-    """Создает пузырь сообщения чата"""
+    """Создает пузырь сообщения чата (без авто-обновления wraplength)"""
     row_frame = create_styled_frame(parent)
     row_frame.pack(fill=tk.X, pady=2, padx=10, anchor="center")
     # Основной пузырь с рамкой
     bubble = create_styled_frame(row_frame, border_width=2, border_color=PURPLE_ACCENT if is_my else WHITE, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
     bubble.pack(expand=False, anchor="center")
-    # Текст сообщения (wraplength будет установлен динамически)
+    # Текст сообщения (wraplength будет установлен динамически позже)
     msg_text_widget = CTkLabel(
         bubble, 
         text=text, 
@@ -145,20 +145,6 @@ def create_chat_message_bubble(parent, text, is_my, attachments=None, is_questio
     # Настраиваем отступы
     if is_question and not is_my: msg_text_widget.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 8), pady=6)
     else: msg_text_widget.pack(fill=tk.X, expand=True, padx=8, pady=6)
-    def update_message_width():
-        try:
-            if not msg_text_widget.winfo_exists(): return
-            max_parent_width = parent.winfo_width() - 40
-            bubble_width = min(
-                max_parent_width * 0.95,
-                msg_text_widget.winfo_reqwidth() + 0)
-            # 3. Устанавливаем wraplength как ширину пузыря минус отступы
-            wraplength_value = max(20, bubble_width - 20)  # Минимум 20px
-            msg_text_widget.configure(wraplength=wraplength_value)
-        except Exception: pass
-    # Обновляем при создании и при изменении размера
-    bubble.after(100, update_message_width)
-    parent.bind("<Configure>", lambda e: bubble.after(50, update_message_width))
     return bubble, msg_text_widget
 def setup_message_wraplength(widget, messages_frame):
     """Настраивает автоматическое обновление wraplength для сообщений"""
@@ -1685,7 +1671,9 @@ class SettingsWindow(BaseSettingsWindow):
                 ModuleManager().update_custom_modules(self.backend)
                 self.rebuild_mods_list()
         create_module_ui_item(parent, mod_data, "default" if is_default else "custom", enabled_var=enabled_var if is_default else None, on_toggle=toggle_callback if is_default else None, on_remove=None if is_default else remove_callback, show_checkbox=is_default)
-    def toggle_default_mod(self, mod_id, enabled): self.backend.update_default_mod_enabled(mod_id, enabled)
+    def toggle_default_mod(self, mod_id, enabled):
+        self.backend.update_default_mod_enabled(mod_id, enabled)
+        ModuleManager().load_modules(self.backend, reload_m=True)
     def remove_custom_mod(self, mod_id):
         if askyesno(self, Lang.get("warning"), Lang.get("remove_module_confirm")):
             self.backend.remove_custom_mod(mod_id)
@@ -1702,40 +1690,91 @@ class SettingsWindow(BaseSettingsWindow):
         except ValueError as e: showerror(self, Lang.get("error"), str(e))
 
 class LogWindow(BaseTopLevel):
+    MAX_LOG_MESSAGES = 50  # лимит отображаемых сообщений
+
     def __init__(self, master, chat_id, log_queue):
         super().__init__(master, fg_color=DARK_BG)
         self.geometry("400x200")
         self.minsize(400, 200)
-        self.master, self.chat_id, self.log_queue = master, chat_id, log_queue
-        chat_name = next((chat['name'] for chat in self.master.backend.get_chats() if chat['id'] == chat_id), chat_id)
+        self.master = master
+        self.chat_id = chat_id
+        self.log_queue = log_queue
+
+        chat_name = next(
+            (chat['name'] for chat in self.master.backend.get_chats() if chat['id'] == chat_id),
+            chat_id
+        )
         self.title(f"Log - {chat_name}")
+
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self.messages_frame = create_scrollable_frame(self, fg_color="transparent", label_text="")
+
+        self.messages_frame = create_scrollable_frame(
+            self, fg_color="transparent", label_text=""
+        )
         self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.messages_frame.grid_columnconfigure(0, weight=1)
-        self.log_message_widgets = []
+
+        self.log_message_widgets = []  # храним пузыри для удаления старых
         self.check_log_queue()
+
     def add_log_message_to_ui(self, text):
-        bubble = create_styled_frame(self.messages_frame, border_width=1, border_color=PURPLE_ACCENT, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
-        bubble.pack(fill=tk.X, padx=5, pady=3, ipady=5)
-        msg_widget = create_styled_label(bubble, text=text, wraplength=self.messages_frame.winfo_width() - 50, justify="left", fg_color="transparent")
-        msg_widget.pack(fill=tk.X, padx=10, pady=5)
-        ChatApp.add_label_context_menu(self.master, msg_widget)
-        self.log_message_widgets.append(bubble)
-        if len(self.log_message_widgets) > 200: self.log_message_widgets.pop(0).destroy()
-        self.after(50, lambda: self.messages_frame._parent_canvas.yview_moveto(1.0))
-    def check_log_queue(self):
+        """Добавляет сообщение лога, оформленное как в чате."""
         try:
-            while True: self.add_log_message_to_ui(self.log_queue.get_nowait())
-        except queue.Empty: pass
-        if self.winfo_exists(): self.after(250, self.check_log_queue)
+            # создаём пузырь как у сообщений ассистента (is_my=False)
+            bubble, msg_text = create_chat_message_bubble(
+                self.messages_frame, text, is_my=False, is_question=False
+            )
+            # настраиваем автоматический перенос строк
+            setup_message_wraplength(msg_text, self.messages_frame)
+
+            # контекстное меню для копирования
+            def copy_text():
+                self.master.clipboard_clear()
+                self.master.clipboard_append(text)
+
+            menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE)
+            menu.add_command(label=Lang.get("copy"), command=copy_text)
+            msg_text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+            if sys.platform == "darwin":
+                msg_text.bind("<Button-2>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+
+            self.log_message_widgets.append(bubble)
+
+            # ограничение количества сообщений
+            if len(self.log_message_widgets) > self.MAX_LOG_MESSAGES:
+                oldest = self.log_message_widgets.pop(0)
+                oldest.destroy()
+
+            # обновляем scrollregion и прокручиваем вниз
+            self.messages_frame.update_idletasks()
+            canvas = self.messages_frame._parent_canvas
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.yview_moveto(1.0)
+
+        except Exception as e:
+            print(f"Ошибка при добавлении лога в UI: {e}")
+
+    def check_log_queue(self):
+        """Периодически проверяет очередь и добавляет новые сообщения."""
+        try:
+            while True:
+                msg = self.log_queue.get_nowait()
+                self.add_log_message_to_ui(msg)
+        except queue.Empty:
+            pass
+        except Exception as e:
+            print(f"Ошибка в check_log_queue: {e}")
+
+        if self.winfo_exists():
+            self.after(250, self.check_log_queue)
+
 
 class CreateChatWindow(BaseSettingsWindow):
     def __init__(self, master, backend):
         super().__init__(master, backend, "create_chat_title", "500x550")  # УМЕНЬШЕНА ВЫСОТА С 500x600
         module_manager = ModuleManager()
-        self.custom_mods_for_chat = module_manager.get_custom_modules()
+        self.custom_mods_for_chat = module_manager.get_custom_modules().copy()
         self.newly_added_mods = []
         self.max_tokens = int(self.backend.get_global_settings().get("token_limit", 8192))
         self.validated = True

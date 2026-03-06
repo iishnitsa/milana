@@ -6,7 +6,6 @@ Milana will wait until she receives your response.
 '''
 
 from cross_gpt import get_input_message, send_output_message, let_log
-from multiprocessing import Process, Pipe
 
 def main(text):
     if not hasattr(main, 'attr_names'):

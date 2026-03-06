@@ -1,3 +1,4 @@
+import requests
 import traceback
 from typing import Optional, Dict, Any, List, Tuple
 from huggingface_hub import InferenceClient
@@ -38,7 +39,7 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
 
     req_timeout = int(params['timeout'])
 
-    # Настройка тегов на основе имени модели (упрощенно)
+    # Настройка тегов на основе имени модели
     if params['chat']:
         model_lower = params['chat'].lower()
         if 'mistral' in model_lower:
@@ -57,7 +58,6 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
         ollama_emb_model=params['ollama_emb_model']
     )
 
-    # Получение лимитов через HF API (client.get_model_token_limit) можно добавить позже
     return True, token_limit, tags
 
 def disconnect() -> bool:
@@ -68,6 +68,7 @@ def disconnect() -> bool:
     return False
 
 def ask_model(generation_params: Dict[str, Any]) -> str:
+    """Используется для completion (prompt-based)"""
     global client
     if client is None:
         raise RuntimeError("Hugging Face client not initialized")
@@ -78,6 +79,25 @@ def ask_model(generation_params: Dict[str, Any]) -> str:
     except Exception as e:
         traceback.print_exc()
         raise RuntimeError(f"Generation error: {str(e)}")
+
+def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Запрос к чат-модели через Hugging Face Inference API.
+    Ожидает параметры:
+    - messages: список сообщений [{"role": "user", "content": "..."}, ...]
+    - model: опционально, модель для использования
+    - temperature, max_tokens и др. параметры генерации
+    """
+    global client
+    if client is None:
+        raise RuntimeError("Hugging Face client not initialized")
+    try:
+        return client.chat(generation_params)
+    except RuntimeError as e:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise RuntimeError(f"Chat error: {str(e)}")
 
 def create_embeddings(text: str) -> List[float]:
     global client
@@ -115,13 +135,13 @@ class HuggingFaceClient:
         self.ollama_session = requests.Session() if use_ollama else None
 
     def generate(self, generation_params: Dict[str, Any]) -> str:
+        """Текстовая генерация на основе промпта (для обратной совместимости)"""
         if not self.hf_client:
             raise RuntimeError("Chat model not specified or client not initialized")
         if "prompt" not in generation_params:
             raise ValueError("'prompt' is required")
 
         prompt = generation_params["prompt"]
-        # Формируем параметры для text_generation
         gen_kwargs = {
             "max_new_tokens": generation_params.get("max_tokens", 200),
             "temperature": generation_params.get("temperature", 0.7),
@@ -131,14 +151,76 @@ class HuggingFaceClient:
         }
 
         try:
-            # Используем text_generation, так как это наиболее универсально
             return self.hf_client.text_generation(prompt, **gen_kwargs).strip()
         except Exception as e:
             err_str = str(e).lower()
-            # Попытка поймать ошибку переполнения контекста
             if any(phrase in err_str for phrase in ["context", "token length", "max_length"]):
                 raise RuntimeError("ContextOverflowError")
             raise
+
+    def chat(self, generation_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Чат-генерация через Hugging Face Inference API [citation:5]
+        Использует метод chat.completions.create
+        """
+        if not self.hf_client:
+            raise RuntimeError("Chat model not specified or client not initialized")
+        if "messages" not in generation_params:
+            raise ValueError("'messages' is required for chat")
+
+        # Подготовка параметров для chat.completions
+        messages = generation_params["messages"]
+        model = generation_params.get("model", self.chat_model)
+        
+        # Стандартные параметры генерации [citation:5]
+        chat_kwargs = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": generation_params.get("max_tokens", 500),
+            "temperature": generation_params.get("temperature", 0.7),
+            "top_p": generation_params.get("top_p", 0.9),
+            "stop": generation_params.get("stop", None),
+        }
+        
+        # Добавляем опциональные параметры
+        if "frequency_penalty" in generation_params:
+            chat_kwargs["frequency_penalty"] = generation_params["frequency_penalty"]
+        if "presence_penalty" in generation_params:
+            chat_kwargs["presence_penalty"] = generation_params["presence_penalty"]
+        if "seed" in generation_params:
+            chat_kwargs["seed"] = generation_params["seed"]
+
+        try:
+            # Hugging Face InferenceClient поддерживает chat.completions.create
+            response = self.hf_client.chat.completions.create(**chat_kwargs)
+            
+            # Преобразуем ответ в словарь для совместимости
+            return {
+                "id": response.id,
+                "choices": [
+                    {
+                        "message": {
+                            "content": choice.message.content,
+                            "role": choice.message.role
+                        },
+                        "finish_reason": choice.finish_reason,
+                        "index": choice.index
+                    }
+                    for choice in response.choices
+                ],
+                "usage": {
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                    "total_tokens": response.usage.total_tokens if response.usage else 0
+                } if response.usage else {},
+                "model": response.model,
+                "created": response.created
+            }
+        except Exception as e:
+            err_str = str(e).lower()
+            if any(phrase in err_str for phrase in ["context", "token length", "max_length"]):
+                raise RuntimeError("ContextOverflowError")
+            raise RuntimeError(f"Chat API error: {str(e)}")
 
     def embeddings(self, text: str) -> List[float]:
         # Приоритет: Ollama

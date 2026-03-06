@@ -53,11 +53,6 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
         ollama_emb_model=params['ollama_emb_model']
     )
 
-    # Получаем лимиты от API (заглушка, т.к. Cohere не отдает их через базовый запрос)
-    # Можно сделать отдельный запрос к /models, если это необходимо, но пока оставим умолчания.
-    # token_limit = client.get_token_limit() # Эту логику можно добавить позже
-    # emb_token_limit = client.get_emb_token_limit()
-
     return True, token_limit, tags
 
 def disconnect() -> bool:
@@ -68,6 +63,7 @@ def disconnect() -> bool:
     return False
 
 def ask_model(generation_params: Dict[str, Any]) -> str:
+    """Используется для completion (prompt-based)"""
     global client
     if client is None:
         raise RuntimeError("Cohere client not initialized")
@@ -78,6 +74,25 @@ def ask_model(generation_params: Dict[str, Any]) -> str:
     except Exception as e:
         traceback.print_exc()
         raise RuntimeError(f"Generation error: {str(e)}")
+
+def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Запрос к чат-модели Cohere через OpenAI-совместимый эндпоинт.
+    Ожидает параметры:
+    - messages: список сообщений [{"role": "user", "content": "..."}, ...]
+    - model: опционально, модель для использования
+    - temperature, max_tokens и др. параметры генерации
+    """
+    global client
+    if client is None:
+        raise RuntimeError("Cohere client not initialized")
+    try:
+        return client.chat(generation_params)
+    except RuntimeError as e:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise RuntimeError(f"Chat error: {str(e)}")
 
 def create_embeddings(text: str) -> List[float]:
     global client
@@ -117,20 +132,14 @@ class CohereClient:
         self.ollama_session = requests.Session() if use_ollama else None
 
     def generate(self, generation_params: Dict[str, Any]) -> str:
-        """Запрос к /chat/completions (OpenAI-совместимый)"""
+        """Запрос к /completions (для обратной совместимости)"""
         if "prompt" not in generation_params:
             raise ValueError("'prompt' is required")
 
-        # Формируем сообщения для chat/completions
-        messages = [{"role": "user", "content": generation_params["prompt"]}]
-        if "system" in generation_params:
-            # В Cohere роль для system называется 'developer' [citation:1]
-            messages.insert(0, {"role": "developer", "content": generation_params["system"]})
-
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/completions"
         payload = {
             "model": self.chat_model,
-            "messages": messages,
+            "prompt": generation_params["prompt"],
             "max_tokens": generation_params.get("max_tokens", 200),
             "temperature": generation_params.get("temperature", 0.7),
             "top_p": generation_params.get("top_p", 0.75),
@@ -144,7 +153,7 @@ class CohereClient:
             resp = requests.post(url, json=payload, headers=self.headers, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
-            return data['choices'][0]['message']['content']
+            return data['choices'][0]['text']
         except requests.HTTPError as e:
             msg = ""
             try:
@@ -153,7 +162,6 @@ class CohereClient:
             except:
                 msg = str(e)
 
-            # Проверка на ошибки переполнения контекста [citation:4][citation:9]
             if any(phrase in msg.lower() for phrase in [
                 "too many tokens", "size limit exceeded", "context length"
             ]):
@@ -162,17 +170,65 @@ class CohereClient:
         except requests.RequestException as e:
             raise RuntimeError(f"Connection error: {str(e)}")
 
+    def chat(self, generation_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Запрос к /chat/completions (OpenAI-совместимый чат-эндпоинт) [citation:1][citation:4]
+        Возвращает полный ответ от API.
+        """
+        if "messages" not in generation_params:
+            raise ValueError("'messages' is required for chat")
+
+        url = f"{self.base_url}/chat/completions"
+        messages = generation_params["messages"]
+
+        # Преобразование system message в developer role для Cohere [citation:1]
+        processed_messages = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                processed_messages.append({"role": "developer", "content": msg["content"]})
+            else:
+                processed_messages.append(msg)
+
+        payload = {
+            "model": generation_params.get("model", self.chat_model),
+            "messages": processed_messages,
+            "max_tokens": generation_params.get("max_tokens", 200),
+            "temperature": generation_params.get("temperature", 0.7),
+            "top_p": generation_params.get("top_p", 0.75),
+            "frequency_penalty": generation_params.get("frequency_penalty", 0.0),
+            "presence_penalty": generation_params.get("presence_penalty", 0.0),
+            "stop": generation_params.get("stop", None),
+            "stream": False
+        }
+
+        try:
+            resp = requests.post(url, json=payload, headers=self.headers, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.HTTPError as e:
+            msg = ""
+            try:
+                error_data = resp.json()
+                msg = error_data.get('error', {}).get('message', str(e))
+            except:
+                msg = str(e)
+
+            if any(phrase in msg.lower() for phrase in [
+                "too many tokens", "size limit exceeded", "context length"
+            ]):
+                raise RuntimeError("ContextOverflowError")
+            raise RuntimeError(f"Chat API error: {msg}")
+        except requests.RequestException as e:
+            raise RuntimeError(f"Connection error: {str(e)}")
+
     def embeddings(self, text: str) -> List[float]:
-        """Создание эмбеддингов. Приоритет: Ollama (если включен) -> Cohere."""
-        # 1. Пытаемся использовать Ollama, если включено
+        """Создание эмбеддингов (без изменений)"""
         if self.use_ollama and self.ollama_session:
             try:
                 return self._ollama_embeddings(text)
             except Exception as e:
-                # Логируем ошибку и падаем с ней, без фолбэка на Cohere
                 raise RuntimeError(f"Ollama embeddings error: {e}")
 
-        # 2. Используем Cohere Compatibility API [citation:1]
         url = f"{self.base_url}/embeddings"
         payload = {
             "model": self.emb_model,
@@ -184,7 +240,6 @@ class CohereClient:
             resp = requests.post(url, json=payload, headers=self.headers, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
-            # Извлекаем эмбеддинг [citation:1]
             return data['data'][0]['embedding']
         except requests.HTTPError as e:
             msg = ""
@@ -194,7 +249,6 @@ class CohereClient:
             except:
                 msg = str(e)
 
-            # Проверка на ошибки переполнения контекста [citation:4]
             if "too many tokens" in msg.lower():
                 raise RuntimeError("ContextOverflowError")
             raise RuntimeError(f"Embeddings API error: {msg}")
@@ -202,7 +256,6 @@ class CohereClient:
             raise RuntimeError(f"Connection error: {str(e)}")
 
     def _ollama_embeddings(self, text: str) -> List[float]:
-        """Внутренний метод для запроса к Ollama."""
         url = f"{self.ollama_url}/api/embeddings"
         payload = {"model": self.ollama_emb_model, "prompt": text}
         try:
@@ -211,7 +264,6 @@ class CohereClient:
             return resp.json()['embedding']
         except requests.HTTPError as e:
             msg = resp.text.lower()
-            # Ollama может вернуть 500 с текстом об ошибке контекста [citation:10]
             if any(phrase in msg for phrase in ["exceeds context", "context length", "token limit"]):
                 raise RuntimeError("ContextOverflowError")
             raise

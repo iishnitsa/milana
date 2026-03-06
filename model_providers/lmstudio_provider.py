@@ -65,7 +65,7 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
                     if model["id"] == client.chat_model:
                         token_limit = model.get("context_length", token_limit)
                         break
-            # Поиск лимита для модели эмбеддингов (если она отдельная)
+            # Поиск лимита для модели эмбеддингов
             if client.emb_model:
                 for model in models_info:
                     if model["id"] == client.emb_model:
@@ -86,6 +86,7 @@ def disconnect() -> bool:
     return False
 
 def ask_model(generation_params: Dict[str, Any]) -> str:
+    """Используется для completion (prompt-based)"""
     global client
     if client is None:
         raise RuntimeError("LM Studio client not initialized")
@@ -96,6 +97,25 @@ def ask_model(generation_params: Dict[str, Any]) -> str:
     except Exception as e:
         traceback.print_exc()
         raise RuntimeError(f"Generation error: {str(e)}")
+
+def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Запрос к чат-модели через LM Studio API.
+    Ожидает параметры:
+    - messages: список сообщений [{"role": "user", "content": "..."}, ...]
+    - model: опционально, модель для использования
+    - temperature, max_tokens и др. параметры генерации
+    """
+    global client
+    if client is None:
+        raise RuntimeError("LM Studio client not initialized")
+    try:
+        return client.chat(generation_params)
+    except RuntimeError as e:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise RuntimeError(f"Chat error: {str(e)}")
 
 def create_embeddings(text: str) -> List[float]:
     global client
@@ -136,6 +156,7 @@ class LMStudioClient:
         self.ollama_session = requests.Session() if use_ollama else None
 
     def generate(self, generation_params: Dict[str, Any]) -> str:
+        """Запрос к /v1/completions (prompt-based)"""
         if "prompt" not in generation_params:
             raise ValueError("'prompt' is required")
         if not self.chat_model:
@@ -165,14 +186,66 @@ class LMStudioClient:
             except:
                 msg = resp.text
 
-            # Проверка на ошибки контекста [citation:10]
             if any(phrase in msg.lower() for phrase in ["context length", "exceeds context", "token limit"]):
                 raise RuntimeError("ContextOverflowError")
             raise RuntimeError(f"API error: {msg}")
         except requests.RequestException as e:
             raise RuntimeError(f"Connection error: {str(e)}")
 
+    def chat(self, generation_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Запрос к /v1/chat/completions (OpenAI-совместимый чат-эндпоинт) [citation:6][citation:9]
+        Возвращает полный ответ от API.
+        """
+        if "messages" not in generation_params:
+            raise ValueError("'messages' is required for chat")
+        if not self.chat_model:
+            raise ValueError("Chat model not specified")
+
+        url = f"{self.base_url}/v1/chat/completions"
+        
+        # Стандартный payload для OpenAI-совместимого чат-эндпоинта [citation:6]
+        payload = {
+            "model": generation_params.get("model", self.chat_model),
+            "messages": generation_params["messages"],
+            "max_tokens": generation_params.get("max_tokens", 200),
+            "temperature": generation_params.get("temperature", 0.7),
+            "top_p": generation_params.get("top_p", 0.95),
+            "frequency_penalty": generation_params.get("frequency_penalty", 0.0),
+            "presence_penalty": generation_params.get("presence_penalty", 0.0),
+            "stop": generation_params.get("stop", None),
+            "stream": False
+        }
+        
+        # Добавляем опциональные параметры
+        if "repetition_penalty" in generation_params:
+            payload["repetition_penalty"] = generation_params["repetition_penalty"]
+        if "logit_bias" in generation_params:
+            payload["logit_bias"] = generation_params["logit_bias"]
+        if "user" in generation_params:
+            payload["user"] = generation_params["user"]
+
+        try:
+            resp = requests.post(
+                url, json=payload, headers=self.headers, auth=self.auth, timeout=self.timeout
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.HTTPError as e:
+            msg = ""
+            try:
+                msg = resp.json().get("error", {}).get("message", str(e))
+            except:
+                msg = resp.text
+
+            if any(phrase in msg.lower() for phrase in ["context length", "exceeds context", "token limit"]):
+                raise RuntimeError("ContextOverflowError")
+            raise RuntimeError(f"Chat API error: {msg}")
+        except requests.RequestException as e:
+            raise RuntimeError(f"Connection error: {str(e)}")
+
     def embeddings(self, text: str) -> List[float]:
+        """Создание эмбеддингов (без изменений)"""
         # Приоритет: Ollama
         if self.use_ollama and self.ollama_session:
             try:
