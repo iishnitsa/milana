@@ -52,7 +52,7 @@ def main(client_task):
             'hierarchy_limit_info',
             'delegate_unavailable_for_operator',
         )
-
+        
         main.milana_base_1 = '''
 You are an AI operator "Milana".
 You are given a task plan from a client'''
@@ -69,24 +69,17 @@ Command example – "!!!create_executor!!! Write frontend for an online store"
 '''
         # Уточнено: пользователь пришлёт план и задачу
         main.start_dialog_tool_text_1 = '''You will receive a plan and a task from the user. Based on the task description, select tools from the list of allowed tools.
-
 Output data:
-
 Only tool names separated by comma and space in a single line.
 No quotes, no periods at the end, no explanations, and no additional characters.
 If no tool is suitable or if at least one incorrect or extra name is found, output exactly: None
-
 List of allowed tools:
-
 '''
         main.start_dialog_tool_text_2 = '''
-
 LIMITATIONS:
-
 It is forbidden to output any other tool names except those from the list.
 You cannot invent new commands.
 Any typo or incorrect entry in the list is sufficient reason to output None.
-
 '''
         main.hierarchy_limit_info = 'Hierarchy levels are limited. Current level'
         main.delegate_unavailable_for_operator = 'The task delegation function down the hierarchy is not available to you.'

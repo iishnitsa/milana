@@ -63,25 +63,17 @@ Write instructions and hints for the AI executor based on this task. Describe wh
 IMPORTANT: The generated instructions will be ADDED to the executor's system prompt. Therefore, do NOT include any role declarations ("You are an AI executor..."), greetings, or generic phrases. Focus solely on the specific task, steps, and guidelines.
 '''
         main.create_executor_select_tools_1 = '''You will receive a task description from the user. Based on the task description, select tools from the list of allowed tools.
-
 Output data:
-
 Only tool names separated by comma and space in a single line.
 No quotes, no periods at the end, no explanations, and no additional characters.
 If no tool is suitable or if at least one incorrect or extra name is found, output exactly: None
-
 List of allowed tools:
-
 '''
-
         main.create_executor_select_tools_2 = '''
-
 LIMITATIONS:
-
 It is forbidden to output any other tool names except those from the list.
 You cannot invent new commands.
 Any typo or incorrect entry in the list is sufficient reason to output None.
-
 '''
         main.worker_base = '''
 You are an AI executor "Ivan".

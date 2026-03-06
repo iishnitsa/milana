@@ -19,15 +19,12 @@ For example: if several messages in a row pertain to the same question and answe
 """
 
 grouping_prompt_2 = """
-
 Return only the message numbers that should be combined, in the format: 1,2-4,5,6-8
 Only numbers, commas, and dashes. No explanations.
-
 Examples:
 - "1,2-5,6" (message 1 separately, 2-5 together, 6 separately)
 - "1-3,4-7" (1-3 together, 4-7 together)
 - "1,2,3" (all messages separately)
-
 Groups:"""
 
 # this can be combined
@@ -61,7 +58,6 @@ As soon as they send the thoughts of the last entity, immediately write a plan f
 Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
 The answer should not contain interrogative sentences.
 Just the plan.
-
 '''
 gigo_make_plan_2 = '\nEntities: '
 gigo_return_1 = 'Task:\n'
@@ -79,13 +75,11 @@ marker_decision_unsure = "VERDICT: UNSURE"
 marker_new_task = "NEW TASK:"
 prompt_decomposition_1 = """
 Analyze the following task and break it down into key, specific, and verifiable completion criteria as a numbered list. Your goal is to create a checklist for result evaluation.
-
 Task:"""
 prompt_decomposition_2 = """
 Example output:
 1. Criterion one.
 2. Criterion two.
-
 Output only the numbered list of criteria.
 """
 prompt_evaluation_1 = "You are given the original task, the result of its execution, and a list of criteria for evaluation. Evaluate how well the result meets EACH criterion."
@@ -94,7 +88,6 @@ prompt_evaluation_3 = "Result:"
 prompt_evaluation_4 = "Criteria:"
 prompt_evaluation_5 = """
 For each line from the criteria list, output a verdict. Use the markers [DONE] or [NOT DONE] at the beginning of each line, then provide a brief and clear explanation for your decision.
-
 Example output:
 [DONE] 1. Criterion one. Matches, because...
 [NOT DONE] 2. Criterion two. Not fulfilled, because it lacks...
@@ -105,15 +98,11 @@ prompt_decision_3 = "Previous result:"
 prompt_decision_4 = "Evaluation report:"
 prompt_decision_5 = """
 Analyze all the data and deliver a verdict.
-
 Your answer must have a STRICT structure:
 First, on a separate line, your verdict. This can be one of three options: `VERDICT: APPROVE`, `VERDICT: REVISE`, or `VERDICT: UNSURE`.
-
 - Use `VERDICT: REVISE` only if you see clear errors and can formulate a task to fix them.
 - Use `VERDICT: UNSURE` if the result seems acceptable, but you cannot guarantee its completeness or correctness, or if you don't know how it can be improved.
-
 If the verdict is `VERDICT: REVISE`, then AFTER it, starting with the marker `NEW TASK:`, formulate a COMPLETE, SELF-CONTAINED TASK for another AI executor.
-
 Example output for revision:
 VERDICT: REVISE
 NEW TASK:
@@ -121,7 +110,6 @@ Your previous attempt to solve the task "write a summation function" was almost 
 """
 prompt_librarian_questions_1 = """
 You are a meticulous fact-checker. Based on the task, the result, and the evaluation report, formulate a list of questions to ask an external knowledge source ("the librarian") in order to verify facts, find best practices, or identify hidden errors.
-
 Task:"""
 prompt_librarian_questions_2 = "Result:"
 prompt_librarian_questions_3 = "Evaluation report:"
@@ -170,7 +158,6 @@ Do not use json or markdown to call functions.
 If you are writing a command, write only the command, do not comment on your actions.
 If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message
 or a function response if it was called by you.
-
 '''
 
 only_one_func_text = """
@@ -178,7 +165,6 @@ Only one command is allowed per message. A command cannot be combined with a mes
 The interlocutor will not receive a message containing a correctly written and system-recognized command.
 The interlocutor will not see the function's response to your command.
 You can only call commands available in the system instruction. In parentheses they have a description of their functions:
-
 """
 
 last_messages_marker = "\nLast messages:"

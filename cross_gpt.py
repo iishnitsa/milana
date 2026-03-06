@@ -2407,20 +2407,20 @@ def gigo(base_task):
             if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2))
             else: raise
     for role, mind in zip(roles, minds):
-        minds_text += worker_role_text + mind + operator_role_text
-        if role == roles[-1]: minds_text + '\n' * 3 + gigo_final_role_2
+        minds_text += worker_role_text + mind
+        if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
         else:
-            minds_text += gigo_next_role + role
+            minds_text += operator_role_text + gigo_next_role + role
             if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
     try: plan = ask_model(system_role_text + gigo_make_plan_1 + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
     except RuntimeError as e:
         if 'ContextOverflowError' in str(e):
             minds_text = ''
             for role, mind in zip(roles, minds):
-                minds_text += worker_role_text + text_cutter(mind) + operator_role_text
-                if role == roles[-1]:  minds_text + '\n' * 3 + gigo_final_role_2
+                minds_text += worker_role_text + text_cutter(mind)
+                if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
                 else:
-                    minds_text += gigo_next_role + role
+                    minds_text += operator_role_text + gigo_next_role + role
                     if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
             plan = ask_model(system_role_text + gigo_make_plan_1 + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + text_cutter(additional_info) + minds_text)
         else: raise

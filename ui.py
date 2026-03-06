@@ -796,7 +796,11 @@ class Backend:
             if not provider_data: return False, Lang.get("model_err_provider_missing", provider=model_type), max_tokens
             provider_module = importlib.import_module(f"model_providers.{model_type}")
             f = io.StringIO()
-            with redirect_stdout(f): valid, tokens, _ = provider_module.connect(connection_string)
+            with redirect_stdout(f):
+                try: valid, tokens, _ = provider_module.connect(connection_string)
+                except:
+                    valid, tokens, _, error_text = provider_module.connect(connection_string)
+                    return False, Lang.get("model_err_validation_generic", e=error_text), max_tokens
             if hasattr(provider_module, 'disconnect'): provider_module.disconnect()
             if valid: return True, Lang.get("model_validated_success", tokens=tokens), tokens
             else: return False, Lang.get("custom_api_fail"), max_tokens
@@ -951,7 +955,7 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
         row = 0
         # Булевы настройки (переключатели)
         for key in boolean_keys:
-            if key not in self.settings_vars: self.settings_vars[key] = tk.StringVar(value=all_settings.get(key, '1' if key == 'use_rag' or key == 'write_log' else '0'))
+            if key not in self.settings_vars: self.settings_vars[key] = tk.StringVar(value=all_settings.get(key, '1' if key == 'use_rag' else '0'))
             frame = create_styled_frame(scrollable_frame)
             frame.pack(fill="x", pady=2)
             create_styled_label(frame, text=Lang.get(key)).pack(side="left", padx=(0, 10))
