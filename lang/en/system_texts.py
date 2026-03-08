@@ -164,6 +164,7 @@ only_one_func_text = """
 Only one command is allowed per message. A command cannot be combined with a message for the interlocutor.
 The interlocutor will not receive a message containing a correctly written and system-recognized command.
 The interlocutor will not see the function's response to your command.
+At the same time, in order for the interlocutor to receive the message, do not write a command!
 You can only call commands available in the system instruction. In parentheses they have a description of their functions:
 """
 
@@ -191,7 +192,9 @@ warn_command_text_4 = "Command is inside a Markdown block. Call commands outside
 
 warn_command_text_5 = "Command is inside a JSON structure. Use pure !!!command!!! format."
 
-warn_command_text_6 = "If you were NOT trying to call a command, use !!!skip!!! and then write your message again — it will be sent to the user."
+warn_command_text_6 = warn_command_text_6 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very start of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
+
+warn_command_text_7 = "Command marker is inside formatting (bold, italic, code, etc.)."
 
 text_tokens_coefficient = 0.5 # middle coefficient for english
 
@@ -295,6 +298,7 @@ class SystemTextContainer:
         self.warn_command_text_4 = warn_command_text_4
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
+        self.warn_command_text_7 = warn_command_text_7
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

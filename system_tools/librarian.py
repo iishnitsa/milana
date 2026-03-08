@@ -1,7 +1,6 @@
-# librarian.py
 '''
-нужна_информация
-вызови для получения недостающей информации
+need_info
+call to get missing information
 '''
 
 import os
@@ -70,7 +69,7 @@ def main(quest):
         main.answer_l_2 = 'match the query'
         main.answer_l_3 = 'If the answer fully satisfies the query, output exactly "1". If the answer is incomplete or insufficient, output one or more reformulated queries (each on a new line) that would help find the missing information. Do not output any explanations or additional text.'
 
-        main.best_result_system = main.best_result_l_1 + ' ' + main.best_result_l_2
+        main.best_result_system = main.best_result_l_1 + ' ' + main.best_result_l_2 # TODO:
         main.select_matter_system = main.select_matter_l_1
         main.answer_system = main.answer_l_1 + ' ' + main.answer_l_2 + '\n' + main.answer_l_3
         main.label_query = 'Query:'

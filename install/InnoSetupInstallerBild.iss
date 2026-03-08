@@ -27,7 +27,7 @@ Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Ad
 Name: "startmenuicon"; Description: "Create a Start Menu shortcut"; GroupDescription: "Additional icons:"
 
 [Files]
-Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs; Excludes: "__pycache__, __pycache__\*, tests, install, install\*, mvenv, mvenv\*, *.pyc, *.pyo, *.pyd, launcher.py, data\settings.db, README.md, run_ui.cmd, run_ui.sh, *.lnk, build, build\*, dist, dist\*, *.iss, Milana.lnk, Output, Output\*, .git, .git\*, .gitignore, .gitattributes, .vscode, .vscode\*, .idea, .idea\*, *.log, *.bak, *.tmp, thumbs.db, requirements.txt, *.db, data\chats, launch_milana.cmd, run_milana.sh"
+Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs; Excludes: "__pycache__, __pycache__\*, tests, install\Output, install\Output\*, mvenv, mvenv\*, *.pyc, *.pyo, *.pyd, launcher.py, data\settings.db, README.md, run_ui.cmd, run_ui.sh, *.lnk, build, build\*, dist, dist\*, *.iss, Milana.lnk, Output, Output\*, .git, .git\*, .gitignore, .gitattributes, .vscode, .vscode\*, .idea, .idea\*, *.log, *.bak, *.tmp, thumbs.db, requirements.txt, *.db, data\chats, launch_milana.cmd, run_milana.sh"
 
 Source: "..\_internal\*"; DestDir: "{app}\_internal"; Flags: recursesubdirs createallsubdirs
 

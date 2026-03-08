@@ -52,6 +52,7 @@ class GlobalState:
         self.task_delegated = False
         self.dialog_ended = False
         self.start_dialog_command_name = ''
+        self.skip_tools_keys = []
 global_state = GlobalState()
 
 chat_path = ''
@@ -971,6 +972,9 @@ def mod_loader(adrs):
                     continue
             else: let_log('НЕ ДОЛЖЕН')
 
+            if os.path.basename(mod_file) == 'skip.py':
+                global_state.skip_tools_keys.append(command_name)
+                let_log(f"⚠ Модуль {mod_file} помечен как SKIP – команда '{command_name}' будет скрыта из описаний")
             # --- ДОБАВЛЕНО: Проверка на librarian и обновление описания, если доступен web_search ---
             if os.path.basename(mod_file) == 'librarian.py':
                 if 'web_search' in globals() and callable(globals()['web_search']):
@@ -2649,129 +2653,7 @@ def find_and_match_command(text, commands_dict):
         key, content, _, _ = result
         return (key, content)
     return None
-'''
-def find_and_match_command(text, commands_dict):
-    """
-    Ищет в тексте маркер вида !!!команда!!! (допускается 1-3 знаков '!' или '¡' с обеих сторон).
-    Требует, чтобы маркер начинался в первых 5 символах строки.
-    Возвращает (найденный_ключ, содержимое_после_маркера) или None.
-    """
-    if not text or not commands_dict: return None
-    pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
-    matches = list(re.finditer(pattern, text))
-    if not matches: return None # Берём первое вхождение
-    match = matches[0] # ПРОВЕРКА: маркер должен начинаться в первых 5 символах строки
-    if match.start() > 4: return None
-    raw_name = match.group(1).strip()          # исходное имя с возможными пробелами
-    content = text[match.end():].lstrip()      # всё после закрывающего маркера (аргументы)
-    # Нормализуем имя: заменяем пробелы на подчёркивания, приводим к нижнему регистру
-    normalized_name = re.sub(r'\s+', '_', raw_name).lower() # Получаем список доступных ключей
-    available_keys = [str(k) for k in commands_dict.keys()] # 1. Точное совпадение после нормализации
-    for key in available_keys:
-        if normalized_name == key.lower(): return (key, content)
-    # 2. Нечёткое сравнение с учётом длины
-    best_match = None
-    best_ratio = 0.0
-    threshold = 0.8  # можно повысить до 0.85 при необходимости
-    for key in available_keys:
-        key_lower = key.lower() # Отклонение длины не более 2 символов
-        if abs(len(normalized_name) - len(key_lower)) > 2: continue
-        ratio = difflib.SequenceMatcher(None, normalized_name, key_lower).ratio()
-        if ratio > best_ratio and ratio >= threshold:
-            best_ratio = ratio
-            best_match = key
-    if best_match: return (best_match, content)
-    return None
-'''
-'''
-def find_and_match_command(text, commands_dict):
-    """
-    Ищет маркер !!!name!!! в тексте и пытается сопоставить имя с commands_dict.
-    Возвращает (found_key, content_str) или None.
-    commands_dict ожидается в формате: {'name': ('description', func), ...}
-    Поиск: сначала простое in / substring, потом fuzzy через difflib.get_close_matches.
-    """
-    if not text: return None
-    # Попытка найти маркер с разным количеством восклицательных знаков и возможными ошибками
-    # Ищем в первых 5 символах начало маркера (2-4 восклицательных знака или их вариации)
-    # Сначала проверяем первые 5 символов на наличие возможных восклицательных знаков
-    first_5 = text[:5] if len(text) >= 5 else text
-    # Набор символов, которые могут быть восклицательными знаками (с ошибками)
-    exclamation_chars = {'!', '¡', '|', '1', 'i', 'l', 'I'}  # добавляем похожие символы
-    # Ищем позицию первого символа, который может быть восклицательным знаком
-    first = -1
-    for i, char in enumerate(first_5):
-        if char in exclamation_chars:
-            first = i
-            break
-    # Если не нашли восклицательных знаков в первых 5 символах
-    if first == -1 or first > 4: return None
-    # Теперь ищем завершающий маркер после первого
-    # Ищем последовательность из 1-4 символов, которые могут быть восклицательными знаками
-    marker_start = first
-    marker_end = marker_start
-    # Определяем длину открывающего маркера (1-4 символа)
-    while marker_end < len(text) and marker_end - marker_start < 4:
-        if text[marker_end] in exclamation_chars: marker_end += 1
-        else: break
-    # Если маркер слишком короткий (меньше 1 символа)
-    if marker_end - marker_start < 1: return None
-    # Теперь ищем закрывающий маркер
-    # Сначала пропускаем возможное имя команды (ищем следующий набор восклицательных знаков)
-    search_start = marker_end
-    second = -1
-    second_end = -1
-    # Ищем следующий набор символов, которые могут быть восклицательными знаками
-    i = search_start
-    while i < len(text):
-        if text[i] in exclamation_chars:
-            second = i
-            # Определяем длину закрывающего маркера
-            j = i
-            while j < len(text) and j - i < 4:
-                if text[j] in exclamation_chars: j += 1
-                else: break
-            # Закрывающий маркер должен быть хотя бы из 1 символа
-            if j - i >= 1:
-                second_end = j
-                break
-            else:
-                i += 1
-                continue
-        i += 1
-    if second == -1: return None
-    # Извлекаем имя команды и контент
-    raw_name = text[marker_end:second].strip()
-    content = text[second_end:].strip() if second_end < len(text) else ""
-    # защититься, если имя пустое
-    if not raw_name: return None
-    # построить словарь ключей (строки)
-    key_map = {}
-    try:
-        if isinstance(commands_dict, dict):
-            for k, v in commands_dict.items(): key_map[str(k).strip()] = v
-        else:
-            # если передан список/итерируемый
-            for item in commands_dict:
-                try:
-                    k = str(item[0]).strip()
-                    key_map[k] = item[1] if len(item) > 1 else item
-                except: continue
-    except: return None
-    # попытка простого поиска
-    found_key = None
-    for k in key_map:
-        if raw_name in k or k in raw_name:
-            found_key = k
-            break
-    if not found_key and key_map:
-        try:
-            matches = difflib.get_close_matches(raw_name, list(key_map.keys()), n=1, cutoff=0.7)
-            if matches: found_key = matches[0]
-        except: found_key = None
-    if not found_key: return None
-    return (found_key, content)
-'''
+
 def analyze_protocol(text): # TODO: ПРОВЕРЬ, ВЫЗЫВАЕТСЯ ЛИ ЭТО ИЗ СОЗДАНИЯ ЧАТА
     """
     Анализирует текст ответа модели на соответствие протоколу вызова инструментов.
@@ -2857,7 +2739,6 @@ def analyze_protocol(text): # TODO: ПРОВЕРЬ, ВЫЗЫВАЕТСЯ ЛИ Э
         if "inside_markdown" in violations: warning_lines.append(warn_command_text_4)
         if "inside_json" in violations: warning_lines.append(warn_command_text_5)
         # Упоминаем команду пропуска (она не обрабатывается здесь)
-        warn_command_text
         warning_lines.append(warn_command_text_6)
         return " ".join(warning_lines)
 
@@ -3310,8 +3191,11 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     let_log(f"Ask_user доступен: {'ask_user' in globals()}")
     let_log("Список инструментов:")
     for tt, t, _ in global_state.another_tools:
-        global_state.tools_str += tt + ' (' + t + ')\n'
+        # Добавляем в module_tools_keys всегда (для поиска при вызове)
         global_state.module_tools_keys.append(tt)
+        # В tools_str добавляем только если команда не в skip-списке
+        if tt not in global_state.skip_tools_keys:
+            global_state.tools_str += tt + ' (' + t + ')\n'
         let_log(tt)
 
     # === Загрузка пользовательских данных ===

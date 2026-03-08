@@ -164,8 +164,10 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
 
     let_log(milana_tools)
     prompt += only_one_func_text
+    # Добавляем описание инструментов, исключая skip-команды
     for tool in milana_tools:
-        prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
+        if tool not in global_state.skip_tools_keys:          # <--- новое условие
+            prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
     if not native_func_call:
         prompt += what_is_func_text + main.command_example
     full_prompt += prompt

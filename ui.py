@@ -818,15 +818,23 @@ class DynamicModelUI:
         model_type_frame = create_styled_frame(parent)
         model_type_frame.pack(fill="x", pady=10)
         create_styled_label(model_type_frame, text=Lang.get("model_type")).pack(side="top")
-        radio_frame = create_styled_frame(parent)
-        radio_frame.pack(fill="x")
+        # Горизонтальный скроллируемый контейнер для радиокнопок провайдеров
+        radio_scroll = CTkScrollableFrame(parent, orientation="horizontal", fg_color="transparent", height=50,
+                                          scrollbar_button_color=PURPLE_ACCENT,
+                                          scrollbar_button_hover_color=WHITE)
+        radio_scroll.pack(fill="x", pady=5)
+        inner_frame = create_styled_frame(radio_scroll, fg_color="transparent")
+        inner_frame.pack(fill="both", expand=True)
         provider_items = list(self.providers.items())
-        if not provider_items: create_styled_label(radio_frame, text=Lang.get("no_providers_found")).pack(); return
-        for i, (module_name, data) in enumerate(provider_items):
+        if not provider_items:
+            create_styled_label(radio_scroll, text=Lang.get("no_providers_found")).pack()
+        for module_name, data in provider_items:
             display_name = data['name']
-            CTkRadioButton(radio_frame, text=display_name, variable=self.settings_vars['model_type'], value=module_name, command=self.toggle_model_frames, fg_color=PURPLE_ACCENT, font=FONT_REGULAR).grid(row=i // 4, column=i % 4, sticky="w", padx=5, pady=2)
+            CTkRadioButton(inner_frame, text=display_name, variable=self.settings_vars['model_type'],
+                           value=module_name, command=self.toggle_model_frames,
+                           fg_color=PURPLE_ACCENT, font=FONT_REGULAR).pack(side="left", padx=5, pady=2)
         self.frames_container = create_styled_frame(parent)
-        self.frames_container.pack(fill="x", expand=True, pady=10)
+        self.frames_container.pack(fill="x", pady=10)  # убрал expand=True
         self.model_frames = {}
         self._create_specific_model_frames(self.frames_container)
         token_frame = create_styled_frame(parent)
@@ -842,17 +850,21 @@ class DynamicModelUI:
             for module_name, p_data in self.providers.items():
                 main_frame = create_styled_frame(container, border_color=WHITE, border_width=1)
                 self.model_frames[module_name] = main_frame
+                # Фиксируем высоту белой рамки и запрещаем ей менять размер под содержимое
+                main_frame.pack_propagate(False)
+                main_frame.configure(height=170)  # можно подобрать нужное значение
                 params = p_data.get('params', [])
-                has_scroll = len(params) > 6
-                content_parent = main_frame
-                if has_scroll:
-                    scroll_frame = create_scrollable_frame(main_frame, fg_color=DARK_BG)
-                    scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
-                    content_parent = scroll_frame
-                else: main_frame.pack(padx=5, pady=5)
+                # Всегда используем scrollable frame с фиксированной высотой для единообразия
+                scroll_frame = create_scrollable_frame(main_frame, fg_color=DARK_BG, height=170)  # чуть меньше, чтобы вместить рамку
+                scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
+                content_parent = scroll_frame
+
                 self.provider_param_full_paths.setdefault(module_name, {})
                 self.settings_vars.setdefault(module_name, {})
-                for param in params: create_param_widget(content_parent, param, self.settings_vars[module_name], self.provider_param_full_paths[module_name])
+                for param in params:
+                    create_param_widget(content_parent, param, self.settings_vars[module_name], self.provider_param_full_paths[module_name])
+                # Упаковываем основной фрейм после создания всех виджетов
+                main_frame.pack(fill="x", padx=5, pady=5)
         except Exception as e: print(f"Error creating specific model frames: {e}")
     def _load_provider_params_from_string(self):
         params_str = self.settings_vars['model_provider_params'].get()
@@ -901,8 +913,10 @@ class DynamicModelUI:
         selected_type = self.settings_vars['model_type'].get()
         for name, frame in self.model_frames.items():
             try:
-                if name == selected_type and frame.winfo_exists(): frame.pack(fill="x", expand=True, padx=5, pady=5)
-                elif frame.winfo_exists(): frame.pack_forget()
+                if name == selected_type and frame.winfo_exists():
+                    frame.pack(fill="x", padx=5, pady=5)  # убрал expand=True
+                elif frame.winfo_exists():
+                    frame.pack_forget()
             except (tk.TclError, AttributeError): continue
         self._load_provider_params_from_string()
 
@@ -1717,6 +1731,13 @@ class LogWindow(BaseTopLevel):
 
         self.log_message_widgets = []  # храним пузыри для удаления старых
         self.check_log_queue()
+
+    def setup_and_center(self):
+        # Переопределяем, чтобы не делать окно модальным (убираем grab_set)
+        setup_icon(self)
+        self.lift()
+        # не вызываем self.grab_set()
+        center_window(self)
 
     def add_log_message_to_ui(self, text):
         """Добавляет сообщение лога, оформленное как в чате."""

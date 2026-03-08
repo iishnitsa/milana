@@ -109,7 +109,13 @@ REM Build command (paths in quotes for spaces)
 pyinstaller --onedir --icon="data\icons\icon.ico" --name "Milana" ^
 --distpath "%PROJECT_ROOT%\dist" ^
 --workpath "%PROJECT_ROOT%\build" ^
+--collect-data ddgs ^
+--collect-data fake_useragent ^
+--collect-all fake_useragent ^
 --collect-all easyocr ^
+--collect-all ddgs ^
+--collect-all cloudscraper ^
+--hidden-import cloudscraper ^
 --hidden-import chromadb.db.duckdb ^
 --hidden-import chromadb.telemetry.product.posthog ^
 --hidden-import chromadb.telemetry.opentelemetry ^
@@ -126,7 +132,6 @@ pyinstaller --onedir --icon="data\icons\icon.ico" --name "Milana" ^
 --hidden-import sklearn.neighbors._typedefs ^
 --hidden-import sklearn.neighbors._quad_tree ^
 --hidden-import scipy._lib.messagestream ^
---hidden-import ddgs ^
 --noconsole ^
 --clean ^
 --noconfirm ^

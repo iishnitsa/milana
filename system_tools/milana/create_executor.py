@@ -48,12 +48,15 @@ def main(text):
             'hierarchy_limit_info',
             'delegate_unavailable_for_executor',
             'need_info_example',
+            'hello_example',
+            'command_format_explanation',
         )
 
         main.create_executor_param_1 = 'Are the tasks the same? Task 1:\n'
         main.create_executor_param_2 = '\nTask 2:\n'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
         main.additional_info_text = 'Additional information:\n'
+        main.command_format_explanation = "Don't write how to write commands, don't give examples, it's already in the product, the addition to which you're writing. You can only write in which case to use this or that command."
         main.create_executor_write_prompt_1 = '''
 Write instructions and hints for the AI executor based on this task. Describe what he should and can do, having only the following tools.
 IMPORTANT: The generated instructions will be ADDED to the executor's system prompt. Therefore, do NOT include any role declarations ("You are an AI executor..."), greetings, or generic phrases. Focus solely on the specific task, steps, and guidelines.
@@ -87,13 +90,14 @@ In response to the delegation command, you will receive only the result or a fai
 '''
         main.command_example = '''
 Example of a command call - "!!!delegate_task!!! Implement a warehouse accounting system for an online store"
-'''
+''' # TODO:
         main.need_info_example = '''
-Example of a command call - "!!!need_information!!! Documentation for React hooks"
+Example of a command call - "!!!need_info!!! Documentation for React hooks"
 '''
         main.avaiable_tools_text = 'Available tools:'
         main.create_executor_return_text_1 = "Executor has been created, welcome him (write a welcome message, don't write a command)"
         main.create_executor_return_text_2 = "Executor has been recreated, welcome the new executor(write a welcome message, don't write a command)"
+        main.hello_example = ' (write a greeting message, do not write a command, you may use "Hello, Ivan..."; do not use "!!!create_executor!!! Hello, Ivan...")'
         main.hierarchy_limit_info = 'Hierarchy levels are limited. Current level'
         main.delegate_unavailable_for_executor = 'The task delegation function down the hierarchy is not available.'
         return
@@ -157,9 +161,11 @@ Example of a command call - "!!!need_information!!! Documentation for React hook
                     ivan_tools[tool_tokens] = (tool_desc, tool_func)
                     let_log(f"Добавлен инструмент: {tool_tokens}")
                     break
-    # Формируем строку с описанием инструментов для промпта
+    # Формируем строку с описанием инструментов для промпта, исключая skip-команды
     selected_ivan_tools = ''
-    for tool in ivan_tools: selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')\n'
+    for tool in ivan_tools:
+        if tool not in global_state.skip_tools_keys:          # <--- новое условие
+            selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')\n'
     # Определяем, какой промпт использовать (с инструментами или без)
     if selected_ivan_tools:
         system_prompt_for_instructions = main.create_executor_write_prompt_1
@@ -168,6 +174,8 @@ Example of a command call - "!!!need_information!!! Documentation for React hook
         system_prompt_for_instructions = main.create_executor_write_prompt_2
         user_content = text + additional_info
     # Генерируем инструкции для исполнителя на основе задачи
+    system_prompt_for_instructions += '\n' + main.command_format_explanation
+    let_log(system_prompt_for_instructions)
     let_log("Генерация инструкций для исполнителя...")
     instructions = ask_model(
         user_content,
@@ -194,6 +202,7 @@ Example of a command call - "!!!need_information!!! Documentation for React hook
     # Добавляем пример вызова команды для запроса информации (всегда, если не нативный вызов)
     if not native_func_call:
         prompt += what_is_func_text + main.need_info_example
+        if delegation_allowed: prompt += main.command_example
 
     # Сохраняем инструменты для этого чата
     global_state.tools_commands_dict[global_state.conversations] = ivan_tools
@@ -202,4 +211,4 @@ Example of a command call - "!!!need_information!!! Documentation for React hook
     # Создаем чат для исполнителя через менеджер
     system_prompt = system_role_text + prompt
     create_chat(global_state.conversations, system_prompt)
-    return return_text
+    return return_text + main.hello_example
