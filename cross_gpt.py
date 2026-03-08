@@ -2654,63 +2654,136 @@ def find_and_match_command(text, commands_dict):
         return (key, content)
     return None
 
-def analyze_protocol(text): # TODO: ПРОВЕРЬ, ВЫЗЫВАЕТСЯ ЛИ ЭТО ИЗ СОЗДАНИЯ ЧАТА
+def _find_formatting_ranges(text):
+    """
+    Определяет интервалы текста, которые находятся внутри markdown-форматирования
+    (жирный **, курсив *, подчёркивание _, зачёркнутый ~~, инлайн-код `).
+    Учитывает экранирование обратным слешем и старается не ловить звёздочки внутри слов.
+    Возвращает список кортежей (start, end) для всех таких участков.
+    """
+    n = len(text)
+    # Стек для отслеживания открытых маркеров: каждый элемент (позиция_начала, строка_маркера)
+    stack = []
+    ranges = []
+    i = 0
+
+    # Множество символов, которые могут быть частью слова (буквы, цифры, подчёркивание)
+    word_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+
+    # Все возможные маркеры с их длиной и признаком, нужно ли проверять границы слов
+    marker_defs = [
+        ('**', 2, False),  # жирный — два символа, не бывает внутри слов
+        ('__', 2, False),
+        ('~~', 2, False),
+        ('*', 1, True),    # курсив — может быть внутри слова, нужна проверка
+        ('_', 1, True),    # подчёркивание — аналогично
+        ('`', 1, False),   # код — внутри слов обычно не используется как маркер, но бывает; оставим без проверки
+    ]
+
+    while i < n:
+        # Экранирование: пропускаем следующий символ
+        if text[i] == '\\' and i + 1 < n:
+            i += 2
+            continue
+
+        matched = False
+        for mark, length, check_word in marker_defs:
+            if i + length <= n and text[i:i+length] == mark:
+                # Для маркеров, требующих проверки на границы слов
+                if check_word:
+                    prev_char = text[i-1] if i > 0 else None
+                    next_char = text[i+length] if i+length < n else None
+                    # Если до или после буква/цифра/подчёркивание — считаем, что это не маркер, а часть слова
+                    if (prev_char and prev_char in word_chars) or (next_char and next_char in word_chars):
+                        i += 1
+                        matched = True
+                        break
+
+                # Решаем, открывающий или закрывающий
+                if stack and stack[-1][1] == mark:
+                    # Закрываем последний такой же
+                    start_pos, _ = stack.pop()
+                    ranges.append((start_pos, i + length))
+                else:
+                    # Открываем новый
+                    stack.append((i, mark))
+                i += length
+                matched = True
+                break
+
+        if not matched:
+            i += 1
+
+    # Оставляем только корректно закрытые пары; незакрытые игнорируем
+
+    # Объединяем пересекающиеся интервалы
+    if ranges:
+        ranges.sort()
+        merged = []
+        cur_start, cur_end = ranges[0]
+        for start, end in ranges[1:]:
+            if start <= cur_end:
+                cur_end = max(cur_end, end)
+            else:
+                merged.append((cur_start, cur_end))
+                cur_start, cur_end = start, end
+        merged.append((cur_start, cur_end))
+        return merged
+    return []
+
+def _find_any_markers(text):
+    """
+    Ищет в тексте все маркеры вида !!!name!!! (с вариациями символов '!' и '¡').
+    Возвращает список словарей с ключами: 'start', 'end', 'raw_name'.
+    """
+    exclamation_chars = {'!', '¡'}
+    pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
+    markers = []
+    for match in re.finditer(pattern, text):
+        markers.append({
+            'start': match.start(),
+            'end': match.end(),
+            'raw_name': match.group(1).strip()
+        })
+    return markers
+
+def analyze_protocol(text):
     """
     Анализирует текст ответа модели на соответствие протоколу вызова инструментов.
     Возвращает:
         None - нет команд (можно завершить цикл и отправить сообщение пользователю)
-        True - есть команды и они корректны (можно вызывать tools_selector)
         str - предупреждение о нарушении (нужно отправить модели и повторить цикл)
     """
-    if global_state.stop_agent: return None
+    if global_state.stop_agent:
+        return None
 
-    # Текущий словарь команд для данного агента
     sid = global_state.now_agent_id
     commands_dict = global_state.tools_commands_dict.get(sid, {})
 
-    # 1. Поиск маркерных команд !!!...!!! через улучшенный extract_command_markers
-    markers = extract_command_markers(text, commands_dict)  # список с ключами 'key', 'content', 'start', 'end', 'full_match'
-
-    # 2. Если native отключён, ищем JSON-попытки (неформатные вызовы)
-    json_attempts = []
-    if not native_func_call:
-        stripped = text.lstrip()
-        if stripped.startswith('{'):
-            try:
-                obj = json.loads(stripped)
-                # Проверяем, похоже ли на tool call
-                if isinstance(obj, dict) and any(k in obj for k in ('name', 'tool', 'function', 'arguments')):
-                    start_pos = text.find('{')
-                    if start_pos == -1:
-                        start_pos = 0
-                    json_attempts.append({
-                        'type': 'json',
-                        'start': start_pos,
-                        'end': len(text)  # приблизительно, для проверок достаточно
-                    })
-            except json.JSONDecodeError:
-                pass
-
-    # Объединяем все обнаруженные вызовы
-    all_calls = markers + json_attempts
-
-    if not all_calls:
-        return None  # команд нет
+    raw_markers = _find_any_markers(text)
+    if not raw_markers:
+        return None
 
     violations = []
 
-    # Проверка множественности (всегда)
-    if len(all_calls) > 1: violations.append("multiple_commands")
-    # Проверка позиции первой команды (только если не native)
+    # множественность
+    if len(raw_markers) > 1:
+        violations.append("multiple_commands")
+
+    # позиция первого маркера (если не native)
     if not native_func_call:
-        first_call = all_calls[0]
-        if first_call['start'] > 5: violations.append("not_at_start")
-    # Поиск Markdown-блоков (для проверки маркерных команд)
+        first_marker = raw_markers[0]
+        if first_marker['start'] > 5:
+            violations.append("not_at_start")
+
+    # markdown-блоки (```)
     markdown_ranges = []
     md_positions = [m.start() for m in re.finditer(r'```', text)]
     for i in range(0, len(md_positions), 2):
-        if i + 1 < len(md_positions): markdown_ranges.append((md_positions[i], md_positions[i+1] + 3))
-    # Грубый поиск JSON-диапазонов (для проверки маркерных команд)
+        if i + 1 < len(md_positions):
+            markdown_ranges.append((md_positions[i], md_positions[i+1] + 3))
+
+    # json-блоки (грубо)
     json_ranges = []
     stack = []
     for i, ch in enumerate(text):
@@ -2720,132 +2793,81 @@ def analyze_protocol(text): # TODO: ПРОВЕРЬ, ВЫЗЫВАЕТСЯ ЛИ Э
             if stack:
                 start = stack.pop()
                 json_ranges.append((start, i + 1))
-    # Проверяем каждую маркерную команду на попадание в Markdown или JSON
-    for cmd in markers:
-        pos = cmd['start']
+
+    # инлайн-форматирование
+    formatting_ranges = _find_formatting_ranges(text)
+
+    for marker in raw_markers:
+        pos = marker['start']
+        # проверка попадания в markdown-блоки
         for start, end in markdown_ranges:
             if start <= pos <= end:
                 violations.append("inside_markdown")
                 break
+        # проверка попадания в json-блоки
         for start, end in json_ranges:
             if start <= pos <= end:
                 violations.append("inside_json")
                 break
-    # Если есть нарушения – формируем предупреждение
-    if violations:
-        warning_lines = [warn_command_text_1]
-        if "multiple_commands" in violations: warning_lines.append(warn_command_text_2)
-        if "not_at_start" in violations: warning_lines.append(warn_command_text_3)
-        if "inside_markdown" in violations: warning_lines.append(warn_command_text_4)
-        if "inside_json" in violations: warning_lines.append(warn_command_text_5)
-        # Упоминаем команду пропуска (она не обрабатывается здесь)
-        warning_lines.append(warn_command_text_6)
-        return " ".join(warning_lines)
-
-def tools_selector(text, sid):
-    """
-    Вызывает инструменты, используя поиск маркеров и словарь команд в global_state.tools_commands_dict[sid].
-    Возвращает результат выполнения команды или None.
-    """
-    let_log("=== [TOOLS_SELECTOR ЗАПУЩЕН (НОВАЯ ВЕРСИЯ)] ===")
-    let_log(f"[TOOLS_SELECTOR] входной текст (начало 200):\n{text[:200]}")
-    # 1) получить кэш
-    cached = read_cache()
-    let_log(f"[TOOLS_SELECTOR] кэш: {cached}")
-    if cached == [True, [False, False]]: return None
-    try:
-        if isinstance(cached[1][1], str): return cached[1][1]
-    except: pass
-    # 2) получить словарь команд для сессии
-    try: now_commands = global_state.tools_commands_dict.get(sid, {})
-    except Exception: now_commands = {}
-    # 3) system keys
-    try: sys_keys = [str(k) for k in global_state.system_tools_keys]
-    except Exception: sys_keys = []
-    # 4) найти маркер и сопоставить с командами
-    match = find_and_match_command(text, now_commands)
-    if not match:
-        let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
-        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-        is_warn = analyze_protocol(text)
-        if is_warn != None:
-            write_cache([False, is_warn])
-            return is_warn
-        write_cache([False, False])
-        return None
-    found_key, content = match
-    let_log(f"[TOOLS_SELECTOR] найден ключ: {found_key}, контент длиной: {len(content) if content else 0}")
-    # 5) определить, системная ли команда
-    is_system = False
-    try:
-        for sk in sys_keys:
-            if found_key in sk or sk in found_key:
-                is_system = True
+        # проверка попадания в инлайн-форматирование
+        for start, end in formatting_ranges:
+            if start <= pos <= end:
+                violations.append("inside_formatting")
                 break
-        if not is_system and sys_keys:
-            close = difflib.get_close_matches(found_key, sys_keys, n=1, cutoff=0.7)
-            if close: is_system = True
-    except Exception: is_system = False
-    let_log(f"[TOOLS_SELECTOR] команда системная? {is_system}")
-    # 6) Обработка кэша в зависимости от типа команда
-    if not is_system:
-        # ТОЛЬКО для несистемных команд: проверяем кэш
-        if cached != [False]:
-            if cached[1] != ["SYSTEM", False]:
-                let_log("[TOOLS_SELECTOR] Возвращаем не-системный результат из кэша")
-                let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-                return cached
-    else:
-        # Для системных команд: проверяем, не выполняем ли мы её уже (рекурсия)
-        if cached != [False]:
-            if cached[1] != ["SYSTEM", False]: raise RuntimeError('СБОЙ КЭШЕРА В ТУЛЗ СЕЛЕКТОРЕ')
-        # Помечаем, что начинаем выполнение системной команды
-        if cached == [False]: write_cache(["SYSTEM", False])
-        traceprint()
-    # 7) получить callable из now_commands
-    try: entry = now_commands.get(found_key)
-    except Exception: entry = None
-    if entry == None:
-        let_log("[TOOLS_SELECTOR] команда не найдена в словаре сессии (после сопоставления)")
-        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-        is_warn = analyze_protocol(text)
-        if is_warn != None:
-            write_cache([False, is_warn])
-            return is_warn
-        write_cache([False, False])
-        return wrong_command
-    func_callable = None
-    try:
-        if isinstance(entry, tuple) or isinstance(entry, list):
-            if len(entry) >= 2 and callable(entry[1]): func_callable = entry[1]
-            elif len(entry) >= 3 and callable(entry[2]): func_callable = entry[2]
-            elif callable(entry[0]): func_callable = entry[0]
-        elif callable(entry): func_callable = entry
-        else:
-            try: func_callable = entry.get("func")
-            except Exception: func_callable = None
-    except Exception: func_callable = None
-    if not func_callable:
-        let_log("[TOOLS_SELECTOR] не удалось получить callable для команды")
-        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-        write_cache([False, False])
+
+    # проверка известности команды
+    unknown_command = False
+    for marker in raw_markers:
+        raw_name = marker['raw_name']
+        normalized_name = re.sub(r'\s+', '_', raw_name).lower()
+        found = False
+        # точное совпадение
+        for key in commands_dict:
+            if normalized_name == key.lower():
+                found = True
+                break
+        # нечёткое сравнение, если точного нет
+        if not found and commands_dict:
+            best_match = None
+            best_ratio = 0.0
+            threshold = 0.8
+            for key in commands_dict:
+                key_lower = key.lower()
+                if abs(len(normalized_name) - len(key_lower)) > 2:
+                    continue
+                ratio = difflib.SequenceMatcher(None, normalized_name, key_lower).ratio()
+                if ratio > best_ratio and ratio >= threshold:
+                    best_ratio = ratio
+                    best_match = key
+            if best_match:
+                found = True
+        if not found:
+            unknown_command = True
+            break
+
+    if unknown_command:
+        violations.append("wrong_command")
+
+    # если нарушений нет, команды корректны, но мы не будем их выполнять (т.к. find_and_match_command не сработал)
+    if not violations:
         return None
-    # 9) выполнить функцию
-    let_log("[TOOLS_SELECTOR] Выполняем функцию...")
-    if found_key == global_state.start_dialog_command_name: global_state.task_delegated = True
-    try: result = func_callable(content)
-    except Exception as e: result = "__TOOL_ERROR__: " + str(e)
-    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
-    let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
-    # 10) кэшировать результат если не системная команда
-    try:
-        if not is_system:
-            let_log("[TOOLS_SELECTOR] Кэшируем результат (не системная команда)")
-            write_cache(result)
-            traceprint()
-    except Exception: pass
-    let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-    return result
+
+    # формируем сообщение
+    warning_lines = [warn_command_text_1]
+    if "multiple_commands" in violations:
+        warning_lines.append(warn_command_text_2)
+    if "not_at_start" in violations:
+        warning_lines.append(warn_command_text_3)
+    if "inside_markdown" in violations:
+        warning_lines.append(warn_command_text_4)
+    if "inside_json" in violations:
+        warning_lines.append(warn_command_text_5)
+    if "inside_formatting" in violations:
+        warning_lines.append(warn_command_text_7)   # новая переменная
+    if "wrong_command" in violations:
+        warning_lines.append(wrong_command)
+
+    return " ".join(warning_lines)
 
 # ВЕРСИЯ ДЛЯ СТАНДАРТНОГО РЕЖИМА
 def _standard_agent_func(text, agent_number):
