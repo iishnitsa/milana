@@ -51,9 +51,8 @@ WHITE = "#ffffff"
 DARK_TEXT_SECONDARY = "#b0b0b0"
 CORNER_RADIUS = 12
 FONT_FAMILY = "Georgia"
-FONT_BOLD = (FONT_FAMILY, 12, "bold")
 FONT_REGULAR = (FONT_FAMILY, 12)
-BUTTON_THEME = {"fg_color": DARK_SECONDARY, "border_color": WHITE, "border_width": 1, "hover_color": PURPLE_ACCENT, "corner_radius": CORNER_RADIUS, "font": FONT_BOLD}
+BUTTON_THEME = {"fg_color": DARK_SECONDARY, "border_color": WHITE, "border_width": 1, "hover_color": PURPLE_ACCENT, "corner_radius": 50, "font": FONT_REGULAR}
 ENTRY_THEME = {"fg_color": DARK_ENTRY_BG, "border_color": PURPLE_ACCENT, "border_width": 1, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR}
 TAB_VIEW_THEME = {"segmented_button_selected_color": PURPLE_ACCENT, "segmented_button_unselected_color": DARK_SECONDARY, "segmented_button_selected_hover_color": PURPLE_ACCENT, "fg_color": DARK_BG}
 OPTIONMENU_THEME = {"fg_color": DARK_SECONDARY, "button_color": DARK_SECONDARY, "button_hover_color": PURPLE_ACCENT, "dropdown_fg_color": DARK_SECONDARY, "dropdown_hover_color": PURPLE_ACCENT, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR}
@@ -74,7 +73,7 @@ def create_styled_entry(parent, textvariable=None, **kwargs):
     return entry
 def create_styled_frame(parent, fg_color="transparent", **kwargs): return CTkFrame(parent, fg_color=fg_color, **kwargs)
 def create_styled_label(parent, text, **kwargs):
-    default_kwargs = {"font": FONT_BOLD}
+    default_kwargs = {"font": FONT_REGULAR}
     default_kwargs.update(kwargs)
     # По умолчанию делаем прозрачный фон
     if "fg_color" not in default_kwargs: default_kwargs["fg_color"] = "transparent"
@@ -113,24 +112,24 @@ def create_module_ui_item(parent, module_data, module_type, enabled_var=None, on
     frame.grid_columnconfigure(1, weight=1)
     if show_checkbox and enabled_var is not None:
         cb = CTkCheckBox(frame, variable=enabled_var, text="", border_color=WHITE, checkmark_color=WHITE, fg_color=(DARK_SECONDARY, PURPLE_ACCENT), command=lambda: on_toggle() if on_toggle else None)
-        cb.grid(row=0, column=0, rowspan=2, padx=10)
+        cb.grid(row=0, column=0, rowspan=1, padx=10)
     info_frame = create_styled_frame(frame)
-    info_frame.grid(row=0, column=1, rowspan=2, sticky="ew", padx=10)
-    create_styled_label(info_frame, module_data["name"], font=FONT_BOLD).pack(anchor="w")
+    info_frame.grid(row=0, column=1, rowspan=1, sticky="ew", padx=10)
+    create_styled_label(info_frame, module_data["name"], font=FONT_REGULAR).pack(anchor="w")
     desc_label = create_styled_label(info_frame, text=module_data["description"], text_color=DARK_TEXT_SECONDARY, wraplength=400, justify="left")
     desc_label.pack(anchor="w", fill="x")
     if hasattr(parent, 'master') and hasattr(parent.master, 'add_label_context_menu'): parent.master.add_label_context_menu(parent.master, desc_label)
     elif hasattr(parent.winfo_toplevel(), 'add_label_context_menu'): parent.winfo_toplevel().add_label_context_menu(parent.winfo_toplevel(), desc_label)
     if on_remove:
         remove_btn = CTkButton(frame, text="X", width=25, height=25, fg_color="transparent", hover_color=PURPLE_ACCENT, text_color=WHITE, command=on_remove)
-        remove_btn.grid(row=0, column=2, rowspan=2, padx=10)
+        remove_btn.grid(row=0, column=2, rowspan=1, padx=10)
     return frame
 def create_chat_message_bubble(parent, text, is_my, attachments=None, is_question=False):
     """Создает пузырь сообщения чата (без авто-обновления wraplength)"""
     row_frame = create_styled_frame(parent)
     row_frame.pack(fill=tk.X, pady=2, padx=10, anchor="center")
     # Основной пузырь с рамкой
-    bubble = create_styled_frame(row_frame, border_width=2, border_color=PURPLE_ACCENT if is_my else WHITE, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
+    bubble = create_styled_frame(row_frame, border_width=1, border_color=PURPLE_ACCENT if is_my else WHITE, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
     bubble.pack(expand=False, anchor="center")
     # Текст сообщения (wraplength будет установлен динамически позже)
     msg_text_widget = CTkLabel(
@@ -1218,7 +1217,7 @@ class ChatApp(CTk):
             att_frame = create_styled_frame(scrollable_container)
             att_frame.pack(fill="x", pady=2, padx=2)
             CTkButton(att_frame, text="X", width=22, height=22, fg_color=DARK_SECONDARY, hover_color=PURPLE_ACCENT, text_color=WHITE, command=lambda idx=i: self.remove_attachment(idx)).pack(side=tk.LEFT)
-            create_styled_label(att_frame, text=attachment.name, font=("Georgia", 11, "bold"), anchor="w").pack(side=tk.LEFT, padx=5, expand=True, fill="x")
+            create_styled_label(att_frame, text=attachment.name, font=FONT_REGULAR, anchor="w").pack(side=tk.LEFT, padx=5, expand=True, fill="x")
             
         def _update_height():
             try:
@@ -1341,7 +1340,7 @@ class ChatApp(CTk):
                 att_frame = create_styled_frame(att_container)
                 att_frame.pack(fill=tk.X, pady=1, anchor='w')
                 create_styled_label(att_frame, text=Path(att).name).pack(side=tk.LEFT)
-                CTkButton(att_frame, text="📂", font=("Georgia", 12), width=25, height=25,
+                CTkButton(att_frame, text="📂", font=FONT_REGULAR, width=25, height=25,
                     fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda a=att: self.open_attachment(a)).pack(side=tk.RIGHT)
         self.messages_frame.update_idletasks()
         if hasattr(self.messages_frame, '_parent_canvas'):
@@ -1452,7 +1451,7 @@ class CustomMessageBox(BaseTopLevel):
         main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(0, weight=1)
-        message_label = create_styled_label(main_frame, text=message, wraplength=width - 60, justify="left", font=("Georgia", 13, "bold"))
+        message_label = create_styled_label(main_frame, text=message, wraplength=width - 60, justify="left", font=FONT_REGULAR)
         message_label.grid(row=0, column=0, sticky="nsew")
         btn_frame = create_styled_frame(self)
         btn_frame.grid(row=1, column=0, sticky="se", padx=20, pady=(0, 20))
@@ -1672,9 +1671,9 @@ class SettingsWindow(BaseSettingsWindow):
         default_mods = module_manager.get_default_modules()
         custom_mods = module_manager.get_custom_modules()
         if default_mods:
-            create_styled_label(self.scrollable_frame, text=Lang.get("system_modules"), font=("Georgia", 14, "bold")).pack(anchor="w", padx=5, pady=(5,2))  # Уменьшены отступы
+            create_styled_label(self.scrollable_frame, text=Lang.get("system_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(5,2))  # Уменьшены отступы
             for mod in default_mods: self.create_mod_ui(self.scrollable_frame, mod, is_default=True)
-        create_styled_label(self.scrollable_frame, text=Lang.get("global_custom_modules"), font=("Georgia", 14, "bold")).pack(anchor="w", padx=5, pady=(10,2))  # Уменьшены отступы
+        create_styled_label(self.scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))  # Уменьшены отступы
         for mod in custom_mods: self.create_mod_ui(self.scrollable_frame, mod, is_default=False)
     def create_mod_ui(self, parent, mod_data, is_default):
         enabled_var = tk.BooleanVar(value=mod_data["enabled"])
@@ -1844,14 +1843,14 @@ class CreateChatWindow(BaseSettingsWindow):
         module_manager = ModuleManager()
         default_mods = module_manager.get_default_modules()
         if default_mods:
-            create_styled_label(self.mods_scrollable_frame, text=Lang.get("system_modules"), font=("Georgia", 14, "bold")).pack(anchor="w", padx=5, pady=(5,2))  # Уменьшены отступы
+            create_styled_label(self.mods_scrollable_frame, text=Lang.get("system_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(5,2))  # Уменьшены отступы
             for mod in default_mods: self.create_mod_ui(self.mods_scrollable_frame, mod, "default")
         if self.custom_mods_for_chat:
-            create_styled_label(self.mods_scrollable_frame, text=Lang.get("global_custom_modules"), font=("Georgia", 14, "bold")).pack(anchor="w", padx=5, pady=(10,2))  # Уменьшены отступы
+            create_styled_label(self.mods_scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))  # Уменьшены отступы
             for mod in self.custom_mods_for_chat: self.create_mod_ui(self.mods_scrollable_frame, mod, "global_custom")
         header_frame = create_styled_frame(self.mods_scrollable_frame)
         header_frame.pack(fill='x', pady=(10,2))  # Уменьшены отступы
-        create_styled_label(header_frame, text=Lang.get("chat_specific_modules"), font=("Georgia", 14, "bold")).pack(side='left', anchor="w", padx=5)
+        create_styled_label(header_frame, text=Lang.get("chat_specific_modules"), font=FONT_REGULAR).pack(side='left', anchor="w", padx=5)
         create_styled_button(header_frame, text="+", width=30, command=self.add_new_local_mod).pack(side='left', padx=5)
         if self.newly_added_mods:
             for mod in self.newly_added_mods: self.create_mod_ui(self.mods_scrollable_frame, mod, "new_custom")

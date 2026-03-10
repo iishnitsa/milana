@@ -2869,6 +2869,110 @@ def analyze_protocol(text):
 
     return " ".join(warning_lines)
 
+def tools_selector(text, sid):
+    """
+    Вызывает инструменты, используя поиск маркеров и словарь команд в global_state.tools_commands_dict[sid].
+    Возвращает результат выполнения команды или None.
+    """
+    let_log("=== [TOOLS_SELECTOR ЗАПУЩЕН (НОВАЯ ВЕРСИЯ)] ===")
+    let_log(f"[TOOLS_SELECTOR] входной текст (начало 200):\n{text[:200]}")
+    # 1) получить кэш
+    cached = read_cache()
+    let_log(f"[TOOLS_SELECTOR] кэш: {cached}")
+    if cached == [True, [False, False]]: return None
+    try:
+        if isinstance(cached[1][1], str): return cached[1][1]
+    except: pass
+    # 2) получить словарь команд для сессии
+    try: now_commands = global_state.tools_commands_dict.get(sid, {})
+    except Exception: now_commands = {}
+    # 3) system keys
+    try: sys_keys = [str(k) for k in global_state.system_tools_keys]
+    except Exception: sys_keys = []
+    # 4) найти маркер и сопоставить с командами
+    match = find_and_match_command(text, now_commands)
+    if not match:
+        let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
+        is_warn = analyze_protocol(text)
+        if is_warn != None:
+            write_cache([False, is_warn])
+            return is_warn
+        write_cache([False, False])
+        return None
+    found_key, content = match
+    let_log(f"[TOOLS_SELECTOR] найден ключ: {found_key}, контент длиной: {len(content) if content else 0}")
+    # 5) определить, системная ли команда
+    is_system = False
+    try:
+        for sk in sys_keys:
+            if found_key in sk or sk in found_key:
+                is_system = True
+                break
+        if not is_system and sys_keys:
+            close = difflib.get_close_matches(found_key, sys_keys, n=1, cutoff=0.7)
+            if close: is_system = True
+    except Exception: is_system = False
+    let_log(f"[TOOLS_SELECTOR] команда системная? {is_system}")
+    # 6) Обработка кэша в зависимости от типа команды
+    if not is_system:
+        # ТОЛЬКО для несистемных команд: проверяем кэш
+        if cached != [False]:
+            if cached[1] != ["SYSTEM", False]:
+                let_log("[TOOLS_SELECTOR] Возвращаем не-системный результат из кэша")
+                let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+                return cached
+    else:
+        # Для системных команд: проверяем, не выполняем ли мы её уже (рекурсия)
+        if cached != [False]:
+            if cached[1] != ["SYSTEM", False]: raise RuntimeError('СБОЙ КЭШЕРА В ТУЛЗ СЕЛЕКТОРЕ')
+        # Помечаем, что начинаем выполнение системной команды
+        if cached == [False]: write_cache(["SYSTEM", False])
+        traceprint()
+    # 7) получить callable из now_commands
+    try: entry = now_commands.get(found_key)
+    except Exception: entry = None
+    if entry == None:
+        let_log("[TOOLS_SELECTOR] команда не найдена в словаре сессии (после сопоставления)")
+        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+        is_warn = analyze_protocol(text)
+        if is_warn != None:
+            write_cache([False, is_warn])
+            return is_warn
+        write_cache([False, False])
+        return wrong_command
+    func_callable = None
+    try:
+        if isinstance(entry, tuple) or isinstance(entry, list):
+            if len(entry) >= 2 and callable(entry[1]): func_callable = entry[1]
+            elif len(entry) >= 3 and callable(entry[2]): func_callable = entry[2]
+            elif callable(entry[0]): func_callable = entry[0]
+        elif callable(entry): func_callable = entry
+        else:
+            try: func_callable = entry.get("func")
+            except Exception: func_callable = None
+    except Exception: func_callable = None
+    if not func_callable:
+        let_log("[TOOLS_SELECTOR] не удалось получить callable для команды")
+        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+        write_cache([False, False])
+        return None
+    # 9) выполнить функцию
+    let_log("[TOOLS_SELECTOR] Выполняем функцию...")
+    if found_key == global_state.start_dialog_command_name: global_state.task_delegated = True
+    try: result = func_callable(content)
+    except Exception as e: result = "__TOOL_ERROR__: " + str(e)
+    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
+    let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
+    # 10) кэшировать результат если не системная команда
+    try:
+        if not is_system:
+            let_log("[TOOLS_SELECTOR] Кэшируем результат (не системная команда)")
+            write_cache(result)
+            traceprint()
+    except Exception: pass
+    let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+    return result
+
 # ВЕРСИЯ ДЛЯ СТАНДАРТНОГО РЕЖИМА
 def _standard_agent_func(text, agent_number):
     # надо сокращать ещё когда превышен не лимит а какое-то количество ибо модель может начать писать бред
