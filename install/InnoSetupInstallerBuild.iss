@@ -1,6 +1,6 @@
 [Setup]
 AppName=Milana
-AppVersion=2026.02
+AppVersion=2026.03
 AppPublisher=iishnitsa
 AppPublisherURL=https://github.com/iishnitsa/milana
 DefaultDirName={userpf}\Milana
@@ -10,7 +10,7 @@ Compression=lzma2
 SolidCompression=yes
 SetupIconFile=..\data\icons\icon.ico
 UninstallDisplayIcon={app}\data\icons\icon.ico
-AppID={{74bec6ac-6270-4f46-a420-eb3a0d86a788}}
+AppID={{c4517dfb-a50e-45dc-8539-2f2fbfffbbfd}}
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=lowest

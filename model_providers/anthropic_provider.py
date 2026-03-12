@@ -27,7 +27,7 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
 
     params = {
         'chat': 'claude-3-haiku-20240307',
-        'emb': 'sentence-transformers/all-MiniLM-L6-v2',  # Модель по умолчанию
+        'emb': 'sentence-transformers/all-MiniLM-L6-v2',
         'token': None
     }
     
@@ -86,15 +86,50 @@ def ask_model(generation_params: Dict[str, Any]) -> str:
         traceback.print_exc()
         raise RuntimeError(f"Ошибка генерации: {str(e)}")
 
-def chat(messages: List[Dict[str, str]], generation_params: Dict[str, Any]) -> str:
+def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Чат-метод для Anthropic.
+    Ожидает словарь с ключом 'messages' (список словарей с полями role и content).
+    Возвращает полный ответ в формате, аналогичном OpenAI.
+    """
     global client, token_limit
     if client is None:
         raise RuntimeError("Клиент Anthropic не инициализирован")
     try:
-        text = json.dumps(messages)
-        if not client.is_within_token_limit(text, token_limit):
+        messages = generation_params.get("messages", [])
+        if not messages:
+            raise ValueError("Нет сообщений для чата")
+        
+        # Проверка лимита контекста (суммарно)
+        full_text = json.dumps(messages)
+        if not client.is_within_token_limit(full_text, token_limit):
             raise RuntimeError("ContextOverflowError")
-        return client.chat(messages, generation_params)
+        
+        # Вызов внутреннего метода chat (возвращает строку ответа)
+        response_text = client.chat(messages, generation_params)
+        
+        # Формируем ответ, совместимый с ожиданиями основного приложения
+        return {
+            "id": f"chatcmpl-{client.chat_model}",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": response_text
+                    },
+                    "finish_reason": "stop",
+                    "index": 0
+                }
+            ],
+            "usage": {
+                "prompt_tokens": client.count_tokens(full_text),
+                "completion_tokens": client.count_tokens(response_text),
+                "total_tokens": client.count_tokens(full_text) + client.count_tokens(response_text)
+            },
+            "model": client.chat_model
+        }
+    except RuntimeError as e:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise RuntimeError(f"Ошибка чата: {str(e)}")

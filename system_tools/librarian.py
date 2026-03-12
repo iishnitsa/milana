@@ -247,7 +247,7 @@ def main(quest):
                     # Финальная оценка и генерация новых запросов
                     if useful_items:
                         combined_useful = '\n'.join(it['text'] for it in useful_items)
-                        system_answer = main.answer_system
+                        system_answer = main.answer_system # TODO: ТУТ ДУБЛИРОВАНИЕ
                         user_answer = (main.label_answer + ' ' + combined_useful + '\n' +
                                        main.label_query + ' ' + i)
                         try:
