@@ -60,7 +60,7 @@ if False:
     import time
     import difflib
     import pickle
-    import gzip
+    import lzma
     import io
     import base64
     import json
