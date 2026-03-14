@@ -193,6 +193,8 @@ warn_command_text_6 = 'Если вы НЕ пытались вызвать ком
 
 warn_command_text_7 = "Команда находится внутри markdown-форматирования (жирный, курсив, код и т.п.)."
 
+no_markdown_instruction = 'ВАЖНО: Не используй Markdown (например, **жирный**, *курсив*, `код`, списки с * или -) в своих ответах. Пиши обычным текстом. Markdown разрешён только если это явно требуется для передачи форматированного кода или данных, но в обычном общении избегай его.'
+
 text_tokens_coefficient = 0.5 # усреднённый коэффициент для русского языка
 
 class SystemTextContainer:
@@ -296,6 +298,7 @@ class SystemTextContainer:
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
+        self.no_markdown_instruction = no_markdown_instruction
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

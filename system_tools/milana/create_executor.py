@@ -26,6 +26,7 @@ from cross_gpt import (
     gigo_questions,
     get_level,
     prompt_evaluation_2,
+    no_markdown_instruction,
 )
 
 def main(text):
@@ -182,7 +183,7 @@ Example of a command call - "!!!need_info!!! Documentation for React hooks"
         system_prompt=system_prompt_for_instructions
     )
     # Формируем финальный промпт для исполнителя
-    prompt = main.worker_base + prompt_evaluation_2 + ' ' + text
+    prompt = main.worker_base + no_markdown_instruction + '\n' + prompt_evaluation_2 + ' ' + text
     if global_state.hierarchy_limit != 1:
         prompt += main.worker_delegation_part
 

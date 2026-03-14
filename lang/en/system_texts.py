@@ -196,6 +196,8 @@ warn_command_text_6 = warn_command_text_6 = 'If you did NOT try to invoke a comm
 
 warn_command_text_7 = "Command marker is inside formatting (bold, italic, code, etc.)."
 
+no_markdown_instruction = '''IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'''
+
 text_tokens_coefficient = 0.5 # middle coefficient for english
 
 class SystemTextContainer:
@@ -299,6 +301,7 @@ class SystemTextContainer:
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
+        self.no_markdown_instruction = no_markdown_instruction
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()
