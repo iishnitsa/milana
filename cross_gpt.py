@@ -1108,6 +1108,7 @@ def get_embs(text: str):  # TODO: протестировать
                             break
                         except Exception as retry_e:
                             if 'ContextOverflowError' in str(retry_e): raise RuntimeError('ContextOverflowError')
+                return embs
                 processed_pieces.append(current_piece)
                 processed_embs.extend(embs)  # Разворачиваем вложенные списки
                 break
@@ -3127,7 +3128,7 @@ def worker(really_main_task):
 def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global memory_sql
     global actual_handlers_names, another_tools_files_addresses
-    global token_limit, emb_token_limit, most_often
+    global token_limit, emb_token_limit, most_often, chunk_size
     global client
     global milana_collection
     global user_collection
@@ -3270,6 +3271,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
 
     # === Загрузка модели и инструментов ===
     globalize_language_packet(language)
+    chunk_size = provider_module.emb_token_limit * text_tokens_coefficient
 
     clean_variables_content = []
     if filter_generations == 1:
