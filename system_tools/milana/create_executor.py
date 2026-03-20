@@ -53,8 +53,8 @@ def main(text):
             'command_format_explanation',
         )
 
-        main.create_executor_param_1 = 'Are the tasks the same? Task 1:\n'
-        main.create_executor_param_2 = '\nTask 2:\n'
+        main.create_executor_param_1 = 'Are the tasks the same?'
+        main.create_executor_param_2 = 'Task'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
         main.additional_info_text = 'Additional information:\n'
         main.command_format_explanation = "Don't write how to write commands, don't give examples, it's already in the product, the addition to which you're writing. You can only write in which case to use this or that command."
@@ -107,7 +107,7 @@ Example of a command call - "!!!need_info!!! Documentation for React hooks"
         return_text = main.create_executor_return_text_2
         let_log('ПЕРЕСОЗДАНИЕ ИСПОЛНИТЕЛЯ')
         lt = global_state.last_task_for_executor.get(global_state.conversations, '')
-        if text != '' and text is not None: param = parse_prompt_response(main.create_executor_param_1 + text + main.create_executor_param_2 + lt, 0)
+        if text != '' and text is not None: param = parse_prompt_response(main.create_executor_param_1, main.create_executor_param_2 + ' 1:\n' + text + '\n' + main.create_executor_param_2 + ' 2:\n' + lt, 0)
         else: param = 0
         if param == 1: tag = 'correct'
         else: tag = 'incorrect'

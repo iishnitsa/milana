@@ -15,7 +15,7 @@ from ddgs import DDGS
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from cross_gpt import let_log, cacher, text_cutter
-from cross_gpt import input_info_loaders, load_info_loaders, default_handlers_names
+from cross_gpt import input_info_loaders, load_info_loaders, default_handlers_names, found_info_1
 
 # Улучшенные заголовки для имитации реального браузера
 HEADERS = {
@@ -429,15 +429,9 @@ def main(text):
     if not hasattr(main, 'attr_names'):
         let_log('INITIALIZATION')
         main.attr_names = (
-            'search_failed',
-            'results_prefix',
             'search_error_msg',
-            'no_results_msg'
         )
-        main.search_failed = 'No text found on visited pages'
-        main.results_prefix = 'Here\'s what I found\n'
         main.search_error_msg = 'Search error: '
-        main.no_results_msg = 'No results found. Try refining your query or using different keywords.'
         return
     let_log('WEB SEARCH CALLED')
     let_log(f'Search query: {text}')
@@ -481,7 +475,7 @@ def main(text):
             return f'{main.search_error_msg}{str(e)}'
         if not all_links:
             let_log('[main] No links found')
-            return main.no_results_msg
+            return found_info_1
         # Основной цикл обработки ссылок
         link_index = 0
         let_log(f'[main] Starting main loop, target successful sites: {TARGET_SUCCESSFUL_SITES}')
@@ -519,7 +513,7 @@ def main(text):
         # Формируем итоговый текст
         if not successful_texts:
             let_log('[main] No successful texts found')
-            return main.search_failed
+            return found_info_1
         collected_text = ""
         for link, text in successful_texts[:TARGET_SUCCESSFUL_SITES]: 
             collected_text += f"=== {link} ===\n{text}\n\n"
@@ -527,5 +521,4 @@ def main(text):
         return collected_text
     result = text_cutter(pages_handler(text))
     let_log(f'[main] Final result length: {len(result)} chars')
-    return main.results_prefix + result
-     # TODO: текст каттер должен вызываться только если что-то найдено
+    return result

@@ -1649,19 +1649,38 @@ def remove_role_markers_from_content(messages):
         })
     return cleaned_messages
 
-def parse_prompt_response(prompt, default_value):
-    try: response = ask_model(prompt, all_user=True)
+def parse_prompt_response(add_prompt, info, default_value=0):
+    # Базовая инструкция из системных текстов
+    system_prompt = add_prompt + yes_no_instruction
+    try: response = ask_model(info, system_prompt=system_prompt)
     except RuntimeError as e:
         if 'ContextOverflowError' in str(e):
-            try: response = ask_model(text_cutter(prompt), all_user=True)
+            try: response = ask_model(text_cutter(info), system_prompt=system_prompt)
             except Exception: return default_value
         else: raise
-    first_chars = response[:5]
-    for char in first_chars:
-        if char.isdigit():
-            try: return int(char)
-            except ValueError: continue
-    return default_value
+    if not response or not response.strip():
+        return default_value
+    # Подготовка к сравнению: приводим к нижнему регистру, убираем лишние пробелы
+    response_clean = response.strip().lower()
+    # Варианты для сравнения (с точкой и без)
+    candidates = [
+        yes_word.lower(),
+        no_word.lower(),
+        yes_word.lower().rstrip('.'),
+        no_word.lower().rstrip('.')
+    ]
+    best_match = None
+    best_ratio = 0.0
+    for cand in candidates:
+        ratio = difflib.SequenceMatcher(None, response_clean, cand).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_match = cand
+    # Порог схожести (можно подобрать эмпирически)
+    if best_ratio < 0.7: return default_value
+    # Определяем, какой это ответ (сравниваем с эталонами без учёта точки)
+    if best_match in (yes_word.lower(), yes_word.lower().rstrip('.')): return 1
+    else: return 0
 
 def _serialize_messages_to_prompt(messages):
     """

@@ -198,6 +198,24 @@ warn_command_text_7 = "Command marker is inside formatting (bold, italic, code, 
 
 no_markdown_instruction = '''IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'''
 
+yes_no_instruction = """
+You must answer only with "Yes." or "No." Do not provide any additional text, explanations, or punctuation other than the single word with a period. It is crucial for the system to parse your response correctly.
+Examples of correct answers:
+- Yes.
+- No.
+Examples of incorrect answers:
+- Yes, I think so.
+- No, because...
+- Probably yes.
+- Yep.
+- Certainly not.
+Always answer exactly "Yes." or "No." depending on your decision.
+"""
+
+yes_word = "Yes."
+
+no_word = "No."
+
 text_tokens_coefficient = 0.5 # middle coefficient for english
 
 class SystemTextContainer:
@@ -302,6 +320,9 @@ class SystemTextContainer:
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
         self.no_markdown_instruction = no_markdown_instruction
+        self.yes_no_instruction = yes_no_instruction
+        self.yes_word = yes_word
+        self.no_word = no_word
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()
