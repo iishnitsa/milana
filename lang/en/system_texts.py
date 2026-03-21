@@ -9,6 +9,8 @@ is_similar_text = 'Are these solutions similar enough to be considered identical
 summarize_prompt = '''
 Summarize the text, briefly retelling while preserving important details. 
 Please provide a brief overview, highlighting the most significant points and ensuring the original meaning and context are preserved: 
+Do not shorten ```highlighted text```, !!!commands!!!, quotes, links, formulas, code, or other elements that must not be shortened.
+Return only the finished summary, without any introductory words, explanations, or concluding phrases. Start immediately with the first sentence of the summary.
 '''
 
 found_info_1 = "Nothing found"
@@ -216,6 +218,15 @@ yes_word = "Yes."
 
 no_word = "No."
 
+cut_message_prompt = """You are an AI message-compressor. A user will send you their message.
+Your task is to reply with that same message on behalf of the user, paraphrased to be shorter, without any commentary. Just remove the fluff.
+If several words can be replaced by one, do so. No detail should be lost.
+Do not shorten ```highlighted text```, !!!commands!!!, quotes, links, formulas, code, or other elements that must not be shortened.
+If there's nothing to shorten, rewrite the message unchanged.
+The user's message will be replaced by your message and embedded into the conversation, so do not provide comments, introductions, or any extraneous text."""
+
+write_shortly_prompt = '\nTry to write concisely to save context.'
+
 text_tokens_coefficient = 0.5 # middle coefficient for english
 
 class SystemTextContainer:
@@ -323,6 +334,8 @@ class SystemTextContainer:
         self.yes_no_instruction = yes_no_instruction
         self.yes_word = yes_word
         self.no_word = no_word
+        self.cut_message_prompt = cut_message_prompt
+        self.write_shortly_prompt = write_shortly_prompt
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

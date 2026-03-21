@@ -1817,7 +1817,7 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
         current_pos = split_pos
     return chunks if chunks else None
 
-def text_cutter(text):
+def text_cutter(text, cut_message=False):
     """
     Обрабатывает текст, разбивая его на части и суммируя их итеративно,
     чтобы избежать переполнения контекста модели.
@@ -1834,7 +1834,8 @@ def text_cutter(text):
         current_chunk = chunks_to_process.pop(0)
         try:
             # Пытаемся суммировать текущий кусок
-            summarized_part = ask_model(current_chunk, system_prompt=summarize_prompt)
+            if cut_message: summarized_part = ask_model(current_chunk, system_prompt=cut_message_prompt)
+            else: summarized_part = ask_model(current_chunk, system_prompt=summarize_prompt)
             summarized_chunks.append(summarized_part)
             traceprint()
         except RuntimeError as e:

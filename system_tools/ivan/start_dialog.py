@@ -30,6 +30,7 @@ from cross_gpt import (
     update_history,
     get_chat_context,
     no_markdown_instruction,
+    write_shortly_prompt,
 )
 
 def find_tuple_by_first_list(data, target_list):
@@ -162,7 +163,7 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     # 3. Добавляем информацию об иерархии, если лимит больше 1
     if global_state.hierarchy_limit > 1:
         full_prompt += f"\n{main.hierarchy_limit_info} {current_level}/{global_state.hierarchy_limit}.\n"
-    full_prompt += no_markdown_instruction
+    full_prompt += no_markdown_instruction + write_shortly_prompt
     let_log(milana_tools)
     prompt += only_one_func_text
     # Добавляем описание инструментов, исключая skip-команды
