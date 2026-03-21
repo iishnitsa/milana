@@ -1,6 +1,6 @@
 '''
 search_web
-send 1 search query after the command
+send 1 search query after the command; returns summaries of several websites
 Simple web search
 Uses AI to summarize the results
 '''
@@ -472,10 +472,10 @@ def main(text):
             let_log(f'[main] Initial links count: {len(initial_links)}')
         except Exception as e: 
             let_log(f'{main.search_error_msg}{str(e)}')
-            return f'{main.search_error_msg}{str(e)}'
+            return []   # возвращаем пустой список при ошибке
         if not all_links:
             let_log('[main] No links found')
-            return found_info_1
+            return []   # возвращаем пустой список, если нет ссылок
         # Основной цикл обработки ссылок
         link_index = 0
         let_log(f'[main] Starting main loop, target successful sites: {TARGET_SUCCESSFUL_SITES}')
@@ -510,15 +510,23 @@ def main(text):
                 sleep_time = random.uniform(2, 4)
                 let_log(f'[main] Sleeping for {sleep_time:.1f}s before next request')
                 time.sleep(sleep_time)
-        # Формируем итоговый текст
+        # Возвращаем список успешных текстов (без сокращения)
         if not successful_texts:
             let_log('[main] No successful texts found')
-            return found_info_1
-        collected_text = ""
-        for link, text in successful_texts[:TARGET_SUCCESSFUL_SITES]: 
-            collected_text += f"=== {link} ===\n{text}\n\n"
+            return []   # пустой список, если ничего не удалось получить
         let_log(f'[main] Processed links: {len(processed_links)}, total links received: {len(all_links)}')
-        return collected_text
-    result = text_cutter(pages_handler(text))
+        return successful_texts[:TARGET_SUCCESSFUL_SITES]
+
+    # Получаем список (url, raw_text) из кэшируемой функции
+    sites_data = pages_handler(text)
+    if not sites_data:
+        return found_info_1
+
+    # Формируем результат: каждый сайт сокращаем отдельно
+    result_parts = []
+    for url, raw_text in sites_data:
+        summarized = text_cutter(raw_text)
+        result_parts.append(f"=== {url} ===\n{summarized}\n\n")
+    result = ''.join(result_parts)
     let_log(f'[main] Final result length: {len(result)} chars')
     return result
