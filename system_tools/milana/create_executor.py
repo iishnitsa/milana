@@ -50,22 +50,32 @@ def main(text):
             'hierarchy_limit_info',
             'delegate_unavailable_for_executor',
             'need_info_example',
-            'hello_example',
-            'command_format_explanation',
+            'tasks_identical_text',
+            'exec_anti_loop_text',
         )
-
         main.create_executor_param_1 = 'Are the tasks the same?'
         main.create_executor_param_2 = 'Task'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
         main.additional_info_text = 'Additional information:\n'
-        main.command_format_explanation = "Don't write how to write commands, don't give examples, it's already in the product, the addition to which you're writing. You can only write in which case to use this or that command."
         main.create_executor_write_prompt_1 = '''
-Write instructions and hints for the AI executor based on this task. Describe what he should and can do, having only the following tools.
-IMPORTANT: The generated instructions will be ADDED to the executor's system prompt. Therefore, do NOT include any role declarations ("You are an AI executor..."), greetings, or generic phrases. Focus solely on the specific task, steps, and guidelines.
+Write a concise instruction for the AI executor (Ivan) based on the task. This instruction will be added to his system prompt.
+
+- Explain the overall goal and what he needs to achieve.
+- Describe how he can use the available tools (listed below) to accomplish subtasks, and in what situations each tool might be helpful.
+- Remind him that he can only use the tools listed; no other commands are allowed.
+- Do NOT include any role declarations ("You are an AI executor..."), greetings, or generic phrases.
+- Do NOT provide a detailed step-by-step plan — the operator (Milana) will guide him interactively.
+- Do NOT give examples of exact command syntax (the correct format is already known from the product).
 '''
         main.create_executor_write_prompt_2 = '''
-Write instructions and hints for the AI executor based on this task. Describe what he should and can do.
-IMPORTANT: The generated instructions will be ADDED to the executor's system prompt. Therefore, do NOT include any role declarations ("You are an AI executor..."), greetings, or generic phrases. Focus solely on the specific task, steps, and guidelines.
+Write a concise instruction for the AI executor (Ivan) based on the task. This instruction will be added to his system prompt.
+
+- Explain the overall goal and what he needs to achieve.
+- If any tools might be useful, mention them conceptually (but no specific tool list is provided).
+- Remind him that he is limited to the commands available in the system (no custom commands).
+- Do NOT include any role declarations ("You are an AI executor..."), greetings, or generic phrases.
+- Do NOT provide a detailed step-by-step plan — the operator (Milana) will guide him interactively.
+- Do NOT give examples of exact command syntax (the correct format is already known from the product).
 '''
         main.create_executor_select_tools_1 = '''You will receive a task description from the user. Based on the task description, select tools from the list of allowed tools.
 Output data:
@@ -92,24 +102,49 @@ In response to the delegation command, you will receive only the result or a fai
 '''
         main.command_example = '''
 Example of a command call - "!!!delegate_task!!! Implement a warehouse accounting system for an online store"
-''' # TODO:
+'''
         main.need_info_example = '''
 Example of a command call - "!!!need_info!!! Documentation for React hooks"
 '''
         main.avaiable_tools_text = 'Available tools:'
-        main.create_executor_return_text_1 = "Executor has been created, welcome him (write a welcome message, don't write a command)"
-        main.create_executor_return_text_2 = "Executor has been recreated, welcome the new executor(write a welcome message, don't write a command)"
-        main.hello_example = ' (write a greeting message, do not write a command, you may use "Hello, Ivan..."; do not use "!!!create_executor!!! Hello, Ivan...")'
+        main.exec_anti_loop_text = '''
+Working with functions:
+Functions may return incorrect, incomplete, or unrelated data.
+Check if the result matches the task.
+If a function returns wrong, truncated, or meaningless output —
+do not repeat the same call unchanged.
+Adjust the request, try another function,
+or proceed without it. Do not rely on a failing function.
+
+Task solving and strategy switching:
+If several attempts fail — change the approach.
+Reformulate, simplify or split the task,
+work around constraints, try alternative paths.
+If there is no progress or actions repeat —
+tell Milana about that.
+Problem if:
+- no new information appears
+- results are unrelated
+- logic is lost
+- tools return incorrect output'''
+        main.create_executor_return_text_1 = "Executor has been created."
+        main.create_executor_return_text_2 = "Executor has been recreated."
         main.hierarchy_limit_info = 'Hierarchy levels are limited. Current level'
         main.delegate_unavailable_for_executor = 'The task delegation function down the hierarchy is not available.'
+        main.tasks_identical_text = 'Tasks are absolutely identical. If you are consciously recreating the executor with the same task, and if it makes sense, the task should differ by at least 1 character.'
         return
     # Определяем, пересоздание это или первое создание
     if global_state.conversations % 2 == 0: # ПЕРЕСОЗДАНИЕ исполнителя
         return_text = main.create_executor_return_text_2
         let_log('ПЕРЕСОЗДАНИЕ ИСПОЛНИТЕЛЯ')
         lt = global_state.last_task_for_executor.get(global_state.conversations, '')
-        if text != '' and text is not None: param = parse_prompt_response(main.create_executor_param_1, main.create_executor_param_2 + ' 1:\n' + text + '\n' + main.create_executor_param_2 + ' 2:\n' + lt, 0)
-        else: param = 0
+        # Проверка на полное совпадение задач
+        if text == lt:
+            return main.tasks_identical_text
+        if text != '' and text is not None:
+            param = parse_prompt_response(main.create_executor_param_1, main.create_executor_param_2 + ' 1:\n' + text + '\n' + main.create_executor_param_2 + ' 2:\n' + lt, 0)
+        else:
+            param = 0
         if param == 1: tag = 'correct'
         else: tag = 'incorrect'
         let_log(f"Пересоздание исполнителя, тег='{tag}' (param={param}, задача {'та же' if param == 0 else 'разная'})")
@@ -166,7 +201,7 @@ Example of a command call - "!!!need_info!!! Documentation for React hooks"
     # Формируем строку с описанием инструментов для промпта, исключая skip-команды
     selected_ivan_tools = ''
     for tool in ivan_tools:
-        if tool not in global_state.skip_tools_keys:          # <--- новое условие
+        if tool not in global_state.skip_tools_keys:
             selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')\n'
     # Определяем, какой промпт использовать (с инструментами или без)
     if selected_ivan_tools:
@@ -176,7 +211,7 @@ Example of a command call - "!!!need_info!!! Documentation for React hooks"
         system_prompt_for_instructions = main.create_executor_write_prompt_2
         user_content = text + additional_info
     # Генерируем инструкции для исполнителя на основе задачи
-    system_prompt_for_instructions += '\n' + main.command_format_explanation
+    # command_format_explanation пуст, не добавляем ничего
     let_log(system_prompt_for_instructions)
     let_log("Генерация инструкций для исполнителя...")
     instructions = ask_model(
@@ -205,7 +240,7 @@ Example of a command call - "!!!need_info!!! Documentation for React hooks"
     if not native_func_call:
         prompt += what_is_func_text + main.need_info_example
         if delegation_allowed: prompt += main.command_example
-
+    prompt += main.exec_anti_loop_text
     # Сохраняем инструменты для этого чата
     global_state.tools_commands_dict[global_state.conversations] = ivan_tools
     let_log('ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ ИСПОЛНИТЕЛЯ:')
@@ -213,4 +248,5 @@ Example of a command call - "!!!need_info!!! Documentation for React hooks"
     # Создаем чат для исполнителя через менеджер
     system_prompt = system_role_text + prompt
     create_chat(global_state.conversations, system_prompt)
-    return return_text + main.hello_example
+    # Возвращаем только факт создания, без подсказки о приветствии
+    return return_text

@@ -37,7 +37,7 @@ def find_tuple_by_first_list(data, target_list):
     for list1, list2, obj in data:
         if list1 == target_list:
             return (list1, list2), obj
-    return None # Если совпадение не найдено
+    return None
 
 def main(client_task):
     # Инициализация атрибутов модуля при первом вызове
@@ -52,24 +52,33 @@ def main(client_task):
             'milana_delegation_part',
             'command_example',
             'hierarchy_limit_info',
+            'oper_anti_loop_text',
             'delegate_unavailable_for_operator',
+            'conversations_limit_reached_text',
         )
         
-        main.milana_base_1 = '''
-You are an AI operator "Milana".
-You are given a task plan from a client'''
-        main.milana_base_2 = ''' or a higher-level dialog'''
-        main.milana_base_3 = '''. Create an AI executor "Ivan" for the task by writing the executor creation command and the task (detailed, with unambiguous interpretation, with explanation of abbreviations if any).
-Then work with the executor, monitor task execution, sometimes recreate him if necessary, for example, when you start working on the next item of the plan, the old executor will be disconnected from the dialog.
-When you are confident that the overall task (the entire or almost entire plan) is completed - write the dialog completion command and pass the detailed result to the function.
-'''
-        main.milana_delegation_part = '''
-"Ivan" can pass one of the tasks from the plan he is executing down the hierarchy if he cannot handle it. This will create a similar dialog, and you will not have access to it. Only "Ivan" has the right to do so.
+        main.milana_base_1 = '''You are "Milana", an AI operator. You have received a task plan from a client'''
+        main.milana_base_2 = ''' or from a higher-level dialog'''
+        main.milana_base_3 = '''.
+Your workflow:
+1. CREATE ONE EXECUTOR — Use the command "!!!create_executor!!!" followed by the task description. This creates "Ivan", an AI executor who will handle the current subtask.
+CORRECT: "!!!create_executor!!! React frontend for an online store"
+INCORRECT: "!!!create_executor!!! Create Ivan for frontend"
+INCORRECT: "!!!create_executor!!! Ivan, write frontend"
+2. WORK WITH THE SAME EXECUTOR — After creation, continue the conversation with Ivan. Give instructions, answer questions, receive results. DO NOT create a new executor unless absolutely necessary.
+IMPORTANT: Once Ivan is created, NEVER use the "!!!create_executor!!!" command again during your conversation with him. This command is only for the initial creation. Using it again will cause errors and unnecessarily recreate the executor.
+3. WHEN RECREATION IS ALLOWED — Recreate Ivan ONLY in these cases:
+- The current executor explicitly states they CANNOT complete the task.
+- The task changes so drastically that a different specialization is needed.
+- Ivan SUCCESSFULLY completed their part and you need a new executor for a clearly separate next subtask (but first try to have Ivan handle multiple steps).
+4. FORBIDDEN — Never recreate an executor IMMEDIATELY after they respond. A simple reply from Ivan is NOT a reason to create a new one. Continue the conversation.
+5. GREETING AFTER CREATION — After successfully creating Ivan, simply greet him in natural language (e.g., "Hello, Ivan."). Do not include any commands in your greeting.
+6. DELEGATION — '''
+        main.milana_delegation_part = '''Ivan can delegate a subtask further down the hierarchy if he cannot handle it. This creates a similar dialog which you (Milana) cannot access. Only Ivan has the right to delegate.
 '''
         main.command_example = '''
 Command example – "!!!create_executor!!! Write frontend for an online store"
 '''
-        # Уточнено: пользователь пришлёт план и задачу
         main.start_dialog_tool_text_1 = '''You will receive a plan and a task from the user. Based on the task description, select tools from the list of allowed tools.
 Output data:
 Only tool names separated by comma and space in a single line.
@@ -83,6 +92,25 @@ It is forbidden to output any other tool names except those from the list.
 You cannot invent new commands.
 Any typo or incorrect entry in the list is sufficient reason to output None.
 '''
+        main.oper_anti_loop_text = '''
+Execution control and dialogue termination:
+Monitor the executor’s progress. If there is no solution, determine whether
+the issue is task complexity or impossibility.
+Consider the situation problematic (absurd) if:
+- actions repeat without progress
+- results lose connection to the task
+- the direction of reasoning constantly shifts
+- tools return inconsistent, irrelevant, or useless output
+Do not stop the dialogue due to complexity alone.
+First try adjusting the plan or decomposition.
+Mark the task as impossible only if:
+- environment or tool limitations make the goal unreachable
+- required data or functions are missing or unavailable
+- all reasonable approaches lead to repetition or absurd results
+When stopping, you must prove impossibility:
+- list attempts and why they failed
+- describe constraints or failures
+- explain why further attempts will not succeed'''
         main.hierarchy_limit_info = 'Hierarchy levels are limited. Current level'
         main.delegate_unavailable_for_operator = 'The task delegation function down the hierarchy is not available to you.'
         main.conversations_limit_reached_text = 'The limit of delegation levels has been reached. The task has not been transferred.'
@@ -155,10 +183,10 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     if global_state.hierarchy_limit != 1:
         full_prompt += main.milana_base_2
         full_prompt += main.milana_delegation_part
-        full_prompt = main.milana_base_3
+        full_prompt += main.milana_base_3
         full_prompt += f"\n{main.delegate_unavailable_for_operator}\n"
         # 2. Сообщение для Миланы: она не может делегировать (добавляется ВСЕГДА, кроме случая, когда делегирование полностью отключено - лимит=1)
-    else: full_prompt = main.milana_base_3
+    else: full_prompt += main.milana_base_3
 
     # 3. Добавляем информацию об иерархии, если лимит больше 1
     if global_state.hierarchy_limit > 1:
@@ -168,11 +196,11 @@ Any typo or incorrect entry in the list is sufficient reason to output None.
     prompt += only_one_func_text
     # Добавляем описание инструментов, исключая skip-команды
     for tool in milana_tools:
-        if tool not in global_state.skip_tools_keys:          # <--- новое условие
+        if tool not in global_state.skip_tools_keys:
             prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
     if not native_func_call:
         prompt += what_is_func_text + main.command_example
-    full_prompt += prompt
+    full_prompt += prompt + main.oper_anti_loop_text
     let_log(full_prompt)
     let_log(global_state.another_tools)
     let_log(milana_tools)

@@ -94,7 +94,7 @@ Example output:
 [DONE] 1. Criterion one. Matches, because...
 [NOT DONE] 2. Criterion two. Not fulfilled, because it lacks...
 """
-prompt_decision_1 = "You are a senior system analyst. Make a final decision regarding the AI executor's work. You are provided with the original task, the result, and a detailed evaluation report."
+prompt_decision_1 = "You are a senior system analyst. Make a final decision regarding the AI executor's work. You are provided with the original task, the result, and a detailed evaluation report. Note: the result may be a statement of impossibility with supporting evidence. Your task is to verify whether the task is truly impossible or if the executor made a mistake."
 prompt_decision_2 = "Original task:"
 prompt_decision_3 = "Previous result:"
 prompt_decision_4 = "Evaluation report:"
@@ -103,8 +103,24 @@ Analyze all the data and deliver a verdict.
 Your answer must have a STRICT structure:
 First, on a separate line, your verdict. This can be one of three options: `VERDICT: APPROVE`, `VERDICT: REVISE`, or `VERDICT: UNSURE`.
 - Use `VERDICT: REVISE` only if you see clear errors and can formulate a task to fix them.
-- Use `VERDICT: UNSURE` if the result seems acceptable, but you cannot guarantee its completeness or correctness, or if you don't know how it can be improved.
+- Use `VERDICT: UNSURE` if the result seems acceptable, but you cannot guarantee its completeness or correctness, if you don't know how it can be improved, OR if after analyzing the evidence you conclude that the task is objectively impossible (see criteria below).
+
 If the verdict is `VERDICT: REVISE`, then AFTER it, starting with the marker `NEW TASK:`, formulate a COMPLETE, SELF-CONTAINED TASK for another AI executor.
+
+**Criteria for impossibility (a situation is considered problematic/absurd if):**
+- actions repeat without progress
+- responses lose connection to the task
+- the direction of reasoning constantly shifts
+- tools return inconsistent, irrelevant, or useless output
+- environment or tool limitations make the goal unreachable
+- required data or functions are missing or unavailable
+- all reasonable approaches lead to repetition or absurd results
+
+If the result contains a justification of impossibility:
+- Check it against the criteria above.
+- If it meets the criteria → verdict `VERDICT: UNSURE`.
+- If it does not (e.g., the executor gives up without valid reasons) → verdict `VERDICT: REVISE` with a new task explaining that the previous claim of impossibility was incorrect and describing how to proceed.
+
 Example output for revision:
 VERDICT: REVISE
 NEW TASK:
@@ -172,11 +188,16 @@ You can only call commands available in the system instruction. In parentheses t
 
 last_messages_marker = "\nLast messages:"
 
-rag_context_marker = "\nContext (previous messages from long-term memory):\n"
+rag_context_marker = """
+Retrieved fragments from long-term memory (RAG).
+These fragments were found by semantic similarity and may contain important details from earlier parts of the dialogue that are not included in the recent messages.
+Use them as an additional source of facts and context, but keep in mind that they may be incomplete or not sorted by time.
+Use these fragments to refine your response, but do not contradict the explicit history of recent messages.
+"""
 
-global_summary_marker = "\nGlobal dialogue summary:\n"
+global_summary_marker = "\nGlobal dialogue summary (overall picture, key decisions and facts from the entire conversation):\n"
 
-recent_summary_marker = "\nSummary of the last topic:\n"
+recent_summary_marker = "\nSummary of the recent topic (brief summary of the recent part of the dialogue not yet included in the global summary):\n"
 
 error_in_provider = 'An error occurred while accessing the model provider. Infinite retry attempts are being made with a 60-second interval. You can stop the program if a successful request message does not appear for a long time'
 
@@ -226,6 +247,12 @@ If there's nothing to shorten, rewrite the message unchanged.
 The user's message will be replaced by your message and embedded into the conversation, so do not provide comments, introductions, or any extraneous text."""
 
 write_shortly_prompt = '\nTry to write concisely to save context.'
+
+prompt_chunk_summary = "Concisely summarize the essence of the given dialogue fragment. Highlight key facts, decisions, and important details. Response — 1-2 sentences."
+
+prompt_global_summary = "Based on the summaries of individual fragments, create a single global summary of the entire dialogue. Describe the main topics, decisions made, and key facts. Use 2-4 sentences."
+
+prompt_recent_summary = "Based on the summaries of fragments, create a brief summary of the recent conversation topic. Highlight the essence of the discussion and important details. Use 1-3 sentences."
 
 text_tokens_coefficient = 0.5 # middle coefficient for english
 
@@ -336,6 +363,9 @@ class SystemTextContainer:
         self.no_word = no_word
         self.cut_message_prompt = cut_message_prompt
         self.write_shortly_prompt = write_shortly_prompt
+        self.prompt_chunk_summary = prompt_chunk_summary
+        self.prompt_global_summary = prompt_global_summary
+        self.prompt_recent_summary = prompt_recent_summary
         self.text_tokens_coefficient = text_tokens_coefficient
 
 def system_text_container(): return SystemTextContainer()

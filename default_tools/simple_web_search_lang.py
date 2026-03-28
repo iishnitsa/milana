@@ -8,5 +8,6 @@ locales = {
         ],
 
         'main.search_error_msg': 'Ошибка поиска: ',
+        'main.used_links_header': 'Задействованные ссылки:',
     }
 }

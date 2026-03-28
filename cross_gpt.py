@@ -11,6 +11,7 @@ import time
 import difflib
 import pickle
 import gzip
+import lzma
 import json
 import numpy as np
 from sklearn.decomposition import PCA
@@ -221,43 +222,6 @@ def load_special_mod(file_path, mod_type):
         else: let_log(f"⚠ Файл {mod_type} не содержит функцию main"); return None
     except Exception as e: let_log(f"⚠ Ошибка загрузки {mod_type}: {e}"); return None
 
-def extract_command_markers(text, commands_dict):
-    """
-    Извлекает все маркеры команд из текста.
-    Возвращает список словарей с ключами 'key', 'content', 'start', 'end', 'full_match'.
-    """
-    return _find_command_markers(text, commands_dict, return_all=True, start_limit=None)
-'''
-def extract_command_markers(text, commands_dict):
-    """Извлекает все маркеры команд из текста с использованием find_and_match_command"""
-    if not text or not commands_dict: return []
-    markers = []
-    # Ищем маркеры по всему тексту
-    pos = 0
-    while pos < len(text):
-        # Ищем следующий потенциальный маркер
-        next_marker = text.find("!!!", pos)
-        if next_marker == -1: break
-        # Проверяем окрестность маркера (первые 5 символов от позиции маркера)
-        check_text = text[max(0, next_marker-5):next_marker+10]
-        match = find_and_match_command(check_text, commands_dict)
-        if match:
-            found_key, content = match
-            # Находим конец маркера в основном тексте
-            marker_end = text.find("!!!", next_marker + 3)
-            if marker_end != -1:
-                markers.append({
-                    'start': next_marker,
-                    'end': marker_end + 3,
-                    'key': found_key,
-                    'content': content,
-                    'full_match': text[next_marker:marker_end+3]
-                })
-                pos = marker_end + 3
-            else: pos = next_marker + 3
-        else: pos = next_marker + 3
-    return markers
-'''
 def find_work_folder(file_name):
     real_path = os.path.realpath(file_name)
     if real_path.find('\\') != -1: slash = '\\'
@@ -270,6 +234,27 @@ sys.path.append(os.path.join(folder_path, 'system_tools', 'milana'))
 sys.path.append(os.path.join(folder_path, 'system_tools', 'ivan'))
 
 def let_log(t):
+    #return
+    t = str(t)
+    if is_print_log: print(t)
+    if is_save_log:
+        conn = connect(cache_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cache (
+                id INTEGER PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        conn.commit()
+        cursor.execute('SELECT MAX(id) FROM cache')
+        row = cursor.fetchone()
+        max_id = row[0] if row and row[0] is not None else -1
+        conn.close()
+        if max_id <= cache_counter:# and False:
+            log_file = os.path.join(chat_path, 'log.txt')
+            with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{t}\n')
+def let_log1(t):
     t = str(t)
     if is_print_log: print(t)
     if is_save_log:
@@ -320,6 +305,7 @@ def read_cache():
         data_part = stored_data[1:]
         if marker == b'\x00': decompressed_bytes = data_part
         elif marker == b'\x01': decompressed_bytes = gzip.decompress(data_part)
+        elif marker == b'\x02': decompressed_bytes = lzma.decompress(data_part)
         try: deserialized_value = pickle.loads(decompressed_bytes)
         except Exception as pickle_error: raise
         let_log(f"[CACHE READ] id={cache_counter}")
@@ -363,10 +349,10 @@ def write_cache(content):
         cache_cursor = cache_conn.cursor()
         pickled_bytes = pickle.dumps(content, protocol=pickle.HIGHEST_PROTOCOL)
         raw_size = len(pickled_bytes)
-        compressed = gzip.compress(pickled_bytes, compresslevel=9)
+        compressed = lzma.compress(pickled_bytes, preset=9)
         size_uncompressed = 1 + raw_size
         size_compressed = 1 + len(compressed)
-        if size_compressed < size_uncompressed: final_data = b'\x01' + compressed
+        if size_compressed < size_uncompressed: final_data = b'\x02' + compressed
         else: final_data = b'\x00' + pickled_bytes
         cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, final_data))
         cache_conn.commit()
@@ -470,201 +456,163 @@ def sql_exec(query, params=(), fetchone=False, fetchall=False):
         return None
 
 @cacher
-def coll_exec(action: str,
-              coll_name: str,
-              *,
-              # семантический поиск
+def coll_exec(action, coll_name, *,
               query_embeddings=None,
-              filters: dict | None = None,
-              doc_contains: str | None = None,
-              # CRUD-поля
-              ids: list[str] | None = None,
-              documents: list[str] | None = None,
-              metadatas: list[dict] | None = None,
-              embeddings: list[list[float]] | None = None,
-              # что вернуть
-              fetch: str | list[str] = "documents",
-              # параметры запроса
-              n_results: int = 10,
-              limit: int | None = None,
-              offset: int | None = None,
-              # поведение плоского fetch
-              first: bool = True,
-              flatten: bool = False,
-              # для modify
-              new_name: str | None = None,
-              new_meta: dict | None = None,
-              # если коллекция не в globals()
-              client=None,
-              # фильтрация релевантности
-              relevance_coeff: float = 0.9,
+              filters=None,
+              doc_contains=None,
+              ids=None,
+              documents=None,
+              metadatas=None,
+              embeddings=None,
+              fetch="documents",
+              n_results=10,
+              limit=None,
+              offset=None,
+              first=True,
+              flatten=False,
+              new_name=None,
+              new_meta=None,
+              client_override=None,
+              relevance_coeff=0.9,
               **kwargs):
     """
-    Универсальная обёртка с кэшированием и поддержкой add/update/delete/query/get/count/modify.
-    Поддержка $in и $nin для vector_id через множественные запросы (встроена).
-    ВАЖНО: в этой версии обёртка не вычисляет расстояния (нет эвклидов/косинусов).
-    Сжатие происходит ВСЕГДА для документов в milana_collection/user_collection.
-    Формат: 'z' + Base64(gzip(данные)) для сжатых, 'n' + текст для несжатых.
+    Универсальная обёртка для работы с коллекциями ChromaDB.
+    Все вспомогательные функции вложены внутрь.
     """
-    def _empty_result(fetch):
-        """Возвращает пустой результат в нужном формате"""
-        include = fetch if isinstance(fetch, list) else [fetch]
-        if len(include) > 1:
-            out = {}
-            for key in include:
-                out[key] = [] if key != "distances" else [[]]
-            return out
-        else:
-            key = include[0]
-            if key == "ids": return []
-            elif key == "documents": return []
-            elif key == "metadatas": return []
-            elif key == "embeddings": return []
-            elif key == "distances": return [[]]
-            else: return None
 
-    # 1. Для операций ЗАПИСИ (add, update) - проверяем эмбеддинги
-    if action in ("add", "update") and embeddings is not None:
-        # Проверяем каждый эмбеддинг
-        for i, emb in enumerate(embeddings):
-            if emb is None or (isinstance(emb, list) and len(emb) == 0):
-                let_log(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}, документ: {documents[i] if documents and i < len(documents) else 'unknown'}")
-                let_log(f"[coll_exec] Ошибка: пустые эмбеддинги недопустимы для {action}")
-                return None
-    # 2. Для операций ПОИСКА (query) - проверяем query_embeddings
-    if action == "query":
-        if query_embeddings is None:
-            let_log("[coll_exec] ⚠ query_embeddings is None, возвращаем пустой результат")
-            return _empty_result(fetch)
-        # Проверяем каждый запрос в списке
-        all_empty = True
-        for qe in query_embeddings:
-            if qe is not None and isinstance(qe, list) and len(qe) > 0:
-                all_empty = False
-                break
-        if all_empty:
-            let_log("[coll_exec] ⚠ Все query_embeddings пустые, возвращаем пустой результат")
-            return _empty_result(fetch)
+    # ---- Глобальные настройки (с подстановкой значений по умолчанию) ----
+    global_vars = globals()
+    text_tokens_coefficient = global_vars.get('text_tokens_coefficient', 0.5)
+    chunk_size = global_vars.get('chunk_size', 1000)
+    emb_token_limit = global_vars.get('emb_token_limit', 8192)
+    enable_compression = global_vars.get('enable_compression', True)
+    compression_threshold = global_vars.get('compression_threshold', 1.0)
 
-    def _compress_doc_always(doc: str | bytes) -> str:
-        """
-        Всегда пытается сжать документ.
-        Возвращает: 
-          - 'z' + Base64(gzip(документ)) если итоговый размер МЕНЬШЕ
-          - 'n' + оригинальная строка если сжатие не выгодно
-        """
-        if doc is None: return None
+    # ---- Вспомогательные функции сжатия ----
+    def _compress_doc_always(doc):
+        """Всегда пытается сжать документ. Возвращает 'L' + base64(lzma(...)) или 'n' + оригинал."""
+        if doc is None:
+            return None
         if isinstance(doc, (bytes, bytearray)):
             raw_bytes = bytes(doc)
             original_str = doc.decode("utf-8") if hasattr(doc, 'decode') else str(doc)
         else:
             original_str = str(doc)
             raw_bytes = original_str.encode("utf-8")
+
         uncompressed_str = "n" + original_str
         uncompressed_size = len(uncompressed_str.encode("utf-8"))
+
         try:
-            buf = io.BytesIO()
-            with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9) as gz:
-                gz.write(raw_bytes)
-            compressed_bytes = buf.getvalue()
+            compressed_bytes = lzma.compress(raw_bytes, preset=9)
             compressed_b64 = base64.b64encode(compressed_bytes).decode("ascii")
-            compressed_str = "z" + compressed_b64
+            compressed_str = "L" + compressed_b64
             compressed_size = len(compressed_str.encode("utf-8"))
-            if compressed_size < uncompressed_size: return compressed_str
-            else: return uncompressed_str
-        except: return uncompressed_str
-    
-    def _decompress_doc_always(comp: str) -> str:
-        """
-        Распаковывает документ с защитой от ложного распознавания.
-        Определяет сжатие по первому символу: 'z'=сжато, 'n'=несжато.
-        """
-        if comp is None: return None
-        if not comp: return comp
+            if compressed_size < uncompressed_size:
+                return compressed_str
+            else:
+                return uncompressed_str
+        except Exception:
+            return uncompressed_str
+
+    def _decompress_doc_always(comp):
+        """Распаковывает документ: 'L' -> lzma, 'z' -> gzip (старый формат), 'n' -> вернуть как есть."""
+        if comp is None:
+            return None
+        if not comp:
+            return comp
         first_char = comp[0]
         content = comp[1:]
-        if first_char == 'z':
+        if first_char == 'L':
+            decoded_bytes = base64.b64decode(content)
+            decompressed_bytes = lzma.decompress(decoded_bytes)
+            return decompressed_bytes.decode("utf-8")
+        elif first_char == 'z':
+            # старый формат gzip
             decoded_bytes = base64.b64decode(content)
             buf = io.BytesIO(decoded_bytes)
-            with gzip.GzipFile(fileobj=buf, mode='rb') as gz: decompressed_bytes = gz.read()
+            with gzip.GzipFile(fileobj=buf, mode='rb') as gz:
+                decompressed_bytes = gz.read()
             return decompressed_bytes.decode("utf-8")
-        elif first_char == 'n': return content
-    
-    def _compress_documents_always(coll_name_local, documents_list):
-        """Всегда сжимает список документов с проверкой выгоды"""
-        if documents_list is None: return None
-        if coll_name_local not in ("milana_collection", "user_collection"): return documents_list
-        out = []
-        for idx, d in enumerate(documents_list):
-            if d is None:
-                out.append(None)
-                continue
-            compressed = _compress_doc_always(d)
-            out.append(compressed)
-        return out
-    
-    def _decompress_documents_always(coll_name_local, documents_list):
-        """Распаковывает список документов"""
-        if documents_list is None: return None
-        if coll_name_local not in ("milana_collection", "user_collection"): return documents_list
+        elif first_char == 'n':
+            return content
+        else:
+            return comp
+
+    def _compress_documents_always(coll_name, documents_list):
+        """Сжимает список документов для коллекций, для которых включено сжатие."""
+        if documents_list is None:
+            return None
+        if not enable_compression or coll_name not in ("milana_collection", "user_collection"):
+            return documents_list
         out = []
         for d in documents_list:
             if d is None:
                 out.append(None)
                 continue
-            decompressed = _decompress_doc_always(d)
-            out.append(decompressed)
+            out.append(_compress_doc_always(d))
         return out
-    
-    coll = globals().get(coll_name) or (client and client.get_collection(coll_name))
-    if coll is None and action != "delete_collection": raise NameError(f"Collection '{coll_name}' not found")
-    
+
+    def _decompress_documents_always(coll_name, documents_list):
+        """Распаковывает список документов."""
+        if documents_list is None:
+            return None
+        if not enable_compression or coll_name not in ("milana_collection", "user_collection"):
+            return documents_list
+        out = []
+        for d in documents_list:
+            if d is None:
+                out.append(None)
+                continue
+            out.append(_decompress_doc_always(d))
+        return out
+
+    # ---- Остальные вспомогательные функции ----
     def _make_where(d):
-        if not d: return None
+        """Преобразует словарь фильтров в формат ChromaDB where."""
+        if not d:
+            return None
         clauses = []
         for k, v in d.items():
-            if isinstance(v, list): clauses.append({k: {"$in": v}})
+            if isinstance(v, list):
+                clauses.append({k: {"$in": v}})
             elif isinstance(v, dict) and any(op in v for op in ["$gt", "$gte", "$lt", "$lte", "$ne", "$eq", "$in", "$nin"]):
                 clauses.append({k: v})
-            else: clauses.append({k: v})
-        return clauses[0] if len(clauses) == 1 else {"$and": clauses}
-    
-    def _extract(resp, include):
-        if len(include) > 1:
-            out = {}
-            for key in include:
-                data = resp.get(key, []) or []
-                if key == "documents":
-                    data = _decompress_documents_always(coll_name, data)
-                if flatten and isinstance(data, list) and data and isinstance(data[0], list):
-                    data = [i for sub in data for i in sub]
-                out[key] = data
-            return out
-        key = include[0]
-        data = resp.get(key, []) or []
-        if key == "documents": data = _decompress_documents_always(coll_name, data)
-        if first: return data[0] if data else None
-        if isinstance(data, list) and data and isinstance(data[0], list): return [i for sub in data for i in sub]
-        return data
-    
-    def _filter_relevance(resp, coeff: float):
-        if "distances" not in resp or resp["distances"] is None or not resp["distances"]: return resp
-        dists = resp["distances"][0]
-        if not dists: return resp
+            else:
+                clauses.append({k: v})
+        if len(clauses) == 1:
+            return clauses[0]
+        else:
+            return {"$and": clauses}
+
+    def _filter_relevance(resp, coeff=0.9):
+        """Фильтрует результаты по расстоянию: оставляет только те, чьё расстояние <= best * (1 + (1-coeff))."""
+        if "distances" not in resp or resp["distances"] is None or not resp["distances"]:
+            return resp
+        dists = resp["distances"][0] if isinstance(resp["distances"][0], list) else resp["distances"]
+        if not dists:
+            return resp
         best = min(dists)
         threshold = best * (1.0 + (1.0 - coeff))
         keep_idx = [i for i, d in enumerate(dists) if d <= threshold]
-        if not keep_idx: return {k: [] for k in resp}
+        if not keep_idx:
+            return {k: [] for k in resp}
         out = {}
         for k, v in resp.items():
             if isinstance(v, list) and v and isinstance(v[0], list):
                 out[k] = [[row[i] for i in keep_idx] for row in v]
-            elif isinstance(v, list): out[k] = [v[i] for i in keep_idx]
-            else: out[k] = v
+            elif isinstance(v, list):
+                out[k] = [v[i] for i in keep_idx]
+            else:
+                out[k] = v
         return out
-    
-    def _process_in_nin_operators(coll, filters, coll_name_local, get_results=True):
-        let_log(f"[{coll_name_local}] Запуск обхода (in/nin) для ID с фильтрами: {filters}")
+
+    def _process_in_nin_operators(coll, filters, coll_name, get_results=True):
+        """
+        Обрабатывает фильтры $in и $nin для поля vector_id.
+        Возвращает либо список ID (если get_results=False), либо результат coll.get.
+        """
+        print(f"[{coll_name}] Запуск обхода (in/nin) для ID с фильтрами: {filters}")
         nin_ids = set(filters.get('$nin', {}).get('vector_id', []))
         in_ids = set(filters.get('$in', {}).get('vector_id', []))
         base_where_filter = {
@@ -687,42 +635,130 @@ def coll_exec(action: str,
                 break
             all_ids.update(current_ids)
             offset += batch_size
-            if len(current_ids) < batch_size: break
-        let_log(f"[{coll_name_local}] Найдено {len(all_ids)} ID до фильтрации $in/$nin.")
+            if len(current_ids) < batch_size:
+                break
+        print(f"[{coll_name}] Найдено {len(all_ids)} ID до фильтрации $in/$nin.")
         final_ids = all_ids
-        if nin_ids: final_ids = final_ids - nin_ids
-        if in_ids: final_ids = final_ids.intersection(in_ids)
+        if nin_ids:
+            final_ids = final_ids - nin_ids
+        if in_ids:
+            final_ids = final_ids.intersection(in_ids)
         final_ids_list = list(final_ids)
-        let_log(f"[{coll_name_local}] Осталось {len(final_ids_list)} ID после фильтрации $in/$nin.")
-        if not get_results: return final_ids_list
+        print(f"[{coll_name}] Осталось {len(final_ids_list)} ID после фильтрации $in/$nin.")
+        if not get_results:
+            return final_ids_list
         if final_ids_list:
             return coll.get(
                 ids=final_ids_list,
                 include=['metadatas', 'documents', 'embeddings']
             )
         return {'ids': [], 'metadatas': [], 'documents': [], 'embeddings': []}
-    
-    try:
-        id_filters_present = (
-            filters and
-            (
-                (filters.get('$nin') and isinstance(filters.get('$nin'), dict) and 'vector_id' in filters['$nin']) or
-                (filters.get('$in') and isinstance(filters.get('$in'), dict) and 'vector_id' in filters['$in'])
-            )
+
+    # ---- Получение коллекции ----
+    coll = globals().get(coll_name)
+    if coll is None and client_override:
+        try:
+            coll = client_override.get_collection(coll_name)
+        except Exception:
+            pass
+    if coll is None and client:
+        try:
+            coll = client.get_collection(coll_name)
+        except Exception:
+            pass
+    if coll is None:
+        raise NameError(f"Collection '{coll_name}' not found")
+
+    # ---- Вспомогательная для пустого результата ----
+    def _empty_result(fetch):
+        include = fetch if isinstance(fetch, list) else [fetch]
+        if len(include) > 1:
+            out = {}
+            for key in include:
+                out[key] = [] if key != "distances" else [[]]
+            return out
+        else:
+            key = include[0]
+            if key == "ids": return []
+            elif key == "documents": return []
+            elif key == "metadatas": return []
+            elif key == "embeddings": return []
+            elif key == "distances": return [[]]
+            else: return None
+
+    # ---- Внутренняя _extract (исправленная) ----
+    def _extract(resp, include):
+        if len(include) > 1:
+            out = {}
+            for key in include:
+                data = resp.get(key, []) or []
+                if key == "documents":
+                    if isinstance(data, list) and data and isinstance(data[0], list):
+                        data = [_decompress_documents_always(coll_name, sub) for sub in data]
+                    else:
+                        data = _decompress_documents_always(coll_name, data)
+                if flatten and isinstance(data, list) and data and isinstance(data[0], list):
+                    data = [i for sub in data for i in sub]
+                out[key] = data
+            return out
+        else:
+            key = include[0]
+            data = resp.get(key, []) or []
+            if key == "documents":
+                if isinstance(data, list) and data and isinstance(data[0], list):
+                    data = [_decompress_documents_always(coll_name, sub) for sub in data]
+                else:
+                    data = _decompress_documents_always(coll_name, data)
+            if first:
+                if isinstance(data, list) and data and isinstance(data[0], list):
+                    return data[0][0] if data[0] else None
+                else:
+                    return data[0] if data else None
+            else:
+                if isinstance(data, list) and data and isinstance(data[0], list):
+                    return [i for sub in data for i in sub]
+                else:
+                    return data
+
+    # ---- Проверка пустых эмбеддингов для записи ----
+    if action in ("add", "update") and embeddings is not None:
+        for i, emb in enumerate(embeddings):
+            if emb is None or (isinstance(emb, list) and len(emb) == 0):
+                print(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}")
+                return None
+    if action == "query":
+        if query_embeddings is None:
+            return _empty_result(fetch)
+        all_empty = True
+        for qe in query_embeddings:
+            if qe and isinstance(qe, list) and len(qe) > 0:
+                all_empty = False
+                break
+        if all_empty:
+            return _empty_result(fetch)
+
+    # ---- Проверка на специальные фильтры $in/$nin для vector_id ----
+    id_filters_present = (
+        filters and
+        (
+            (filters.get('$nin') and isinstance(filters.get('$nin'), dict) and 'vector_id' in filters['$nin']) or
+            (filters.get('$in') and isinstance(filters.get('$in'), dict) and 'vector_id' in filters['$in'])
         )
-        if action in ("query", "get") and id_filters_present:
-            processed = _process_in_nin_operators(
-                coll, filters, coll_name, get_results=True
-            )
-            if isinstance(processed, dict) and 'ids' in processed:
-                resp = processed
-                include = fetch if isinstance(fetch, list) else [fetch]
-                if include == ["all"]:
-                    include = ["ids", "documents", "metadatas", "embeddings", "distances"]
-                if action == "query":
-                    resp = _filter_relevance(resp, relevance_coeff)
-                out = _extract(resp, include)
-                return out
+    )
+    if action in ("query", "get") and id_filters_present:
+        processed = _process_in_nin_operators(coll, filters, coll_name, get_results=True)
+        if isinstance(processed, dict) and 'ids' in processed:
+            resp = processed
+            include = fetch if isinstance(fetch, list) else [fetch]
+            if include == ["all"]:
+                include = ["ids", "documents", "metadatas", "embeddings", "distances"]
+            if action == "query":
+                resp = _filter_relevance(resp, relevance_coeff)
+            out = _extract(resp, include)
+            return out
+
+    # ---- Основные действия ----
+    try:
         if action == "add":
             docs_to_send = _compress_documents_always(coll_name, documents)
             out = coll.add(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
@@ -741,12 +777,15 @@ def coll_exec(action: str,
             out = coll.modify(name=new_name, metadata=new_meta)
             return out
         if action == "delete_collection":
-            if client is None: raise ValueError("client required for delete_collection")
-            out = client.delete_collection(coll_name)
+            if client is None and client_override is None:
+                raise ValueError("client required for delete_collection")
+            cl = client_override or client
+            out = cl.delete_collection(coll_name)
             return out
         if action in ("query", "get"):
             include = fetch if isinstance(fetch, list) else [fetch]
-            if include == ["all"]: include = ["ids", "documents", "metadatas", "embeddings", "distances"]
+            if include == ["all"]:
+                include = ["ids", "documents", "metadatas", "embeddings", "distances"]
             params = {}
             if action == "query":
                 params.update({
@@ -754,26 +793,29 @@ def coll_exec(action: str,
                     "where": _make_where(filters),
                     "n_results": n_results
                 })
-                if doc_contains: params["where_document"] = {"$contains": doc_contains}
-            else:
+                if doc_contains:
+                    params["where_document"] = {"$contains": doc_contains}
+            else:  # get
                 params.update({
                     "where": _make_where(filters),
                     "limit": limit,
                     "offset": offset
                 })
-                if doc_contains: params["where_document"] = {"$contains": doc_contains}
+                if doc_contains:
+                    params["where_document"] = {"$contains": doc_contains}
             params["include"] = include
             params.update(kwargs)
             resp = (coll.query if action == "query" else coll.get)(**params)
             if not resp.get("ids") or not any(resp["ids"]):
                 out = _extract(resp, include)
                 return out
-            if action == "query": resp = _filter_relevance(resp, relevance_coeff)
+            if action == "query":
+                resp = _filter_relevance(resp, relevance_coeff)
             out = _extract(resp, include)
             return out
-        raise ValueError(f"[coll_exec] Unsupported action: {action}")
+        raise ValueError(f"Unsupported action: {action}")
     except Exception as e:
-        let_log(f"[coll_exec] Ошибка ({action}): {e}")
+        print(f"[coll_exec] Ошибка ({action}): {e}")
         return None
 
 def load_chat_settings(chat_id):
@@ -1050,88 +1092,51 @@ def system_tools_loader():
     )
 
 @cacher
-def get_embs(text: str):  # TODO: протестировать
-    # 1) кеширование
-    start = time.time()
-    # Удаляем начальные/конечные пробелы
-    text = text.strip()
-    if not text:
-        let_log("Текст пустой, возврат пустого эмбеддинга.")
+def get_embs(text):
+    """
+    Получает эмбеддинг текста через провайдера.
+    Если текст не помещается в лимит токенов, последовательно уменьшает его пополам,
+    пока не останется 1 символ. Если после этого ошибка переполнения повторяется,
+    исключение пробрасывается выше.
+    """
+    if not text or not text.strip():
         return []
-    # 2) начальное деление на части с учётом лимита
-    pieces = []
-    estimated_tokens = len(text) * text_tokens_coefficient
-    if estimated_tokens <= emb_token_limit: pieces = [text]
-    else:
-        # Сразу делим на нужное количество частей (с запасом 10%)
-        needed_parts = max(2, int(estimated_tokens / emb_token_limit * 1.10) + 1)
-        let_log(f'Исходное разделение текста на {needed_parts} частей')
-        text_len = len(text)
-        part_len = text_len // needed_parts
-        for i in range(needed_parts):
-            start_idx = i * part_len
-            end_idx = (i + 1) * part_len if i < needed_parts - 1 else text_len
-            pieces.append(text[start_idx:end_idx])
-    # 3) обработка каждой части
-    processed_pieces = []
-    processed_embs = []
-    for piece in pieces:
-        piece = piece.strip()
-        if not piece: continue
-        current_piece = piece
-        while True:
+    
+    current_text = text
+    while True:
+        # Оценка количества токенов
+        estimated_tokens = len(current_text) * text_tokens_coefficient
+        if estimated_tokens <= emb_token_limit:
             try:
-                # Проверяем не превышает ли текущий кусок лимит
-                piece_tokens = len(current_piece) * text_tokens_coefficient
-                if piece_tokens > emb_token_limit:
-                    # Делим пополам при переполнении
-                    half_len = len(current_piece) // 2
+                return get_provider_embs(current_text)
+            except Exception as e:
+                # Если ошибка связана с переполнением контекста
+                if 'ContextOverflowError' in str(e):
+                    half_len = len(current_text) // 2
                     if half_len == 0:
-                        let_log("Не удалось разделить текст дальше, часть пропущена")
-                        break
-                    let_log(f'Разделение части пополам: {len(current_piece)} символов')
-                    pieces.append(current_piece[half_len:])
-                    current_piece = current_piece[:half_len]
+                        # Уже остался 1 символ — пробрасываем ошибку
+                        raise
+                    current_text = current_text[:half_len]
                     continue
-                # Получаем эмбеддинг для текущей части
-                try: embs = get_provider_embs(current_piece)
+                else:
+                    # Другие ошибки — логируем и возвращаем пустой список
+                    print(f"[get_embs] Ошибка: {e}")
+                    return []
+        else:
+            # Не помещается — уменьшаем пополам
+            half_len = len(current_text) // 2
+            if half_len == 0:
+                # Уже остался 1 символ, но оценка всё ещё превышает лимит? 
+                # Это маловероятно, но на всякий случай пробуем отправить 1 символ
+                try:
+                    return get_provider_embs(current_text)
                 except Exception as e:
-                    if 'ContextOverflowError' in str(e): raise RuntimeError('ContextOverflowError')
-                    let_log(e)
-                    send_ui_no_cache(f'{error_in_provider}\n{e}')
-                    # Повтор при ошибке провайдера (не переполнение)
-                    while True:
-                        time.sleep(60)
-                        try:
-                            embs = get_provider_embs(current_piece)
-                            send_ui_no_cache(success_in_provider)
-                            break
-                        except Exception as retry_e:
-                            if 'ContextOverflowError' in str(retry_e): raise RuntimeError('ContextOverflowError')
-                return embs
-                processed_pieces.append(current_piece)
-                processed_embs.extend(embs)  # Разворачиваем вложенные списки
-                break
-            except RuntimeError as e:
-                if 'ContextOverflowError' not in str(e): raise
-                # Делим проблемную часть пополам
-                half_len = len(current_piece) // 2
-                if half_len == 0:
-                    let_log("Не удалось разделить текст дальше, часть пропущена")
-                    break
-                let_log(f'Разделение проблемной части пополам: {len(current_piece)} символов')
-                pieces.append(current_piece[half_len:])
-                current_piece = current_piece[:half_len]
-    # 4) усреднение эмбеддингов
-    if not processed_embs: flat_embs = []
-    elif len(processed_embs) == 1: flat_embs = processed_embs[0]
-    else:
-        let_log(f'Усреднение {len(processed_embs)} эмбеддингов')
-        embs_array = np.array(processed_embs)
-        flat_embs = np.mean(embs_array, axis=0).tolist()
-    elapsed = time.time() - start
-    let_log(f'Получение эмбеддингов выполнено за {elapsed:.2f} секунд')
-    return flat_embs
+                    if 'ContextOverflowError' in str(e):
+                        raise
+                    else:
+                        print(f"[get_embs] Ошибка: {e}")
+                        return []
+            current_text = current_text[:half_len]
 
 def get_token_limit(): return token_limit
 
@@ -1504,8 +1509,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                             # удаляем маркер из текста предыдущего сообщения
                             prev_msg_target = result[-1] if result else base_messages[prev_index]
                             prev_txt = prev_msg_target.get("content", "")
-                            # Используем extract_command_markers для поиска маркеров
-                            markers = extract_command_markers(prev_txt, now_commands)
+                            markers = _find_command_markers(prev_txt, now_commands, return_all=True, start_limit=None)
                             if markers:
                                 # Находим маркер с нужным ключом
                                 for marker in markers:
@@ -1517,7 +1521,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                                         else: base_messages[prev_index]["content"] = new_prev_txt
                                         break
                             else:
-                                # Fallback: если не нашли маркер через extract_command_markers
+                                # Fallback: если не нашли маркер
                                 marker_token = "!!!" + found_key + "!!!"
                                 if marker_token in prev_txt:
                                     new_prev_txt = prev_txt.replace(marker_token, "", 1).strip()
@@ -1555,9 +1559,9 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                         "arguments": args_str
                     }
                 }
-                # удаляем маркер из текста с помощью extract_command_markers
+                # удаляем маркер из текста
                 cleaned_content = content
-                markers = extract_command_markers(content, now_commands)
+                markers = _find_command_markers(content, now_commands, return_all=True, start_limit=None)
                 if markers:
                     for marker in markers:
                         if marker['key'] == found_key:
@@ -1781,9 +1785,8 @@ def remove_commands_roles(cleaned_text): # TODO: перепроверь рабо
                 # Нашли содержимое - удаляем всё начиная с этой позиции
                 cleaned_text = cleaned_text[:start_pos]
                 break # Прерываем после первого найденного
-    # Теперь ищем маркеры команд с помощью extract_command_markers
-    # Для этого нам нужен словарь команд - используем пустой словарь
-    markers = extract_command_markers(cleaned_text, {})
+    # Теперь ищем маркеры команд
+    markers = _find_command_markers(cleaned_text, global_state.tools_commands_dict.get(sid, {}), return_all=True, start_limit=None)
     # Если найдено более одного маркера, обрезаем текст перед вторым маркером
     if len(markers) >= 2:
         second_marker_start = markers[1]['start']

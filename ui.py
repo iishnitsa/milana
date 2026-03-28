@@ -1728,7 +1728,7 @@ class LogWindow(BaseTopLevel):
         self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.messages_frame.grid_columnconfigure(0, weight=1)
 
-        self.log_message_widgets = []  # храним пузыри для удаления старых
+        self.log_message_widgets = []  # храним пузыри для управления лимитом
         self.check_log_queue()
 
     def setup_and_center(self):
@@ -1739,34 +1739,51 @@ class LogWindow(BaseTopLevel):
         center_window(self)
 
     def add_log_message_to_ui(self, text):
-        """Добавляет сообщение лога, оформленное как в чате."""
+        """Добавляет сообщение лога, оформленное как в чате.
+        Если достигнут лимит сообщений, полностью очищает окно и показывает только новое."""
         try:
-            # создаём пузырь как у сообщений ассистента (is_my=False)
-            bubble, msg_text = create_chat_message_bubble(
-                self.messages_frame, text, is_my=False, is_question=False
-            )
-            # настраиваем автоматический перенос строк
-            setup_message_wraplength(msg_text, self.messages_frame)
+            # Если достигнут лимит сообщений, очищаем всё и показываем только новое сообщение
+            if len(self.log_message_widgets) >= self.MAX_LOG_MESSAGES:
+                # Удаляем все виджеты из messages_frame
+                for widget in self.messages_frame.winfo_children():
+                    widget.destroy()
+                # Очищаем список хранения
+                self.log_message_widgets.clear()
+                # Создаём пузырь для нового сообщения (оно будет единственным)
+                bubble, msg_text = create_chat_message_bubble(
+                    self.messages_frame, text, is_my=False, is_question=False
+                )
+                setup_message_wraplength(msg_text, self.messages_frame)
+                self.log_message_widgets.append(bubble)
+                # Настройка контекстного меню для копирования
+                def copy_text():
+                    self.master.clipboard_clear()
+                    self.master.clipboard_append(text)
+                menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE)
+                menu.add_command(label=Lang.get("copy"), command=copy_text)
+                msg_text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+                if sys.platform == "darwin":
+                    msg_text.bind("<Button-2>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+            else:
+                # Стандартное добавление
+                bubble, msg_text = create_chat_message_bubble(
+                    self.messages_frame, text, is_my=False, is_question=False
+                )
+                setup_message_wraplength(msg_text, self.messages_frame)
 
-            # контекстное меню для копирования
-            def copy_text():
-                self.master.clipboard_clear()
-                self.master.clipboard_append(text)
+                def copy_text():
+                    self.master.clipboard_clear()
+                    self.master.clipboard_append(text)
 
-            menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE)
-            menu.add_command(label=Lang.get("copy"), command=copy_text)
-            msg_text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
-            if sys.platform == "darwin":
-                msg_text.bind("<Button-2>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+                menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE)
+                menu.add_command(label=Lang.get("copy"), command=copy_text)
+                msg_text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+                if sys.platform == "darwin":
+                    msg_text.bind("<Button-2>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
-            self.log_message_widgets.append(bubble)
+                self.log_message_widgets.append(bubble)
 
-            # ограничение количества сообщений
-            if len(self.log_message_widgets) > self.MAX_LOG_MESSAGES:
-                oldest = self.log_message_widgets.pop(0)
-                oldest.destroy()
-
-            # обновляем scrollregion и прокручиваем вниз
+            # Обновляем scrollregion и прокручиваем вниз
             self.messages_frame.update_idletasks()
             canvas = self.messages_frame._parent_canvas
             canvas.configure(scrollregion=canvas.bbox("all"))

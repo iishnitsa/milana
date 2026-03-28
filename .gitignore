@@ -8,7 +8,6 @@ build/
 dist/
 *.egg-info/
 /mvenv/
-/.continue/
 
 # Мои проектные папки
 /data/chats/*

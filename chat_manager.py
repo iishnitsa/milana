@@ -116,33 +116,26 @@ def _rag_update_history(chat_id: int, message_text: str, role: str):
     # (Мы считаем, что векторизация будет успешной)
     sql_exec(
         "INSERT INTO rag_messages (chat_id, role, full_text, is_vectorized, vector_id, relevance_score) VALUES (?, ?, ?, ?, ?, ?)",
-        (str_chat_id, role, message_text, True, vector_id, 0) # relevance_score по умолчанию 0
-    )
+        (str_chat_id, role, message_text, True, vector_id, 0))
     # 2. Векторизуем и добавляем в ChromaDB
     try:
         embedding = get_embs(message_text)
         coll_exec(
             action="add", coll_name="rag_collection",
             ids=[vector_id],
-            documents=[message_text],
             metadatas=[{'chat_id': str_chat_id, 'role': role, 'relevance_score': 0}],
-            embeddings=[embedding]
-        )
+            embeddings=[embedding])
         let_log(f"Сообщение {vector_id} сразу векторизовано и добавлено в RAG.")
     except Exception as e:
         let_log(f"##### ОШИБКА: Не удалось векторизовать сообщение {vector_id} при сохранении: {e} #####")
         # Откатываем флаг в SQL, если векторизация не удалась
-        sql_exec(
-            "UPDATE rag_messages SET is_vectorized = FALSE WHERE vector_id = ?",
-            (vector_id,)
-        )
+        sql_exec("UPDATE rag_messages SET is_vectorized = FALSE WHERE vector_id = ?", (vector_id,))
 
 def _rag_delete_chat(chat_id: int):
     """Удаляет все данные, связанные с чатом, из всех таблиц RAG."""
     let_log(f"Deleting RAG chat and all related data: {chat_id}")
     str_chat_id = str(chat_id)
     sql_exec("DELETE FROM rag_messages WHERE chat_id = ?", (str_chat_id,))
-    sql_exec("DELETE FROM summaries WHERE chat_id = ?", (str_chat_id,))
     # Удаляем и запись с системным промптом
     _standard_delete_chat(chat_id)
     coll_exec(action="delete", coll_name="rag_collection", filters={'chat_id': str_chat_id})

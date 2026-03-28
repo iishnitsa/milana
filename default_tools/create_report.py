@@ -7,17 +7,21 @@ Recommended if you want to record detailed results — for now, you'll find them
 
 import os
 from datetime import datetime
-from cross_gpt import chat_path
-base_dir = os.path.join(chat_path, "reports")
+from cross_gpt import chat_path, send_ui_no_cache
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = ('confirmation_text',)
+        main.attr_names = ('confirmation_text', 'report_created_text')
         main.confirmation_text = 'Report saved'
+        main.report_created_text = 'Report created: '
         return
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
-    path = os.path.join(base_dir, filename)
+    path = os.path.join(chat_path, "reports", filename)
     try:
-        with open(path, 'w', encoding='utf-8') as f: f.write(text.strip())
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text.strip())
+        send_ui_no_cache(main.report_created_text + filename, attach=[path])
+        return ""
+    except Exception as e:
+        print(f"Error: {e}")
         return main.confirmation_text
-    except Exception as e: print(f"Error: {e}"); return main.confirmation_text
