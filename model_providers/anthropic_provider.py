@@ -87,11 +87,6 @@ def ask_model(generation_params: Dict[str, Any]) -> str:
         raise RuntimeError(f"Ошибка генерации: {str(e)}")
 
 def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Чат-метод для Anthropic.
-    Ожидает словарь с ключом 'messages' (список словарей с полями role и content).
-    Возвращает полный ответ в формате, аналогичном OpenAI.
-    """
     global client, token_limit
     if client is None:
         raise RuntimeError("Клиент Anthropic не инициализирован")
@@ -100,31 +95,23 @@ def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
         if not messages:
             raise ValueError("Нет сообщений для чата")
         
-        # Проверка лимита контекста (суммарно)
-        full_text = json.dumps(messages)
-        if not client.is_within_token_limit(full_text, token_limit):
+        # --- ИСПРАВЛЕННАЯ ПРОВЕРКА ---
+        # Суммируем токены всех сообщений
+        total_tokens = 0
+        for msg in messages:
+            total_tokens += client.count_tokens(msg.get("content", ""))
+        if total_tokens >= token_limit:
             raise RuntimeError("ContextOverflowError")
         
-        # Вызов внутреннего метода chat (возвращает строку ответа)
         response_text = client.chat(messages, generation_params)
         
-        # Формируем ответ, совместимый с ожиданиями основного приложения
         return {
             "id": f"chatcmpl-{client.chat_model}",
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": response_text
-                    },
-                    "finish_reason": "stop",
-                    "index": 0
-                }
-            ],
+            "choices": [{"message": {"role": "assistant", "content": response_text}, "finish_reason": "stop", "index": 0}],
             "usage": {
-                "prompt_tokens": client.count_tokens(full_text),
+                "prompt_tokens": total_tokens,
                 "completion_tokens": client.count_tokens(response_text),
-                "total_tokens": client.count_tokens(full_text) + client.count_tokens(response_text)
+                "total_tokens": total_tokens + client.count_tokens(response_text)
             },
             "model": client.chat_model
         }

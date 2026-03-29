@@ -1,6 +1,6 @@
 '''
 end_dialogue
-gets the final result and ends the dialog
+gets the final result and ends the dialogue
 '''
 
 import time

@@ -92,7 +92,7 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
     token_threshold - примерный лимит токенов на один чанк для суммаризации.
     Сохраняет сводку в сообщении с максимальным id из списка messages.
     """
-    from cross_gpt import prompt_chunk_summary, prompt_global_summary, prompt_recent_summary
+    from cross_gpt import prompt_chunk_summary, prompt_global_summary, prompt_recent_summary, no_markdown_instruction
     let_log1(f"##### [{chat_id}] Создание иерархической '{summary_type}' сводки на основе {len(messages)} сообщений #####")
     let_log1(f"Обработка {len(messages)} сообщений с порогом токенов: {token_threshold}")
     if not messages: 
@@ -118,7 +118,7 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
         chunk_text = "\n".join([f"{msg['role']}{msg['full_text']}" for msg in chunk])
         let_log1(f"##### Суммаризация чанка {i+1}/{len(chunks)} #####")
         let_log1(f"Текст чанка: {chunk_text}...")
-        chunk_summary = ask_model(chunk_text, system_prompt=prompt_chunk_summary).strip()
+        chunk_summary = ask_model(chunk_text, system_prompt=prompt_chunk_summary + '\n' + no_markdown_instruction).strip()
         if chunk_summary:
             chunk_summaries.append(chunk_summary)
             let_log1(f"Сводка чанка: {chunk_summary}")
@@ -132,7 +132,7 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
     let_log1("##### Создание финальной сводки #####")
     let_log1(f"Сводки чанков: {summaries_text}")
     let_log1(f"Финальный промпт: {final_prompt}\n- {summaries_text}")
-    final_summary = ask_model(f"\n- {summaries_text}", system_prompt=final_prompt).strip()
+    final_summary = ask_model(f"\n- {summaries_text}", system_prompt=final_prompt + '\n' + no_markdown_instruction).strip()
     if final_summary:
         max_id = max(msg['id'] for msg in messages)
         set_summary(chat_id, summary_type, max_id, final_summary)

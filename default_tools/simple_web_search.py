@@ -1,4 +1,3 @@
-# simple_web_search.py
 '''
 search_web
 send 1 search query after the command; returns summaries of several websites
@@ -534,7 +533,7 @@ def main(text):
     # Объединяем все сырые тексты в одну строку
     combined_raw = "\n\n".join(raw for _, raw in sites_data)
     # Сжимаем объединённый текст (text_cutter вызывается вне pages_handler)
-    summarized = text_cutter(combined_raw)
+    summarized = text_cutter(text_cutter(combined_raw))
 
     # Формируем список ссылок
     links = [url for url, _ in sites_data]

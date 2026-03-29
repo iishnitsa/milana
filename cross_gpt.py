@@ -236,27 +236,23 @@ sys.path.append(os.path.join(folder_path, 'system_tools', 'ivan'))
 def let_log(t):
     #return
     t = str(t)
-    if is_print_log: print(t)
-    if is_save_log:
-        conn = connect(cache_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cache (
-                id INTEGER PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        conn.commit()
-        cursor.execute('SELECT MAX(id) FROM cache')
-        row = cursor.fetchone()
-        max_id = row[0] if row and row[0] is not None else -1
-        conn.close()
-        if max_id <= cache_counter:# and False:
-            log_file = os.path.join(chat_path, 'log.txt')
-            with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{t}\n')
-def let_log1(t):
-    t = str(t)
-    if is_print_log: print(t)
+    # Получаем информацию о вызывающем коде
+    stack = traceback.extract_stack()
+    # stack[-1] - текущая функция let_log, stack[-2] - место вызова let_log
+    # нам нужен стек на один уровень выше (кто вызвал let_log)
+    if len(stack) >= 2:
+        caller = stack[-2]
+        filename = caller.filename.split('/')[-1]  # только имя файла
+        lineno = caller.lineno
+        funcname = caller.name
+        caller_info = f"[{filename}:{lineno} {funcname}]"
+    else:
+        caller_info = "[unknown]"
+    
+    full_message = f"{caller_info} {t}"
+    
+    if is_print_log:
+        print(full_message)
     if is_save_log:
         conn = connect(cache_path)
         cursor = conn.cursor()
@@ -273,7 +269,46 @@ def let_log1(t):
         conn.close()
         if max_id <= cache_counter:
             log_file = os.path.join(chat_path, 'log.txt')
-            with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{t}\n')
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f'{full_message}\n')
+
+def let_log1(t):
+    t = str(t)
+    # Получаем информацию о вызывающем коде
+    stack = traceback.extract_stack()
+    # stack[-1] - текущая функция let_log, stack[-2] - место вызова let_log
+    # нам нужен стек на один уровень выше (кто вызвал let_log)
+    if len(stack) >= 2:
+        caller = stack[-2]
+        filename = caller.filename.split('/')[-1]  # только имя файла
+        lineno = caller.lineno
+        funcname = caller.name
+        caller_info = f"[{filename}:{lineno} {funcname}]"
+    else:
+        caller_info = "[unknown]"
+    
+    full_message = f"{caller_info} {t}"
+    
+    if is_print_log:
+        print(full_message)
+    if is_save_log:
+        conn = connect(cache_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cache (
+                id INTEGER PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        conn.commit()
+        cursor.execute('SELECT MAX(id) FROM cache')
+        row = cursor.fetchone()
+        max_id = row[0] if row and row[0] is not None else -1
+        conn.close()
+        if max_id <= cache_counter:
+            log_file = os.path.join(chat_path, 'log.txt')
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f'{full_message}\n')
 
 def traceprint(*args, **kwargs):
     stack = traceback.extract_stack()
@@ -1838,7 +1873,7 @@ def text_cutter(text, cut_message=False):
         try:
             # Пытаемся суммировать текущий кусок
             if cut_message: summarized_part = ask_model(current_chunk, system_prompt=cut_message_prompt)
-            else: summarized_part = ask_model(current_chunk, system_prompt=summarize_prompt)
+            else: summarized_part = ask_model(current_chunk, system_prompt=summarize_prompt + '\n' + no_markdown_instruction)
             summarized_chunks.append(summarized_part)
             traceprint()
         except RuntimeError as e:
@@ -2436,9 +2471,9 @@ def gigo(base_task):
     ents_roles = ', '.join(roles) + '\n'
     role_notes = [gigo_dreamer_note, gigo_realist_note, gigo_critic_note]
     for role, role_note in zip(roles, role_notes):
-        try: minds.append(ask_model(base_task + additional_info, system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2))
+        try: minds.append(ask_model(base_task + additional_info, system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
         except RuntimeError as e:
-            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2))
+            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
             else: raise
     for role, mind in zip(roles, minds):
         minds_text += worker_role_text + mind

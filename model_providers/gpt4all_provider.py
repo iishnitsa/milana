@@ -52,15 +52,30 @@ def normalize_model(model):
 def find_context_size(model_data, base_url, headers):
     """
     Автоматическое определение лимита контекста для модели Ollama.
+    Использует данные из ответа /api/show (model_data).
     """
-    try:
-        config_url = f"{base_url}/api/config"
-        config_resp = requests.get(config_url, headers=headers, timeout=30)
-        if config_resp.status_code == 200:
-            server_config = config_resp.json()
-            server_limit = server_config.get('max_context_length')
-            if server_limit is not None: return int(server_limit)
-    except Exception: pass
+    print('получение контекста')
+    # Поиск в model_info (наиболее надёжное место)
+    model_info = model_data.get('model_info', {})
+    for key, value in model_info.items():
+        if 'context_length' in key.lower() and isinstance(value, (int, float)):
+            return int(value)
+    
+    # Поиск в parameters (например, "num_ctx 4096" или "num_ctx=4096")
+    parameters = model_data.get('parameters', '')
+    if parameters:
+        match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', parameters, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    
+    # Поиск в model_file
+    model_file = model_data.get('model_file', '')
+    if model_file:
+        match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', model_file, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    
+    # Обход по путям (оставляем как fallback)
     possible_paths = [
         ['parameters', 'num_ctx'],
         ['parameters', 'context_length'],
@@ -75,20 +90,21 @@ def find_context_size(model_data, base_url, headers):
     for path in possible_paths:
         try:
             value = model_data
-            for key in path: value = value[key]
-            if isinstance(value, (int, float)): return int(value)
-        except (KeyError, TypeError): continue
-    if isinstance(model_data.get('parameters'), str):
-        param_str = model_data['parameters']
-        for line in param_str.split('\n'):
-            if any(kw in line.lower() for kw in ['num_ctx', 'context', 'n_ctx', 'max_tokens']):
-                numbers = re.findall(r'\b\d{3,5}\b', line)
-                if numbers: return int(numbers[-1])
+            for key in path:
+                value = value[key]
+            if isinstance(value, (int, float)):
+                return int(value)
+        except (KeyError, TypeError):
+            continue
+    
+    # Fallback: ищем известные размеры в JSON
     context_sizes = [2048, 4096, 8192, 16384, 32768, 65536, 128000, 200000]
     model_text = json.dumps(model_data)
     found_sizes = sorted([int(num) for num in re.findall(r'\b\d{4,6}\b', model_text)
                           if int(num) in context_sizes], reverse=True)
-    if found_sizes: return found_sizes[0]
+    if found_sizes:
+        return found_sizes[0]
+    
     return 4095
 
 def connect(connection_string, timeout=30):

@@ -58,6 +58,21 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
         ollama_emb_model=params['ollama_emb_model']
     )
 
+    if params['chat']:
+        try:
+            api_url = f"https://huggingface.co/api/models/{params['chat']}"
+            resp = requests.get(api_url, timeout=req_timeout)
+            if resp.status_code == 200:
+                model_info = resp.json()
+                # Ищем context length в разных полях
+                config = model_info.get('config', {})
+                token_limit = config.get('max_position_embeddings', 32768)
+            else:
+                token_limit = 32768
+        except Exception as e:
+            let_log(f"Не удалось получить контекст модели HF: {e}")
+            token_limit = 32768
+    
     return True, token_limit, tags
 
 def disconnect() -> bool:

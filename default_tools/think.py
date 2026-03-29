@@ -5,7 +5,7 @@ Think
 The module simply does not send the message to the interlocutor and does not break the agent's cycle. Experimental
 '''
 
-import cross_gpt  # чтобы система посчитала функцию системной
+import cross_gpt # чтобы система посчитала функцию системной
 
 def main(text):
     if not hasattr(main, 'attr_names'):

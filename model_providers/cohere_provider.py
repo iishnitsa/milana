@@ -52,6 +52,22 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
         ollama_url=params['ollama_url'],
         ollama_emb_model=params['ollama_emb_model']
     )
+    try:
+        # Используем OpenAI-совместимый эндпоинт для списка моделей
+        url = f"{client.base_url}/models"
+        resp = requests.get(url, headers=client.headers, timeout=req_timeout)
+        if resp.status_code == 200:
+            models_data = resp.json()
+            for model in models_data.get("data", []):
+                if model["id"] == client.chat_model:
+                    # В ответе OpenAI-совместимого API нет context_length, 
+                    # но Cohere может отдавать его в поле "context_length"
+                    token_limit = model.get("context_length", 256000)
+                    break
+    except Exception as e:
+        let_log(f"Не удалось получить контекст модели: {e}")
+        # Fallback на значение по умолчанию
+        token_limit = 256000
 
     return True, token_limit, tags
 

@@ -15,8 +15,6 @@ from cross_gpt import (
     let_log,
     found_info_1,
     parse_prompt_response,
-    language,
-    load_locale,
 )
 
 def _extract_first_digit(text, default):

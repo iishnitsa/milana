@@ -1384,24 +1384,43 @@ class ChatApp(CTk):
         self.check_chat_responses(chat_id)
         self.update_chat_controls()
     def check_chat_responses(self, chat_id):
-        if chat_id not in self.output_queues: return
+        if chat_id not in self.output_queues:
+            return
         try:
             while True:
                 response = self.output_queues[chat_id].get_nowait()
-                is_question = isinstance(response, dict) and response.get('command') == 'ask_user'
-                message_text = response.get('text', '') if isinstance(response, dict) else str(response)
-                if not message_text: continue
-                if is_question: self.waiting_for_answer[chat_id] = True
-                self.backend.add_message(chat_id, message_text, False)
-                if chat_id == self.current_chat_id: self.add_message_to_ui(message_text, False, is_question=is_question)
-                else: self.chat_blink_states[chat_id] = True
-                if not self.focus_get(): self.flash_window()
-        except queue.Empty: pass
-        if chat_id in self.chat_processes and self.chat_processes[chat_id].is_alive(): self.after(500, lambda c=chat_id: self.check_chat_responses(c))
+                # Извлекаем текст и вложения
+                if isinstance(response, dict):
+                    message_text = response.get('text', '')
+                    attachments = response.get('attachments')
+                    is_question = response.get('command') == 'ask_user'
+                else:
+                    message_text = str(response)
+                    attachments = None
+                    is_question = False
+
+                if not message_text:
+                    continue
+
+                # Сохраняем в БД с вложениями
+                self.backend.add_message(chat_id, message_text, False, attachments)
+
+                if chat_id == self.current_chat_id:
+                    self.add_message_to_ui(message_text, False, is_question=is_question, attachments=attachments)
+                else:
+                    self.chat_blink_states[chat_id] = True
+
+                if not self.focus_get():
+                    self.flash_window()
+        except queue.Empty:
+            pass
+        if chat_id in self.chat_processes and self.chat_processes[chat_id].is_alive():
+            self.after(500, lambda c=chat_id: self.check_chat_responses(c))
         else:
-             if chat_id in self.active_chats:
+            if chat_id in self.active_chats:
                 self._cleanup_chat_process_data(chat_id)
-                if chat_id == self.current_chat_id: self.update_chat_controls()
+                if chat_id == self.current_chat_id:
+                    self.update_chat_controls()
     def create_chat_window_show(self):
         if self.create_chat_window and self.create_chat_window.winfo_exists():
             self.create_chat_window.destroy()
@@ -1703,7 +1722,7 @@ class SettingsWindow(BaseSettingsWindow):
         except ValueError as e: showerror(self, Lang.get("error"), str(e))
 
 class LogWindow(BaseTopLevel):
-    MAX_LOG_MESSAGES = 50  # лимит отображаемых сообщений
+    MAX_LOG_MESSAGES = 10  # лимит отображаемых сообщений
 
     def __init__(self, master, chat_id, log_queue):
         super().__init__(master, fg_color=DARK_BG)
