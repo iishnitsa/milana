@@ -1,4 +1,4 @@
-from cross_gpt import sql_exec, coll_exec, ask_model, get_embs, get_token_limit, get_text_tokens_coefficient, let_log1, text_cutter, global_state
+from cross_gpt import sql_exec, coll_exec, ask_model, get_embs, get_token_limit, get_text_tokens_coefficient, let_log, text_cutter, global_state
 import re
 
 ENABLE_ON_THE_FLY_COMPRESSION = False
@@ -16,7 +16,7 @@ recent_summary_tokens_percent = 2 # 200%
 
 def initialize_rag_database():
     """Создает все необходимые таблицы в SQLite, если они не существуют."""
-    let_log1("##### Инициализация таблиц базы данных RAG... #####")
+    let_log("##### Инициализация таблиц базы данных RAG... #####")
     sql_exec('''
         CREATE TABLE IF NOT EXISTS rag_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,7 +31,7 @@ def initialize_rag_database():
             recent_summary TEXT DEFAULT NULL    -- Сводка последней темы (хранится в сообщении с максимальным ID, охваченным сводкой)
         );
     ''')
-    let_log1("##### Таблицы базы данных RAG готовы. #####\n")
+    let_log("##### Таблицы базы данных RAG готовы. #####\n")
 
 def get_history(chat_id: str) -> list[dict]:
     """
@@ -41,7 +41,7 @@ def get_history(chat_id: str) -> list[dict]:
     query = "SELECT id, role, full_text, is_vectorized, relevance_score, vector_id, is_compressed, chat_id FROM rag_messages WHERE chat_id = ? ORDER BY id ASC"
     rows = sql_exec(query, (chat_id,), fetchall=True)
     if not rows: 
-        let_log1(f"История не найдена для чата {chat_id}")
+        let_log(f"История не найдена для чата {chat_id}")
         return []
     history = [{
         'id': r[0], 
@@ -53,17 +53,17 @@ def get_history(chat_id: str) -> list[dict]:
         'is_compressed': r[6],
         'chat_id': r[7]
     } for r in rows]
-    let_log1(f"Получена история для чата {chat_id}: {len(history)} сообщений")
+    let_log(f"Получена история для чата {chat_id}: {len(history)} сообщений")
     return history
 
 def is_context_overflow(context_text: str) -> bool:
     estimated_tokens = len(context_text) * get_text_tokens_coefficient()
     token_limit = get_token_limit()
     overflow = estimated_tokens > (token_limit - 2000) # TODO:
-    let_log1(f"##### Проверка переполнения контекста #####")
-    let_log1(f"Примерное количество токенов: {estimated_tokens}")
-    let_log1(f"Лимит токенов: {token_limit}")
-    let_log1(f"Переполнение: {overflow}\n")
+    let_log(f"##### Проверка переполнения контекста #####")
+    let_log(f"Примерное количество токенов: {estimated_tokens}")
+    let_log(f"Лимит токенов: {token_limit}")
+    let_log(f"Переполнение: {overflow}\n")
     return overflow
 
 def get_summary(chat_id: str, summary_type: str) -> tuple[int, str | None]:
@@ -84,7 +84,7 @@ def set_summary(chat_id: str, summary_type: str, message_id: int, summary_text: 
     column = 'global_summary' if summary_type == 'global' else 'recent_summary'
     sql_exec(f"UPDATE rag_messages SET {column} = NULL WHERE chat_id = ?", (chat_id,))
     sql_exec(f"UPDATE rag_messages SET {column} = ? WHERE id = ?", (summary_text, message_id))
-    let_log1(f"Сохранена {summary_type} сводка в сообщении ID {message_id} для чата {chat_id}")
+    let_log(f"Сохранена {summary_type} сводка в сообщении ID {message_id} для чата {chat_id}")
 
 def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type: str, token_threshold: int = 2000):
     """
@@ -93,10 +93,10 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
     Сохраняет сводку в сообщении с максимальным id из списка messages.
     """
     from cross_gpt import prompt_chunk_summary, prompt_global_summary, prompt_recent_summary, no_markdown_instruction
-    let_log1(f"##### [{chat_id}] Создание иерархической '{summary_type}' сводки на основе {len(messages)} сообщений #####")
-    let_log1(f"Обработка {len(messages)} сообщений с порогом токенов: {token_threshold}")
+    let_log(f"##### [{chat_id}] Создание иерархической '{summary_type}' сводки на основе {len(messages)} сообщений #####")
+    let_log(f"Обработка {len(messages)} сообщений с порогом токенов: {token_threshold}")
     if not messages: 
-        let_log1("Нет сообщений для суммаризации")
+        let_log("Нет сообщений для суммаризации")
         return
     chunks = []
     current_chunk = []
@@ -112,45 +112,45 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
             current_chunk.append(msg)
             current_chunk_text_len += msg_len
     if current_chunk: chunks.append(current_chunk) # Не забываем добавить последний чанк, если он остался
-    let_log1(f"Создано {len(chunks)} чанков для суммаризации")
+    let_log(f"Создано {len(chunks)} чанков для суммаризации")
     chunk_summaries = []
     for i, chunk in enumerate(chunks):
         chunk_text = "\n".join([f"{msg['role']}{msg['full_text']}" for msg in chunk])
-        let_log1(f"##### Суммаризация чанка {i+1}/{len(chunks)} #####")
-        let_log1(f"Текст чанка: {chunk_text}...")
+        let_log(f"##### Суммаризация чанка {i+1}/{len(chunks)} #####")
+        let_log(f"Текст чанка: {chunk_text}...")
         chunk_summary = ask_model(chunk_text, system_prompt=prompt_chunk_summary + '\n' + no_markdown_instruction).strip()
         if chunk_summary:
             chunk_summaries.append(chunk_summary)
-            let_log1(f"Сводка чанка: {chunk_summary}")
-        else: let_log1(f"Не удалось создать сводку для чанка {i+1}")
+            let_log(f"Сводка чанка: {chunk_summary}")
+        else: let_log(f"Не удалось создать сводку для чанка {i+1}")
     if not chunk_summaries:
-        let_log1(f"##### [{chat_id}] Не удалось создать сводки чанков. #####\n")
+        let_log(f"##### [{chat_id}] Не удалось создать сводки чанков. #####\n")
         return
     summaries_text = "\n".join(chunk_summaries)
     if summary_type == 'global': final_prompt = prompt_global_summary
     else: final_prompt = prompt_recent_summary
-    let_log1("##### Создание финальной сводки #####")
-    let_log1(f"Сводки чанков: {summaries_text}")
-    let_log1(f"Финальный промпт: {final_prompt}\n- {summaries_text}")
+    let_log("##### Создание финальной сводки #####")
+    let_log(f"Сводки чанков: {summaries_text}")
+    let_log(f"Финальный промпт: {final_prompt}\n- {summaries_text}")
     final_summary = ask_model(f"\n- {summaries_text}", system_prompt=final_prompt + '\n' + no_markdown_instruction).strip()
     if final_summary:
         max_id = max(msg['id'] for msg in messages)
         set_summary(chat_id, summary_type, max_id, final_summary)
-        let_log1(f"##### [{chat_id}] Сохранена новая иерархическая '{summary_type}' сводка (до ID {max_id}): {final_summary} #####\n")
-    else: let_log1(f"##### [{chat_id}] Не удалось создать финальную сводку #####\n")
+        let_log(f"##### [{chat_id}] Сохранена новая иерархическая '{summary_type}' сводка (до ID {max_id}): {final_summary} #####\n")
+    else: let_log(f"##### [{chat_id}] Не удалось создать финальную сводку #####\n")
 
 def compact_messages_llm(messages_to_compact: list[dict]) -> str:
     """
     Принимает группу сообщений (или одно сообщение) и просит LLM сжать их в единую суть.
     """
-    let_log1(f"##### Сжатие {len(messages_to_compact)} сообщений #####")
-    let_log1(f"ID сообщений: {[m['id'] for m in messages_to_compact]}")
-    let_log1(f"##### ПРИШЕДШИЙ СПИСОК #####")
-    let_log1(f"{messages_to_compact}")
+    let_log(f"##### Сжатие {len(messages_to_compact)} сообщений #####")
+    let_log(f"ID сообщений: {[m['id'] for m in messages_to_compact]}")
+    let_log(f"##### ПРИШЕДШИЙ СПИСОК #####")
+    let_log(f"{messages_to_compact}")
     text_to_compact = "".join([f"{msg['role']}{msg['full_text']}" for msg in messages_to_compact])
     compacted_text = text_cutter(text_to_compact)
-    let_log1(f"Сжатый текст: {compacted_text}")
-    let_log1("##### Сжатие завершено #####\n")
+    let_log(f"Сжатый текст: {compacted_text}")
+    let_log("##### Сжатие завершено #####\n")
     return compacted_text
 
 def _compress_message_in_db(message: dict) -> dict | None:
@@ -162,10 +162,10 @@ def _compress_message_in_db(message: dict) -> dict | None:
     msg_id = message['id']
     vector_id = message.get('vector_id')
     chat_id = message.get('chat_id')
-    let_log1(f"##### Сжатие 'на лету' сообщения ID: {msg_id} #####")
+    let_log(f"##### Сжатие 'на лету' сообщения ID: {msg_id} #####")
     compacted_text = text_cutter(message['full_text'], cut_message=True)
     if not compacted_text or compacted_text == message['full_text']:
-        let_log1(f"Сжатие не удалось или текст не изменился. Помечаем как 'is_compressed'.")
+        let_log(f"Сжатие не удалось или текст не изменился. Помечаем как 'is_compressed'.")
         sql_exec("UPDATE rag_messages SET is_compressed = TRUE WHERE id = ?", (msg_id,))
         message['is_compressed'] = True
         return message
@@ -241,9 +241,9 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     Собирает финальный промпт. НЕ включает current_message в промпт и расчет токенов.
     Реализует RAG (при усечении), сжатие "на лету" и сохранение нечетного количества сообщений.
     """
-    let_log1(f"##### [{chat_id}] Сборка промпта (v7 - No doc duplication) #####")
-    let_log1(f"Текущее сообщение (не включается): {current_message}")
-    let_log1(f"Длина истории: {len(history)}")
+    let_log(f"##### [{chat_id}] Сборка промпта (v7 - No doc duplication) #####")
+    let_log(f"Текущее сообщение (не включается): {current_message}")
+    let_log(f"Длина истории: {len(history)}")
     from cross_gpt import last_messages_marker, rag_context_marker, global_summary_marker, recent_summary_marker
     SAFETY_MARGIN = 2000
     RAG_RESERVE_PERCENTAGE = 0.15
@@ -272,7 +272,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     # Проверяем и создаём глобальную сводку
     new_global_tokens = _get_sum_tokens_since(chat_id, last_global_id)
     if (history_was_truncated or last_global_id > 0) and new_global_tokens >= global_summary_tokens_percent * token_limit:
-        let_log1(f"##### [{chat_id}] Условие для глобальной сводки выполнено. Создаём... #####")
+        let_log(f"##### [{chat_id}] Условие для глобальной сводки выполнено. Создаём... #####")
         # Собираем сообщения для суммаризации: старая сводка + новые сообщения
         messages_for_global = []
         if last_global_id > 0:
@@ -298,7 +298,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     # Проверяем и создаём недавнюю сводку
     new_recent_tokens = _get_sum_tokens_since(chat_id, last_recent_id)
     if (history_was_truncated or last_recent_id > 0) and new_recent_tokens >= recent_summary_tokens_percent * token_limit:
-        let_log1(f"##### [{chat_id}] Условие для недавней сводки выполнено. Создаём... #####")
+        let_log(f"##### [{chat_id}] Условие для недавней сводки выполнено. Создаём... #####")
         # Собираем сообщения для суммаризации: только новые сообщения после последней недавней сводки
         messages_for_recent = []
         rows = sql_exec("SELECT id, role, full_text FROM rag_messages WHERE chat_id = ? AND id > ? ORDER BY id ASC", (chat_id, last_recent_id), fetchall=True)
@@ -320,11 +320,11 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     # Теперь продолжаем сборку промпта как раньше, используя актуальные сводки
     RAG_RESERVE_TOKENS = int(token_limit * RAG_RESERVE_PERCENTAGE)
     available_tokens_for_history = token_limit - base_tokens_no_rag - SAFETY_MARGIN - RAG_RESERVE_TOKENS
-    let_log1(f"##### [{chat_id}] Расчет лимитов для истории (резерв RAG: {RAG_RESERVE_TOKENS:.0f}) #####")
-    let_log1(f"Лимит токенов (общий): {token_limit}")
-    let_log1(f"Токены (База): {base_tokens_no_rag:.0f}")
-    let_log1(f"Токены (Safety Margin): {SAFETY_MARGIN}")
-    let_log1(f"Доступно для истории: {available_tokens_for_history:.0f}\n")
+    let_log(f"##### [{chat_id}] Расчет лимитов для истории (резерв RAG: {RAG_RESERVE_TOKENS:.0f}) #####")
+    let_log(f"Лимит токенов (общий): {token_limit}")
+    let_log(f"Токены (База): {base_tokens_no_rag:.0f}")
+    let_log(f"Токены (Safety Margin): {SAFETY_MARGIN}")
+    let_log(f"Доступно для истории: {available_tokens_for_history:.0f}\n")
 
     history_strings_list = []
     history_token_count = 0
@@ -333,9 +333,9 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     original_history_length = len(history)
 
     if available_tokens_for_history <= 0:
-        let_log1(f"##### [{chat_id}] ВНИМАНИЕ: Нет места для истории. Пропускаем. #####")
+        let_log(f"##### [{chat_id}] ВНИМАНИЕ: Нет места для истории. Пропускаем. #####")
     elif mutable_history:
-        let_log1(f"######################## ИСТОРИЯ (v7, {len(mutable_history)} сообщ.) ###################")
+        let_log(f"######################## ИСТОРИЯ (v7, {len(mutable_history)} сообщ.) ###################")
         for msg in reversed(mutable_history):
             msg_role = msg.get('role')
             msg_content = msg.get('full_text', '')
@@ -346,23 +346,23 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
                 history_token_count += msg_tokens
                 if msg.get('vector_id'): history_included_vector_ids.append(msg['vector_id'])
             else:
-                let_log1(f"Сообщение ID {msg['id']} (токены: {msg_tokens:.0f}) не помещается.")
+                let_log(f"Сообщение ID {msg['id']} (токены: {msg_tokens:.0f}) не помещается.")
                 if ENABLE_ON_THE_FLY_COMPRESSION and not msg.get('is_compressed'):
-                    let_log1(f"Запуск сжатия 'на лету' для ID {msg['id']}...")
+                    let_log(f"Запуск сжатия 'на лету' для ID {msg['id']}...")
                     compressed_msg = _compress_message_in_db(msg)
                     msg_content_compressed = compressed_msg.get('full_text', '')
                     msg_str_compressed = f"{msg_role}{msg_content_compressed}"
                     msg_tokens_compressed = _calculate_tokens(msg_str_compressed)
                     if (history_token_count + msg_tokens_compressed) <= available_tokens_for_history:
-                        let_log1(f"Сжатое сообщение ID {msg['id']} (токены: {msg_tokens_compressed:.0f}) теперь помещается.")
+                        let_log(f"Сжатое сообщение ID {msg['id']} (токены: {msg_tokens_compressed:.0f}) теперь помещается.")
                         history_strings_list.append(msg_str_compressed)
                         history_token_count += msg_tokens_compressed
                         if msg.get('vector_id'): history_included_vector_ids.append(msg['vector_id'])
                     else:
-                        let_log1(f"Даже сжатое сообщение ID {msg['id']} (токены: {msg_tokens_compressed:.0f}) не помещается. Усечение.")
+                        let_log(f"Даже сжатое сообщение ID {msg['id']} (токены: {msg_tokens_compressed:.0f}) не помещается. Усечение.")
                         break
                 else:
-                    let_log1("Достигнут лимит токенов. Усечение.")
+                    let_log("Достигнут лимит токенов. Усечение.")
                     break
         history_strings_list.reverse()
 
@@ -371,7 +371,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     available_tokens_for_rag_actual = token_limit - base_tokens_no_rag - history_token_count - SAFETY_MARGIN
 
     if history_was_truncated and available_tokens_for_rag_actual > 0:
-        let_log1(f"##### [{chat_id}] RAG АКТИВИРОВАН. Доступно токенов: {available_tokens_for_rag_actual:.0f} #####")
+        let_log(f"##### [{chat_id}] RAG АКТИВИРОВАН. Доступно токенов: {available_tokens_for_rag_actual:.0f} #####")
         rag_token_limit_final = available_tokens_for_rag_actual
         recent_context = ""
         if len(history) >= 2:
@@ -389,7 +389,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
                 fetch=["ids"]
             )
         except Exception as e:
-            let_log1(f"Ошибка coll_exec RAG: {e}")
+            let_log(f"Ошибка coll_exec RAG: {e}")
             initial_results = None
         # Если есть ids, получаем тексты из SQLite
         retrieved_texts = []
@@ -405,9 +405,9 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
                     texts_map = {row[0]: row[1] for row in rows}
                     # Сохраняем порядок ids_list
                     retrieved_texts = [texts_map.get(vid, "") for vid in ids_list]
-                    let_log1(f"Получено {len(retrieved_texts)} текстов из SQLite")
-                else: let_log1("Не найдены тексты для полученных vector_id")
-        else: let_log1("RAG поиск не дал результатов или вернул некорректный формат")
+                    let_log(f"Получено {len(retrieved_texts)} текстов из SQLite")
+                else: let_log("Не найдены тексты для полученных vector_id")
+        else: let_log("RAG поиск не дал результатов или вернул некорректный формат")
         # Если есть тексты, передаём их в rerank_rag_results в ожидаемом формате
         if retrieved_texts:
             # Создаём структуру, похожую на старую, с ключом documents
@@ -416,16 +416,16 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
             if top_docs:
                 retrieved_context = _fit_documents_to_token_limit(top_docs, rag_token_limit_final)
                 rag_prompt_part = rag_context_marker + f"{retrieved_context}\n"
-                let_log1(f"Добавлен RAG контекст: {len(retrieved_context)} символов (токенов ~{rag_token_limit_final})")
-            else: let_log1("Не удалось получить переранжированные документы")
-        else: let_log1("RAG поиск не дал результатов или тексты не найдены")
+                let_log(f"Добавлен RAG контекст: {len(retrieved_context)} символов (токенов ~{rag_token_limit_final})")
+            else: let_log("Не удалось получить переранжированные документы")
+        else: let_log("RAG поиск не дал результатов или тексты не найдены")
     else:
-        let_log1(f"##### [{chat_id}] RAG НЕ АКТИВИРОВАН. Условие: (Усечение: {history_was_truncated}, Доступно места: {available_tokens_for_rag_actual > 0}) #####")
+        let_log(f"##### [{chat_id}] RAG НЕ АКТИВИРОВАН. Условие: (Усечение: {history_was_truncated}, Доступно места: {available_tokens_for_rag_actual > 0}) #####")
 
     # Обеспечиваем нечётное количество сообщений в истории
     while len(history_strings_list) > 1 and len(history_strings_list) % 2 == 0:
         removed_msg = history_strings_list.pop(0)
-        let_log1(f"Удалено самое старое сообщение для сохранения нечетности: {removed_msg[:100]}...")
+        let_log(f"Удалено самое старое сообщение для сохранения нечетности: {removed_msg[:100]}...")
 
     history_final_str = "".join(history_strings_list)
     final_prompt_parts = [
@@ -435,8 +435,8 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
         history_final_str]
     final_prompt = "".join(final_prompt_parts)
 
-    let_log1(f"##### Финальный промпт собран #####")
-    let_log1(f"Общая длина промпта: {len(final_prompt)} символов")
+    let_log(f"##### Финальный промпт собран #####")
+    let_log(f"Общая длина промпта: {len(final_prompt)} символов")
     return final_prompt
 
 def rag_constructor(chat_id: str, system_prompt: str, current_message: str) -> str:
@@ -444,10 +444,10 @@ def rag_constructor(chat_id: str, system_prompt: str, current_message: str) -> s
     Главная функция-оркестратор RAG.
     Получает историю сообщений из БД и собирает финальный промпт.
     """
-    let_log1("##### RAG CONSTRUCTOR ЗАПУЩЕН #####")
-    let_log1(f"Chat ID: {chat_id}")
-    let_log1(f"Длина системного промпта: {len(system_prompt)}")
-    let_log1(f"Текущее сообщение: {current_message}")
+    let_log("##### RAG CONSTRUCTOR ЗАПУЩЕН #####")
+    let_log(f"Chat ID: {chat_id}")
+    let_log(f"Длина системного промпта: {len(system_prompt)}")
+    let_log(f"Текущее сообщение: {current_message}")
 
     # Получаем историю сообщений
     history = get_history(chat_id)
@@ -460,5 +460,5 @@ def rag_constructor(chat_id: str, system_prompt: str, current_message: str) -> s
         history=history
     )
 
-    let_log1("##### RAG CONSTRUCTOR ЗАВЕРШЕН #####\n")
+    let_log("##### RAG CONSTRUCTOR ЗАВЕРШЕН #####\n")
     return final_prompt

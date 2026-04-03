@@ -198,13 +198,13 @@ When stopping, you must prove impossibility:
     for tool in milana_tools:
         if tool not in global_state.skip_tools_keys:
             prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
-    if not native_func_call:
-        prompt += what_is_func_text + main.command_example
+    if not native_func_call: prompt += what_is_func_text + main.command_example
     full_prompt += prompt + main.oper_anti_loop_text
     let_log(full_prompt)
     let_log(global_state.another_tools)
     let_log(milana_tools)
     global_state.conversations += 1
+    let_log(f"[DBG_MILANA_CREATE] conversations={global_state.conversations}")
     create_chat(global_state.conversations, system_role_text + full_prompt)
     update_history(global_state.conversations, make_exec_first, func_role_text)
     global_state.tools_commands_dict[global_state.conversations] = milana_tools
@@ -233,6 +233,8 @@ When stopping, you must prove impossibility:
     let_log("НАЧАЛЬНЫЙ ОТВЕТ МИЛАНЫ:")
     let_log(talk_prompt)
     talk_prompt_for_tools = remove_commands_roles(talk_prompt)
+    let_log(f"[DBG_BEFORE_CREATE_EXECUTOR] conversations={global_state.conversations}")
+    milana_chat_id = global_state.conversations
     answer = tools_selector(talk_prompt_for_tools, global_state.conversations)
     global_state.now_agent_id = global_state.conversations
     if answer != wrong_command and global_state.dialog_state and answer != None: talk_prompt = answer
@@ -242,9 +244,11 @@ When stopping, you must prove impossibility:
     else: return answer
     let_log("ОТВЕТ ПОСЛЕ ОБРАБОТКИ:")
     let_log(talk_prompt)
+    let_log(f"[DBG_AFTER_CREATE_EXECUTOR] conversations={global_state.conversations}")
     last_talk_prompt = talk_prompt # Это ответ от функции/инструмента
     # Получаем историю для второго вызова
-    _, history_for_model = get_chat_context(global_state.conversations)
+    let_log(f"[DBG_CONTEXT_LOAD] requested_chat={global_state.conversations}, milana_chat_id={milana_chat_id}")
+    _, history_for_model = get_chat_context(global_state.conversations - 1)
     try:
         talk_prompt = ask_model(
             system_role_text +
@@ -279,6 +283,7 @@ When stopping, you must prove impossibility:
                 )
             except: raise
     # Записываем ответы в историю
+    let_log(f"[DBG_HISTORY_WRITE] target_chat={global_state.conversations - 1}, current_conv={global_state.conversations}")
     update_history(global_state.conversations - 1, last_talk_prompt, func_role_text)
     update_history(global_state.conversations - 1, talk_prompt, operator_role_text)
     return talk_prompt

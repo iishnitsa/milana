@@ -1,6 +1,6 @@
 '''
 need_info
-call to get missing information
+Call to get missing information. Ask one question per line. If there are several questions, ask them all at once in a single message. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study the phenomenon X?" instead of "What authoritative sources are there?". Only questions are allowed; no other text should be present
 '''
 
 import os
@@ -279,7 +279,8 @@ Just output the fragment exactly as it appears, nothing else.
         lines = quest.splitlines()
         question_lines = [line for line in lines if '?' in line]
         if not question_lines:
-            question_lines = lines
+            return found_info_1
+            question_lines = lines # TODO:
         cleaned_questions = []
         for question in question_lines:
             cleaned = re.sub(r'^\s*(?:\d+[\.\)]\s*|[-*•]\s*)*', '', question.strip())

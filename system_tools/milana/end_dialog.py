@@ -60,10 +60,10 @@ def main(text):
         save_emb_dialog(is_dialog_correct, dialog_type='executor')
         # Удаляем чат исполнителя
         delete_chat(global_state.conversations)
-        let_log(f"Удалён чат исполнителя, conversations уменьшен до: {global_state.conversations}")
         global_state.tools_commands_dict.pop(global_state.conversations)
         let_log("Удалены инструменты исполнителя")
         global_state.conversations -= 1
+        let_log(f"Удалён чат исполнителя, conversations уменьшен до: {global_state.conversations}")
     else: let_log('Исполнитель не был создан, чат не удалён')
     delete_chat(global_state.conversations)
     let_log("Удалёны чат оператора")

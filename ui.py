@@ -1112,14 +1112,24 @@ class ChatApp(CTk):
         self.chats_list_frame = CTkScrollableFrame(chats_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
         self.chats_list_frame.pack(fill="both", expand=True, padx=10, pady=1.5)
         if hasattr(self.chats_list_frame, '_scrollbar'): self.chats_list_frame._scrollbar.configure(width=12)
-        # ====== КНОПКИ "НОВЫЙ ЧАТ" И "НАСТРОЙКИ" ======
+        # ====== КНОПКИ "НОВЫЙ ЧАТ", "НАСТРОЙКИ" И УПРАВЛЕНИЯ ЧАТОМ ======
         bottom_buttons_frame = create_styled_frame(left_panel_container)
-        bottom_buttons_frame.grid(row=1, column=0, sticky="ew", pady=(3,0))  # ← row=1 под списком чатов
-        bottom_buttons_frame.grid_columnconfigure((0,1), weight=1)
-        self.new_chat_btn = create_styled_button(bottom_buttons_frame, text=Lang.get("new_chat"), command=self.create_chat_window_show, width=30)
-        self.new_chat_btn.grid(row=0, column=0, padx=(0, 2), sticky="ew")
-        self.settings_btn = create_styled_button(bottom_buttons_frame, text=Lang.get("settings"), command=self.open_settings, width=30)
-        self.settings_btn.grid(row=0, column=1, padx=(2, 0), sticky="ew")
+        bottom_buttons_frame.grid(row=1, column=0, sticky="ew", pady=(3,0))
+        # Кнопка настроек
+        self.settings_btn = create_styled_button(bottom_buttons_frame, text="☰", command=self.open_settings, width=30, height=30,)
+        self.settings_btn.pack(side=tk.LEFT, padx=(0, 2))
+        # Кнопка нового чата с символом "+↑"
+        self.new_chat_btn = create_styled_button(bottom_buttons_frame, text="+↑", command=self.create_chat_window_show, width=30, height=30,)
+        self.new_chat_btn.pack(side=tk.LEFT, padx=(2, 0))
+        # Фрейм для кнопок управления чатом (play/stop/log)
+        self.control_buttons_frame = create_styled_frame(bottom_buttons_frame, fg_color="transparent")
+        self.control_buttons_frame.pack(side=tk.LEFT, padx=(2, 0))
+        self.stop_btn = create_styled_button(self.control_buttons_frame, text="◯", width=30, height=30, command=self.stop_chat)
+        self.stop_btn.pack(side=tk.LEFT, padx=2)
+        self.play_btn = create_styled_button(self.control_buttons_frame, text="ᗞ", width=30, height=30, command=self.resume_chat)
+        self.play_btn.pack(side=tk.LEFT, padx=2)
+        self.log_btn = create_styled_button(self.control_buttons_frame, text="log", width=30, height=30, command=self.open_log_window)
+        self.log_btn.pack(side=tk.LEFT, padx=2)
         # ===== ПРАВАЯ ПАНЕЛЬ (СООБЩЕНИЯ) =====
         right_panel_container = create_styled_frame(self)
         right_panel_container.grid(row=0, column=1, sticky="nsew", padx=(0, 5), pady=5)
@@ -1135,24 +1145,19 @@ class ChatApp(CTk):
         if hasattr(self.messages_frame, '_scrollbar'): self.messages_frame._scrollbar.configure(width=12)
         self.input_outer_frame = create_styled_frame(right_panel_container)
         self.input_outer_frame.grid(row=1, column=0, sticky="ew")
-        self.input_outer_frame.grid_columnconfigure(1, weight=1)
-        self.left_controls_frame = create_styled_frame(self.input_outer_frame)
-        self.left_controls_frame.grid(row=0, column=0, padx=(0, 2), sticky="n")  # Уменьшен отступ и изменено выравнивание
-        self.stop_btn = create_styled_button(self.left_controls_frame, text="☐", width=30, height=30, command=self.stop_chat)
-        self.play_btn = create_styled_button(self.left_controls_frame, text="▷", width=30, height=30, command=self.resume_chat)
-        self.log_btn = create_styled_button(self.left_controls_frame, text="Log", width=30, height=30, command=self.open_log_window)
+        self.input_outer_frame.grid_columnconfigure(0, weight=1)
         self.input_text = CTkTextbox(self.input_outer_frame, corner_radius=CORNER_RADIUS, border_color=PURPLE_ACCENT, border_width=1, fg_color=DARK_SECONDARY, font=FONT_REGULAR, wrap="word")
         self.input_text._textbox.configure(borderwidth=0, padx=0, pady=0)
-        self.input_text.grid(row=0, column=1, sticky="nsew", padx=2)
+        self.input_text.grid(row=0, column=0, sticky="nsew", padx=2)
         self.input_text.bind("<Return>", self.on_enter_pressed)
         self.input_text.bind("<KeyRelease>", self.adjust_input_height, add=True)
         enhance_text_widget(self.input_text)
         self.adjust_input_height()
         self.right_controls_frame = create_styled_frame(self.input_outer_frame)
-        self.right_controls_frame.grid(row=0, column=2, padx=(2,0), sticky="n")  # Уменьшен отступ и изменено выравнивание
+        self.right_controls_frame.grid(row=0, column=1, padx=(2,0), sticky="n")
         self.send_btn = create_styled_button(self.right_controls_frame, text="↑", width=30, height=30, command=self.send_message)
         self.send_btn.pack(side=tk.TOP, anchor="ne")
-        self.attach_btn = create_styled_button(self.right_controls_frame, text=" + ", width=30, height=30, command=self.add_attachment)
+        self.attach_btn = create_styled_button(self.right_controls_frame, text="+", width=30, height=30, command=self.add_attachment)
         self.attach_btn.pack(side=tk.TOP, anchor="ne", pady=(5,0))
         self.load_chats()
         self.start_chat_blinking()
@@ -1164,20 +1169,23 @@ class ChatApp(CTk):
             if event.num == 4: canvas.yview_scroll(-1, "units")
             elif event.num == 5: canvas.yview_scroll(1, "units")
     def update_chat_controls(self):
-        for btn in [self.stop_btn, self.play_btn, self.log_btn]:
-            btn.pack_forget()
+        # Сначала скрываем все кнопки управления
+        self.stop_btn.pack_forget()
+        self.play_btn.pack_forget()
+        self.log_btn.pack_forget()
         if not self.current_chat_id:
-            self.play_btn.pack(side=tk.TOP)
+            # Нет активного чата – показываем play (disabled)
+            self.play_btn.pack(side=tk.LEFT, padx=2)
             self.play_btn.configure(state="disabled")
             return
         has_messages = len(self.backend.get_messages(self.current_chat_id)) > 0
         is_active = self.current_chat_id in self.chat_processes
         if is_active:
-            self.stop_btn.pack(side=tk.TOP)
-            self.log_btn.pack(side=tk.TOP, pady=(5,0))
+            self.stop_btn.pack(side=tk.LEFT, padx=2)
+            self.log_btn.pack(side=tk.LEFT, padx=2)
             self.play_btn.pack_forget()
         else:
-            self.play_btn.pack(side=tk.TOP)
+            self.play_btn.pack(side=tk.LEFT, padx=2)
             self.play_btn.configure(state="normal" if has_messages else "disabled")
             self.log_btn.pack_forget()
     def stop_chat(self):

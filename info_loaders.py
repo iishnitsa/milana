@@ -44,10 +44,18 @@ def get_resource_path(relative_path):
 def get_external_path(relative_path):
     """Получает путь к файлу/папке рядом с .exe или скриптом"""
     if hasattr(sys, '_MEIPASS'):
-        # Если запущено как exe, берем директорию, где лежит сам exe
         return os.path.join(os.path.dirname(sys.executable), relative_path)
-    # Если запущен просто .py, берем текущую папку
     return os.path.join(os.path.abspath("."), relative_path)
+
+# --- ДОБАВЛЕНО ---
+def is_image_too_small(image_bytes, min_size=150):
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        w, h = img.size
+        return min(w, h) < min_size
+    except:
+        return True
+# ------------------
 
 # Глобальные переменные для ленивой загрузки моделей
 _BLIP_PROCESSOR = None
@@ -57,25 +65,21 @@ _CLIP_PROCESSOR = None
 _CLIP_MODEL = None
 _OCR_INSTANCE = None
 _IMAGE_MODELS_LOADED = False
-_IMAGE_MODELS_LOAD_FAILED = False  # Маркер ошибки загрузки моделей
+_IMAGE_MODELS_LOAD_FAILED = False
 
 def _load_image_models():
-    """Ленивая загрузка моделей обработки изображений из внешней папки data/models/"""
     global _BLIP_PROCESSOR, _BLIP_MODEL, _OCR_INSTANCE
     global _IMAGE_MODELS_LOADED, _IMAGE_MODELS_LOAD_FAILED
     if _IMAGE_MODELS_LOADED: return True
     if _IMAGE_MODELS_LOAD_FAILED: raise RuntimeError(model_early_loading_error_text)
     let_log("Загрузка моделей обработки изображений из локальных директорий...")
     try:
-        import torch # попытка решения проблемы dll
+        import torch
         import os
         from transformers import BlipProcessor, BlipForConditionalGeneration
         import easyocr
-        # Определяем пути к внешним папкам
-        # Ожидаемая структура: [папка с exe]/data/models/blip и easyocr
         blip_path = get_external_path(os.path.join("data", "models", "blip"))
         easyocr_path = get_external_path(os.path.join("data", "models", "easyocr"))
-        # 1. Загрузка BLIP
         if os.path.exists(blip_path):
             _BLIP_PROCESSOR = BlipProcessor.from_pretrained(blip_path, use_fast=True)
             _BLIP_MODEL = BlipForConditionalGeneration.from_pretrained(blip_path)
@@ -84,15 +88,13 @@ def _load_image_models():
             let_log(f"ВНИМАНИЕ: Локальная модель BLIP не найдена в {blip_path}. Попытка загрузки из сети...")
             _BLIP_PROCESSOR = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base", use_fast=True)
             _BLIP_MODEL = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-        # 2. Загрузка EasyOCR
         try:
-            # Создаем папку, если её нет, чтобы Reader не ругался
             os.makedirs(easyocr_path, exist_ok=True)
             _OCR_INSTANCE = easyocr.Reader(
                 ['en', 'ru'], 
                 gpu=False,
                 model_storage_directory=easyocr_path,
-                download_enabled=False # Строго берем только из папки
+                download_enabled=False
             )
             let_log("EasyOCR загружен локально")
         except Exception as ocr_error:
@@ -108,17 +110,6 @@ def _load_image_models():
         raise
 
 def is_binary_text(text, threshold=0.5, max_chars=1024):
-    """
-    Проверяет, является ли текст бинарным (содержит много непечатаемых символов).
-    
-    Args:
-        text (str): Текст для проверки.
-        threshold (float): Пороговое значение доли печатаемых символов.
-        max_chars (int): Максимальное количество символов для проверки.
-    
-    Returns:
-        bool: True, если текст считается бинарным.
-    """
     if not text: return True
     check_text = text[:max_chars]
     printable_count = 0
@@ -132,12 +123,7 @@ def is_binary_text(text, threshold=0.5, max_chars=1024):
     ratio = printable_count / len(check_text)
     return ratio < threshold
 
-# --- Вспомогательные функции для декодирования текста (скопированы из simple_web_search.py) ---
 def is_reasonable_text(text, min_ratio=0.3):
-    """
-    Проверяет, выглядит ли текст разумным (не кракозябры).
-    Возвращает True, если текст содержит достаточно "нормальных" символов.
-    """
     if not text or len(text) < 10: return False
     total_chars = len(text)
     letters = sum(1 for c in text if c.isalpha())
@@ -155,7 +141,6 @@ def is_reasonable_text(text, min_ratio=0.3):
             letters > total_chars * 0.1)
 
 def decode_with_fallback(content):
-    """Пробует разные стратегии декодирования сложного контента"""
     strategies = [
         lambda: content.decode('utf-8', errors='strict'),
         lambda: content.decode('utf-8-sig', errors='strict'),
@@ -171,23 +156,17 @@ def decode_with_fallback(content):
             if is_reasonable_text(result[:2000]): return result
         except: continue
     return content.decode('utf-8', errors='replace')
-# --------------------------------------------------------------------------------------------
 
 def process_image(file_path_or_data, input_file_handlers):
-    """Обработка изображения с использованием BLIP и EasyOCR"""
     let_log('Обработка изображения')
     try: _load_image_models()
     except Exception as e: return f"Ошибка загрузки моделей: {e}"
     try:
-        # Определяем тип входных данных
         if isinstance(file_path_or_data, bytes):
-            let_log('  Обработка изображения из байтов (из архива)')
             image = Image.open(BytesIO(file_path_or_data)).convert('RGB')
         else:
-            let_log(f'  Обработка изображения из файла: {file_path_or_data}')
             image = Image.open(file_path_or_data).convert('RGB')
     except Exception as e: return f"{err_image_process_text_infoloaders}{e}"
-    # BLIP анализ (описание картинки)
     try:
         inputs = _BLIP_PROCESSOR(image, return_tensors="pt")
         output_ids = _BLIP_MODEL.generate(**inputs, max_length=50, num_beams=4)
@@ -195,15 +174,11 @@ def process_image(file_path_or_data, input_file_handlers):
     except Exception as e:
         let_log(f"BLIP ошибка: {e}")
         caption = "Не удалось создать описание"
-    # EasyOCR обработка (извлечение текста)
     extracted_text = ""
     if _OCR_INSTANCE is not None:
         try:
-            # Преобразуем PIL Image в numpy array для EasyOCR
             img_np = np.array(image)
-            # Вызываем специфичный для EasyOCR метод .readtext()
             results = _OCR_INSTANCE.readtext(img_np)
-            # Извлекаем только текст (он находится во втором элементе кортежа: (bbox, text, prob))
             extracted_text = "\n".join([res[1] for res in results])
         except Exception as ocr_error:
             let_log(f"EasyOCR не удался: {ocr_error}")
@@ -212,15 +187,10 @@ def process_image(file_path_or_data, input_file_handlers):
     else: return f"{caption}"
 
 def cleanup_image_models():
-    """
-    Очищает глобальные переменные с моделями и вызывает сборщик мусора
-    Вызывается после обработки всех пользовательских файлов
-    """
     global _BLIP_PROCESSOR, _BLIP_MODEL, _BLIP_TOKENIZER
     global _CLIP_PROCESSOR, _CLIP_MODEL, _OCR_INSTANCE
     global _IMAGE_MODELS_LOADED, _IMAGE_MODELS_LOAD_FAILED
     let_log("Очистка моделей обработки изображений...")
-    # Очищаем переменные
     _BLIP_PROCESSOR = None
     _BLIP_MODEL = None
     _BLIP_TOKENIZER = None
@@ -228,47 +198,40 @@ def cleanup_image_models():
     _CLIP_MODEL = None
     _OCR_INSTANCE = None
     _IMAGE_MODELS_LOADED = False
-    # Принудительный вызов сборщика мусора
     gc.collect()
     let_log("Модели очищены, сборщик мусора вызван")
 
 def process_pdf(file_path_or_data, input_file_handlers):
     let_log('пдф')
     try:
-        # Определяем тип входных данных
         if isinstance(file_path_or_data, bytes):
-            let_log('  Обработка PDF из байтов (из архива)')
             pdf = pymupdf.open(stream=BytesIO(file_path_or_data), filetype="pdf")
         else:
-            let_log(f'  Обработка PDF из файла: {file_path_or_data}')
             pdf = pymupdf.open(file_path_or_data)
     except Exception as ex:
         let_log(ex)
         return f"{err_image_process_pdf_infoloaders}{ex}"
     full_text = []
     attachment_count = 0
-    # Проход по страницам документа
     for page_num, page in enumerate(pdf, start=1):
-        # Извлечение текста со страницы
         text = page.get_text()
         if text.strip():
             full_text.append(f"--- {page_pdf_prompt_infoloaders} {page_num} ---")
             full_text.append(text.strip())
-        # Извлечение изображений
         for image_index, img in enumerate(page.get_images(full=True), start=1):
-            xref = img[0]  # Индекс изображения
+            xref = img[0]
             base_image = pdf.extract_image(xref)
             image_bytes = base_image["image"]
             extension = base_image["ext"]
             attachment_count += 1
             file_name = f"{attachment_prompt_infoloaders}{attachment_count}"
-            try:
-                # Передаем изображение как байты
-                result = input_file_handlers.get(extension, lambda x: unprocessable_file_infoloaders)(image_bytes, input_file_handlers)
-                full_text.append(f"[{file_name}: {result}]")
-            except Exception as ex:
-                let_log(ex)
-                full_text.append(f"[{file_name}: {image_processing_error_infoloaders} ({ex})]")
+            if not is_image_too_small(image_bytes):
+                try:
+                    result = input_file_handlers.get(extension, lambda x: unprocessable_file_infoloaders)(image_bytes, input_file_handlers)
+                    full_text.append(f"[{file_name}: {result}]")
+                except Exception as ex:
+                    let_log(ex)
+                    # full_text.append(f"[{file_name}: {image_processing_error_infoloaders} ({ex})]")
     pdf.close()
     return "\n".join(full_text)
 

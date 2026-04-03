@@ -18,9 +18,9 @@ def _standard_create_chat(chat_id: int, prompt: str):
     let_log(f"Creating standard chat session: {chat_id}")
     from cross_gpt import last_messages_marker
     sql_exec(
-        'INSERT OR REPLACE INTO chats (chat_id, prompt, history) VALUES (?, ?, ?)',
+        'INSERT INTO chats (chat_id, prompt, history) VALUES (?, ?, ?)',
         (chat_id, prompt, last_messages_marker)
-    )
+    ) # TODO: инсерт ор реплейс убери
 
 def _standard_get_chat_context(chat_id: int) -> tuple[str, str]:
     """Получает системный промпт и всю историю из таблицы 'chats'."""

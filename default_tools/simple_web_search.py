@@ -15,7 +15,7 @@ from ddgs import DDGS
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from cross_gpt import let_log, cacher, text_cutter
-from cross_gpt import input_info_loaders, load_info_loaders, default_handlers_names, found_info_1
+from cross_gpt import load_info_loaders, default_handlers_names, found_info_1
 
 # Улучшенные заголовки для имитации реального браузера
 HEADERS = {
@@ -174,6 +174,7 @@ def get_page_text(url):
         let_log(f'[get_page_text] Content-Type: {content_type}')
         if 'application/pdf' in content_type:
             let_log('[get_page_text] PDF DETECTED on site!')
+            from cross_gpt import input_info_loaders
             # Проверяем, загружен ли обработчик PDF
             if 'pdf' not in input_info_loaders:
                 let_log('[get_page_text] PDF handler not loaded, loading now')

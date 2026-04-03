@@ -54,6 +54,7 @@ class GlobalState:
         self.dialog_ended = False
         self.start_dialog_command_name = ''
         self.skip_tools_keys = []
+        self.last_agent = None
 global_state = GlobalState()
 
 chat_path = ''
@@ -246,8 +247,7 @@ def let_log(t):
         lineno = caller.lineno
         funcname = caller.name
         caller_info = f"[{filename}:{lineno} {funcname}]"
-    else:
-        caller_info = "[unknown]"
+    else: caller_info = "[unknown]"
     
     full_message = f"{caller_info} {t}"
     
@@ -267,10 +267,10 @@ def let_log(t):
         row = cursor.fetchone()
         max_id = row[0] if row and row[0] is not None else -1
         conn.close()
-        if max_id <= cache_counter:
-            log_file = os.path.join(chat_path, 'log.txt')
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f'{full_message}\n')
+        if max_id <= cache_counter: lname = 'log.txt'
+        else: lname = 'log_cache.txt'; return
+        log_file = os.path.join(chat_path, lname)
+        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
 
 def let_log1(t):
     t = str(t)
@@ -284,8 +284,7 @@ def let_log1(t):
         lineno = caller.lineno
         funcname = caller.name
         caller_info = f"[{filename}:{lineno} {funcname}]"
-    else:
-        caller_info = "[unknown]"
+    else: caller_info = "[unknown]"
     
     full_message = f"{caller_info} {t}"
     
@@ -305,10 +304,10 @@ def let_log1(t):
         row = cursor.fetchone()
         max_id = row[0] if row and row[0] is not None else -1
         conn.close()
-        if max_id <= cache_counter:
-            log_file = os.path.join(chat_path, 'log.txt')
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f'{full_message}\n')
+        if max_id <= cache_counter: lname = 'log.txt'
+        else: lname = 'log_cache.txt'; return
+        log_file = os.path.join(chat_path, lname)
+        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
 
 def traceprint(*args, **kwargs):
     stack = traceback.extract_stack()
@@ -2950,8 +2949,10 @@ def tools_selector(text, sid):
     except Exception: sys_keys = []
     # 4) найти маркер и сопоставить с командами
     match = find_and_match_command(text, now_commands)
-    if not match:
+    if not match: # TODO: может разделить случаи когда маркер не найден или команда не сопоставилась
         let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
+        let_log(text)
+        let_log(now_commands)
         is_warn = analyze_protocol(text)
         if is_warn != None:
             write_cache([False, is_warn])
@@ -2979,7 +2980,7 @@ def tools_selector(text, sid):
             if cached[1] != ["SYSTEM", False]:
                 let_log("[TOOLS_SELECTOR] Возвращаем не-системный результат из кэша")
                 let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-                return cached
+                return cached[1]
     else:
         # Для системных команд: проверяем, не выполняем ли мы её уже (рекурсия)
         if cached != [False]:
@@ -2997,7 +2998,7 @@ def tools_selector(text, sid):
         if is_warn != None:
             write_cache([False, is_warn])
             return is_warn
-        write_cache([False, False])
+        write_cache([False, wrong_command])
         return wrong_command
     func_callable = None
     try:
@@ -3075,45 +3076,72 @@ def _standard_agent_func(text, agent_number):
     return talk_prompt
 
 # ВЕРСИЯ ДЛЯ RAG РЕЖИМА
+
 def _rag_agent_func(text, agent_number):
+    # Проверка чередования агентов
+    if global_state.last_agent is not None and global_state.last_agent == agent_number:
+        error_msg = (
+            f"Agent alternation violation: agent {agent_number} called twice in a row. "
+            f"Expected alternating calls (0,1,0,1...). Last agent: {global_state.last_agent}"
+        )
+        let_log(error_msg)
+        # Аварийное завершение, как в кэшере
+        sys.exit(1)
+
+    global_state.last_agent = agent_number
+
     global_state.stop_agent = False
     talk_prompt = text
     sid = global_state.conversations - agent_number
     global_state.now_agent_id = sid
-    if agent_number: # 1 - Милана
+
+    if agent_number:  # 1 - Милана
         you = operator_role_text
         msg_from = worker_role_text
-    else: # 0 - Иван
+    else:  # 0 - Иван
         you = worker_role_text
         if global_state.dialog_ended:
             msg_from = func_role_text
             global_state.dialog_ended = False
-        else: msg_from = operator_role_text
+        else:
+            msg_from = operator_role_text
+
     while not global_state.stop_agent:
         let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}")
         # 1. Сохраняем входящее сообщение от предыдущего агента в RAG-историю
         update_history(sid, talk_prompt, msg_from)
+
         # 2. Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
+
         # 3. Вызываем модель, добавив роль текущего агента для корректной генерации
-        try: talk_prompt = ask_model(final_prompt_for_model + you)
-        except Exception as e:let_log(f"Ошибка в _rag_agent_func: {e}")
-        # Здесь RAG уже должен был обработать длинный контекст
+        try:
+            talk_prompt = ask_model(final_prompt_for_model + you)
+        except Exception as e:
+            let_log(f"Ошибка в _rag_agent_func: {e}")
+            # Здесь RAG уже должен был обработать длинный контекст
+
         talk_prompt = remove_commands_roles(talk_prompt)
+
         # 4. Сохраняем ответ самой модели в RAG-историю
         update_history(sid, talk_prompt, you)
+
         answer = tools_selector(talk_prompt, sid)
         if answer:
             let_log(global_state.stop_agent)
             talk_prompt = answer
             msg_from = func_role_text
-        else: break
+        else:
+            break
+
     global_state.stop_agent = False
     return talk_prompt
 
 def get_user_feedback_and_update_task(current_task, dialog_result):
     while True: # очищаем очередь ввода
-        if get_input_message() == None: break
+        ims = get_input_message()
+        print(ims)
+        if ims == None: break # TODO:
     send_output_message(text=dialog_result, command='end')
     user_message = get_input_message(wait=True)
     updated_task = current_task + user_review_text2 + dialog_result + user_review_text3 + user_message['text']
@@ -3122,7 +3150,7 @@ def get_user_feedback_and_update_task(current_task, dialog_result):
         upload_user_data(user_message['attachments'])
         send_output_message(text=end_load_attachments_text)
     return updated_task
-
+'''
 def worker(really_main_task):
     while True:
         global_state.retries = []
@@ -3152,7 +3180,6 @@ def worker(really_main_task):
                 let_log(global_state.conversations)
                 # нужно еще задачу в хрому записать
                 # TODO: вынеси эти 2 куска кода в функцию
-                let_log(global_state.conversations)
                 if global_state.conversations <= 0:
                     if global_state.critic_wants_retry: really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                     else: really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
@@ -3163,6 +3190,71 @@ def worker(really_main_task):
                         global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                         talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
                     else: talk_prompt = global_state.dialog_result
+'''
+def worker(really_main_task):
+    let_log1(f"[WORKER] START: really_main_task={really_main_task[:100]}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
+    while True:
+        global_state.retries = []
+        global_state.conversations = 0
+        global_state.tools_commands_dict = {}
+        global_state.dialog_state = True
+        global_state.critic_wants_retry = False
+        global_state.main_now_task = really_main_task
+        global_state.gigo_web_search_allowed = False
+        let_log1(f"[WORKER] Before start_dialog: main_now_task={global_state.main_now_task[:100]}, dialog_state={global_state.dialog_state}")
+        talk_prompt = start_dialog(global_state.main_now_task)
+        let_log1(f"[WORKER] After start_dialog: talk_prompt={talk_prompt[:100] if talk_prompt else 'None'}, dialog_state={global_state.dialog_state}")
+        global_state.gigo_web_search_allowed = True
+        if not global_state.dialog_state:
+            let_log1(f"[WORKER] Dialog finished without starting. critic_wants_retry={global_state.critic_wants_retry}")
+            if global_state.critic_wants_retry:
+                really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+                let_log1(f"[WORKER] Updating really_main_task after critic retry: {really_main_task[:100]}")
+            else:
+                really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
+                let_log1(f"[WORKER] Updating really_main_task after user feedback: {really_main_task[:100]}")
+            continue
+        while True:
+            let_log1(f"[WORKER] Main loop start. dialog_state={global_state.dialog_state}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
+            if global_state.dialog_state:
+                let_log1(f"[WORKER] Calling agent_func(0) with talk_prompt={talk_prompt[:100]}")
+                talk_prompt = agent_func(talk_prompt, 0) # ivan
+                let_log1(f"[WORKER] agent_func(0) returned talk_prompt={talk_prompt[:100]}, task_delegated={global_state.task_delegated}")
+                if global_state.task_delegated:
+                    let_log1(f"[WORKER] Task delegated, resetting flag and continue")
+                    global_state.task_delegated = False # а вот тут чезанах
+                    continue
+            if global_state.dialog_state:
+                let_log1(f"[WORKER] Calling agent_func(1) with talk_prompt={talk_prompt[:100]}")
+                talk_prompt = agent_func(talk_prompt, 1) # milana
+                let_log1(f"[WORKER] agent_func(1) returned talk_prompt={talk_prompt[:100]}")
+            if not global_state.dialog_state:
+                let_log1(f"[WORKER] Dialog state became false. tools_commands_dict={global_state.tools_commands_dict}, dialog_result={global_state.dialog_result[:100]}, conversations={global_state.conversations}")
+                print(global_state.tools_commands_dict)
+                let_log(global_state.dialog_result)
+                let_log(global_state.conversations)
+                # нужно еще задачу в хрому записать
+                # TODO: вынеси эти 2 куска кода в функцию
+                if global_state.conversations <= 0:
+                    let_log1(f"[WORKER] conversations<=0, handling user feedback/critic")
+                    if global_state.critic_wants_retry:
+                        really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+                        let_log1(f"[WORKER] critic retry: updated really_main_task={really_main_task[:100]}")
+                    else:
+                        really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
+                        let_log1(f"[WORKER] user feedback: updated really_main_task={really_main_task[:100]}")
+                    break
+                else:
+                    let_log1(f"[WORKER] conversations>0, resetting dialog_state and possibly retrying with critic or new prompt")
+                    global_state.dialog_state = True
+                    if global_state.critic_wants_retry:
+                        global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+                        let_log1(f"[WORKER] critic retry: updated main_now_task={global_state.main_now_task[:100]}")
+                        talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
+                        let_log1(f"[WORKER] after start_dialog (critic): talk_prompt={talk_prompt[:100]}, dialog_state={global_state.dialog_state}")
+                    else:
+                        talk_prompt = global_state.dialog_result
+                        let_log1(f"[WORKER] using dialog_result as new talk_prompt={talk_prompt[:100]}")
 
 def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global memory_sql
@@ -3320,10 +3412,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         if unified_tags.get('user_start') is not None:
             clean_variables_content.append(unified_tags.get('user_start'))
         filter_generations = True
-    else:
-        filter_generations = False
-
-    # === ИЗМЕНЁННЫЙ ПОРЯДОК ЗАГРУЗКИ МОДУЛЕЙ ===
+    else: filter_generations = False
 
     # 1. Сначала загружаем специальные модули (web_search, ask_user), чтобы они были доступны librarian
     let_log(f"\n=== ЗАГРУЗКА СПЕЦИАЛЬНЫХ МОДУЛЕЙ (до системных) ===")
@@ -3368,8 +3457,6 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
 
     # Настраиваем global_state
     global_state.another_tools = loaded_tools
-
-    # ========== УДАЛЁН старый блок, так как порядок изменён ==========
 
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
     let_log(f"Всего загружено инструментов: {len(loaded_tools)}")
