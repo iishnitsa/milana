@@ -19,6 +19,7 @@ import io
 import base64
 import inspect
 from multiprocessing import queues
+import shutil
 Empty = queues.Empty
 
 class GlobalState:
@@ -2941,6 +2942,11 @@ def tools_selector(text, sid):
     try:
         if isinstance(cached[1][1], str): return cached[1][1]
     except: pass
+
+    is_warn = analyze_protocol(text)
+    if is_warn != None:
+        write_cache([False, is_warn])
+        return is_warn
     # 2) получить словарь команд для сессии
     try: now_commands = global_state.tools_commands_dict.get(sid, {})
     except Exception: now_commands = {}
@@ -2953,10 +2959,6 @@ def tools_selector(text, sid):
         let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
         let_log(text)
         let_log(now_commands)
-        is_warn = analyze_protocol(text)
-        if is_warn != None:
-            write_cache([False, is_warn])
-            return is_warn
         write_cache([False, False])
         return None
     found_key, content = match
@@ -2994,10 +2996,6 @@ def tools_selector(text, sid):
     if entry == None:
         let_log("[TOOLS_SELECTOR] команда не найдена в словаре сессии (после сопоставления)")
         let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
-        is_warn = analyze_protocol(text)
-        if is_warn != None:
-            write_cache([False, is_warn])
-            return is_warn
         write_cache([False, wrong_command])
         return wrong_command
     func_callable = None
@@ -3256,6 +3254,84 @@ def worker(really_main_task):
                         talk_prompt = global_state.dialog_result
                         let_log1(f"[WORKER] using dialog_result as new talk_prompt={talk_prompt[:100]}")
 
+def init_chromadb(chroma_path, use_rag, max_attempts=3):
+    """
+    Инициализирует ChromaDB с сохранением данных между запусками.
+    При ошибках пытается восстановиться:
+      1) Повторная попытка создания клиента.
+      2) Удаление конкретной проблемной коллекции (если ошибка связана с коллекцией).
+      3) Если не помогает – полное удаление папки chroma_path и создание с нуля.
+    """
+    # Вспомогательная функция для попытки инициализации
+    def _try_init(remove_on_failure=False):
+        try:
+            client = chromadb.PersistentClient(
+                path=chroma_path,
+                settings=Settings(allow_reset=True, anonymized_telemetry=False)
+            )
+            # Не вызываем reset – сохраняем данные
+            milana = client.get_or_create_collection(
+                name="milana_collection", metadata={"hnsw:space": "cosine"}
+            )
+            user = client.get_or_create_collection(
+                name="user_collection", metadata={"hnsw:space": "cosine"}
+            )
+            rag = None
+            if use_rag == 1:
+                rag = client.get_or_create_collection(
+                    name="rag_collection", metadata={"hnsw:space": "cosine"}
+                )
+            return client, milana, user, rag, True
+        except Exception as e:
+            error_msg = str(e)
+            let_log(f"ChromaDB init error: {error_msg}")
+            # Если мы в режиме удаления папки – удаляем и выходим
+            if remove_on_failure:
+                if os.path.exists(chroma_path):
+                    shutil.rmtree(chroma_path, ignore_errors=True)
+                    let_log(f"Removed entire ChromaDB directory: {chroma_path}")
+                return None, None, None, None, False
+            # Пробуем определить, ошибка связана с конкретной коллекцией
+            if "already exists" in error_msg.lower():
+                # Пытаемся извлечь имя коллекции из сообщения (это сложно, но можно попробовать)
+                # Простейший подход: попробовать удалить все три коллекции по очереди
+                collections_to_try = ["milana_collection", "user_collection", "rag_collection"]
+                # Создаём временный клиент для удаления коллекций
+                try:
+                    temp_client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True))
+                    for coll_name in collections_to_try:
+                        try:
+                            temp_client.delete_collection(coll_name)
+                            let_log(f"Deleted collection '{coll_name}' to resolve conflict")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            return None, None, None, None, False
+
+    # Основной цикл попыток
+    for attempt in range(max_attempts):
+        let_log(f"ChromaDB init attempt {attempt+1}/{max_attempts}")
+        # Сначала пробуем без удаления папки
+        client, milana, user, rag, success = _try_init(remove_on_failure=False)
+        if success:
+            return client, milana, user, rag
+
+        # Если не удалось, на последней попытке удаляем папку
+        if attempt == max_attempts - 1:
+            let_log("Final attempt: deleting entire ChromaDB directory and retrying")
+            client, milana, user, rag, success = _try_init(remove_on_failure=True)
+            if success:
+                return client, milana, user, rag
+            else:
+                raise RuntimeError("Cannot initialize ChromaDB even after deleting the database folder")
+        else:
+            # Не последняя попытка: немного ждём перед повторением (опционально)
+            import time
+            time.sleep(0.5)
+
+    raise RuntimeError("Unexpected: failed to initialize ChromaDB after all attempts")
+
 def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global memory_sql
     global actual_handlers_names, another_tools_files_addresses
@@ -3322,14 +3398,11 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
 
     # === Инициализация ChromaDB ===
     chroma_path = os.path.join(chat_path, "chroma_db")
-    client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True, anonymized_telemetry=False))
-    client.reset()
-    milana_collection = client.get_or_create_collection(name="milana_collection", metadata={"hnsw:space": "cosine"})
-    user_collection = client.get_or_create_collection(name="user_collection", metadata={"hnsw:space": "cosine"})
+    client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)
+
     if use_rag == 1:
         use_rag = True
         agent_func = _rag_agent_func
-        rag_collection = client.get_or_create_collection(name="rag_collection", metadata={"hnsw:space": "cosine"})
     else:
         use_rag = False
         agent_func = _standard_agent_func

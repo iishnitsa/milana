@@ -40,7 +40,7 @@ def find_tuple_by_first_list(data, target_list):
     return None
 
 def main(client_task):
-    # Инициализация атрибутов модуля при первом вызове
+    # Initialize module attributes on first call
     
     if not hasattr(main, 'attr_names'):
         main.attr_names = (
@@ -50,7 +50,6 @@ def main(client_task):
             'milana_base_2',
             'milana_base_3',
             'milana_delegation_part',
-            'command_example',
             'hierarchy_limit_info',
             'oper_anti_loop_text',
             'delegate_unavailable_for_operator',
@@ -76,9 +75,6 @@ IMPORTANT: Once Ivan is created, NEVER use the "!!!create_executor!!!" command a
 6. DELEGATION — '''
         main.milana_delegation_part = '''Ivan can delegate a subtask further down the hierarchy if he cannot handle it. This creates a similar dialog which you (Milana) cannot access. Only Ivan has the right to delegate.
 '''
-        main.command_example = '''
-Command example – "!!!create_executor!!! Write frontend for an online store"
-'''
         main.start_dialog_tool_text_1 = '''You will receive a plan and a task from the user. Based on the task description, select tools from the list of allowed tools.
 Output data:
 Only tool names separated by comma and space in a single line.
@@ -100,13 +96,13 @@ Consider the situation problematic (absurd) if:
 - actions repeat without progress
 - results lose connection to the task
 - the direction of reasoning constantly shifts
-- tools return inconsistent, irrelevant, or useless output
+- tools return inconsistent, contradictory, or useless results
 Do not stop the dialogue due to complexity alone.
 First try adjusting the plan or decomposition.
 Mark the task as impossible only if:
 - environment or tool limitations make the goal unreachable
 - required data or functions are missing or unavailable
-- all reasonable approaches lead to repetition or absurd results
+- all reasonable approaches lead to repetition or absurdity
 When stopping, you must prove impossibility:
 - list attempts and why they failed
 - describe constraints or failures
@@ -137,23 +133,23 @@ When stopping, you must prove impossibility:
     if global_state.summ_attach != global_state.summ_attach:
         prompt += global_state.summ_attach
         global_state.summ_attach = ''
-    # === ДЕЛЕГИРОВАНИЕ: добавляем новый уровень ===
+    # === DELEGATION: add a new level ===
     down_hierarchy()
     current_level = get_level()
     let_log(f"После делегирования: {global_state.now_try}, текущий уровень: {current_level}")
     
-    # Определяем, сможет ли будущий исполнитель делегировать
+    # Determine whether the future executor can delegate
     if global_state.hierarchy_limit == 0:
         ivan_can_delegate = True
     else:
         ivan_can_delegate = (current_level + 1) < global_state.hierarchy_limit
 
-    # Выбор инструментов для Миланы
+    # Tool selection for Milana
     milana_tools = global_state.milana_module_tools.copy()
     
     if global_state.module_tools_keys:
         need_tools_raw = ask_model(
-            prompt,  # user message: план и задача
+            prompt,  # user message: plan and task
             system_prompt=main.start_dialog_tool_text_1 +
                           global_state.tools_str +
                           main.start_dialog_tool_text_2
@@ -161,7 +157,7 @@ When stopping, you must prove impossibility:
         let_log(need_tools_raw)
         tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
         
-        # Удаляем команду делегирования из списка выбранных, если она случайно попала
+        # Remove delegation command from selected tools if it accidentally got in
         if not ivan_can_delegate and global_state.start_dialog_command_name in tools_names:
             tools_names.remove(global_state.start_dialog_command_name)
             let_log(f"Удалена команда делегирования из выбранных инструментов")
@@ -172,33 +168,33 @@ When stopping, you must prove impossibility:
                     milana_tools[tool_tokens] = (tool_desc, tool_func)
                     break
         let_log('ошибки нет')
-    # Удаляем команду делегирования из инструментов Миланы, если следующий уровень недоступен
+    # Remove delegation command from Milana's tools if the next level is unavailable
     if not ivan_can_delegate and global_state.start_dialog_command_name in milana_tools:
         del milana_tools[global_state.start_dialog_command_name]
         let_log("Удалена команда делегирования из инструментов Миланы")
     
-    # === ФОРМИРОВАНИЕ ПРОМПТА ===
+    # === BUILD PROMPT ===
     full_prompt = main.milana_base_1
-    # 1. Информация о том, что Иван может делегировать (добавляется ВСЕГДА, кроме случая, когда делегирование полностью отключено - лимит=1)
+    # 1. Information that Ivan can delegate (added ALWAYS except when delegation is completely disabled - limit=1)
     if global_state.hierarchy_limit != 1:
         full_prompt += main.milana_base_2
-        full_prompt += main.milana_delegation_part
         full_prompt += main.milana_base_3
+        full_prompt += main.milana_delegation_part
         full_prompt += f"\n{main.delegate_unavailable_for_operator}\n"
-        # 2. Сообщение для Миланы: она не может делегировать (добавляется ВСЕГДА, кроме случая, когда делегирование полностью отключено - лимит=1)
+        # 2. Message for Milana: she cannot delegate (added ALWAYS except when delegation is completely disabled - limit=1)
     else: full_prompt += main.milana_base_3
 
-    # 3. Добавляем информацию об иерархии, если лимит больше 1
+    # 3. Add hierarchy information if limit is greater than 1
     if global_state.hierarchy_limit > 1:
         full_prompt += f"\n{main.hierarchy_limit_info} {current_level}/{global_state.hierarchy_limit}.\n"
     full_prompt += no_markdown_instruction + write_shortly_prompt
     let_log(milana_tools)
     prompt += only_one_func_text
-    # Добавляем описание инструментов, исключая skip-команды
+    # Add tool descriptions, excluding skip commands
     for tool in milana_tools:
         if tool not in global_state.skip_tools_keys:
             prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
-    if not native_func_call: prompt += what_is_func_text + main.command_example
+    if not native_func_call: prompt += what_is_func_text
     full_prompt += prompt + main.oper_anti_loop_text
     let_log(full_prompt)
     let_log(global_state.another_tools)
@@ -208,7 +204,7 @@ When stopping, you must prove impossibility:
     create_chat(global_state.conversations, system_role_text + full_prompt)
     update_history(global_state.conversations, make_exec_first, func_role_text)
     global_state.tools_commands_dict[global_state.conversations] = milana_tools
-    # Генерация начального ответа
+    # Generate initial response
     try:
         talk_prompt = ask_model(
             system_role_text +
@@ -245,8 +241,8 @@ When stopping, you must prove impossibility:
     let_log("ОТВЕТ ПОСЛЕ ОБРАБОТКИ:")
     let_log(talk_prompt)
     let_log(f"[DBG_AFTER_CREATE_EXECUTOR] conversations={global_state.conversations}")
-    last_talk_prompt = talk_prompt # Это ответ от функции/инструмента
-    # Получаем историю для второго вызова
+    last_talk_prompt = talk_prompt # This is the response from function/tool
+    # Get history for second call
     let_log(f"[DBG_CONTEXT_LOAD] requested_chat={global_state.conversations}, milana_chat_id={milana_chat_id}")
     _, history_for_model = get_chat_context(global_state.conversations - 1)
     try:
@@ -282,7 +278,7 @@ When stopping, you must prove impossibility:
                     operator_role_text
                 )
             except: raise
-    # Записываем ответы в историю
+    # Write responses to history
     let_log(f"[DBG_HISTORY_WRITE] target_chat={global_state.conversations - 1}, current_conv={global_state.conversations}")
     update_history(global_state.conversations - 1, last_talk_prompt, func_role_text)
     update_history(global_state.conversations - 1, talk_prompt, operator_role_text)

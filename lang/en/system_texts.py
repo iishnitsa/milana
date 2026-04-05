@@ -1,27 +1,18 @@
-select_little_best_text = 'Select the best solution option that matches the task. If the first option is better, send 1, if the second, send 2, if they are the same, send 0.\nTask:\n'
-
-solution_text_1 = '\nSolution 1:\n'
-
-solution_text_2 = '\nSolution 2:\n'
-
-is_similar_text = 'Are these solutions similar enough to be considered identical? If yes, send 1, if no, send 0.\nTask:\n'
-
 summarize_prompt = '''
-Summarize the text, briefly retelling while preserving important details. 
-Please provide a brief overview, highlighting the most significant points and ensuring the original meaning and context are preserved: 
-Do not shorten ```highlighted text```, !!!commands!!!, quotes, links, formulas, code, or other elements that must not be shortened.
+Summarize the text, briefly retelling while preserving important details.
+Give a brief overview, highlighting the most significant points and preserving the original meaning and context.
+Do not shorten ```highlighted text```, quotes, links, formulas, code, or other elements that must not be shortened.
 Return only the finished summary, without any introductory words, explanations, or concluding phrases. Start immediately with the first sentence of the summary.
 '''
 
 found_info_1 = "Nothing found"
 
-grouping_prompt_1 = """Analyze the following dialogue and group messages that are logically related.
-For example: if several messages in a row pertain to the same question and answer, they can be combined.
-
+grouping_prompt_1 = """Analyze the dialogue and group messages that are logically related.
+For example: if several messages in a row refer to the same question and answer, they can be combined.
 """
 
 grouping_prompt_2 = """
-Return only the message numbers that should be combined, in the format: 1,2-4,5,6-8
+Return only the message numbers that need to be combined, in the format: 1,2-4,5,6-8
 Only numbers, commas, and dashes. No explanations.
 Examples:
 - "1,2-5,6" (message 1 separately, 2-5 together, 6 separately)
@@ -43,20 +34,18 @@ start_dialog_history = 'Brief dialogue history: '
 
 make_exec_first = 'Create an executor before starting the dialogue'
 
-udp_exec_if_needed = '\nUpdate executor if needed'
-
 gigo_dreamer = 'dreamer'
 gigo_realist = 'realist'
 gigo_critic = 'critic'
-gigo_questions = 'The user will send you a task. In response, write a question or questions about what information is missing to complete the task. One question per line. Ask all questions at once in one message if there are several questions. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study the phenomenon X?" instead of "What authoritative sources are there?". Send only questions, no other text should be present'
+gigo_questions = 'The user will send you a task. In response, write a question or questions about what information is missing to complete the task. One question per line. If there are several questions, ask all at once in one message. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study phenomenon X?" instead of "What authoritative sources are there?". Send only questions, no other text should be present'
 gigo_found_info = 'Only the following information is available:'
-gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how the task could be completed in the best possible way to leave the client completely delighted'
+gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how to complete the task in the best possible way to leave the client completely delighted'
 gigo_realist_note = '. Your task is to propose a practical, feasible solution. Describe how to effectively complete the task, avoiding unnecessary complications'
 gigo_critic_note = '. Your task is to analyze possible solutions and point out their weaknesses, risks, and potential problems. Identify what could go wrong and suggest how to avoid or mitigate the consequences'
 gigo_role_answer_1 = 'You are a '
-gigo_role_answer_2 = '. The user will send you a task and, possibly, additional information to complete the task. Respond immediately with how to perfectly complete the task, how to fully satisfy the client whose task the user has sent. You cannot ask the user questions or discuss anything with them. An answer is needed immediately. The answer should not contain interrogative sentences.'
-gigo_make_plan_1 = '''The user will send you the thoughts of various entities on solving the given task.
-As soon as they send the thoughts of the last entity, immediately write a plan for solving the task.
+gigo_role_answer_2 = '. The user will send you a task and, possibly, additional information to complete the task. Respond immediately with how to perfectly complete the task, how to fully satisfy the client whose task the user sent. You cannot ask the user questions or discuss anything with them. An answer is needed immediately. The answer should not contain interrogative sentences.'
+gigo_make_plan_1 = '''The user will send you the thoughts of different entities about solving the given task.
+As soon as they send the thoughts of the last entity, immediately write a plan for solving the task with a length of 10-25 lines.
 Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
 The answer should not contain interrogative sentences.
 Just the plan.
@@ -65,18 +54,18 @@ gigo_make_plan_2 = '\nEntities: '
 gigo_return_1 = 'Task:\n'
 gigo_return_2 = 'Plan:\n'
 gigo_next_role = 'Next: '
-gigo_final_role = ". That's it! I'll send you a plan right after your message."
-gigo_final_role_2 = "This is the last one. I'm waiting for a plan from you right now!"
+gigo_final_role = ". That's it! Right after your message I will send the plan."
+gigo_final_role_2 = "This is the last one. I am waiting for a plan from you right now!"
 
-start_load_attachments_text = 'Attachments are being downloaded, which may take a long time...'
-end_load_attachments_text = 'Attachments uploaded'
+start_load_attachments_text = 'Attachments are being loaded, this may take a long time...'
+end_load_attachments_text = 'Attachments loaded'
 
 marker_decision_approve = "VERDICT: APPROVE"
 marker_decision_revise = "VERDICT: REVISE"
 marker_decision_unsure = "VERDICT: UNSURE"
 marker_new_task = "NEW TASK:"
 prompt_decomposition_1 = """
-Analyze the following task and break it down into key, specific, and verifiable completion criteria as a numbered list. Your goal is to create a checklist for result evaluation.
+Analyze the following task and break it down into key, specific, and verifiable completion criteria as a numbered list. Your goal is to create a checklist for evaluating the result.
 Task:"""
 prompt_decomposition_2 = """
 Example output:
@@ -89,12 +78,12 @@ prompt_evaluation_2 = "Task:"
 prompt_evaluation_3 = "Result:"
 prompt_evaluation_4 = "Criteria:"
 prompt_evaluation_5 = """
-For each line from the criteria list, output a verdict. Use the markers [DONE] or [NOT DONE] at the beginning of each line, then provide a brief and clear explanation for your decision.
+For each line from the criteria list, output a verdict. Use the markers [DONE] or [NOT DONE] at the beginning of each line, then give a brief and clear explanation of your decision.
 Example output:
 [DONE] 1. Criterion one. Matches, because...
 [NOT DONE] 2. Criterion two. Not fulfilled, because it lacks...
 """
-prompt_decision_1 = "You are a senior system analyst. Make a final decision regarding the AI executor's work. You are provided with the original task, the result, and a detailed evaluation report. Note: the result may be a statement of impossibility with supporting evidence. Your task is to verify whether the task is truly impossible or if the executor made a mistake."
+prompt_decision_1 = "You are a senior system analyst. Make a final decision on the work of the AI executor. You are provided with the original task, the result, and a detailed evaluation report. Note: the result may be a message about the impossibility of the task with evidence. Your task is to check whether the task is really impossible or whether it is an executor error."
 prompt_decision_2 = "Original task:"
 prompt_decision_3 = "Previous result:"
 prompt_decision_4 = "Evaluation report:"
@@ -103,7 +92,7 @@ Analyze all the data and deliver a verdict.
 Your answer must have a STRICT structure:
 First, on a separate line, your verdict. This can be one of three options: `VERDICT: APPROVE`, `VERDICT: REVISE`, or `VERDICT: UNSURE`.
 - Use `VERDICT: REVISE` only if you see clear errors and can formulate a task to fix them.
-- Use `VERDICT: UNSURE` if the result seems acceptable, but you cannot guarantee its completeness or correctness, if you don't know how it can be improved, OR if after analyzing the evidence you conclude that the task is objectively impossible (see criteria below).
+- Use `VERDICT: UNSURE` if the result seems acceptable, but you cannot guarantee its completeness or correctness, if you do not know how it can be improved, OR if after analyzing the evidence you conclude that the task is objectively impossible (see criteria below).
 
 If the verdict is `VERDICT: REVISE`, then AFTER it, starting with the marker `NEW TASK:`, formulate a COMPLETE, SELF-CONTAINED TASK for another AI executor.
 
@@ -111,15 +100,15 @@ If the verdict is `VERDICT: REVISE`, then AFTER it, starting with the marker `NE
 - actions repeat without progress
 - responses lose connection to the task
 - the direction of reasoning constantly shifts
-- tools return inconsistent, irrelevant, or useless output
+- tools return inconsistent, contradictory, or useless results
 - environment or tool limitations make the goal unreachable
 - required data or functions are missing or unavailable
-- all reasonable approaches lead to repetition or absurd results
+- all reasonable approaches lead to repetition or absurdity
 
 If the result contains a justification of impossibility:
 - Check it against the criteria above.
 - If it meets the criteria → verdict `VERDICT: UNSURE`.
-- If it does not (e.g., the executor gives up without valid reasons) → verdict `VERDICT: REVISE` with a new task explaining that the previous claim of impossibility was incorrect and describing how to proceed.
+- If it does not (e.g., the executor gives up without valid reasons) → verdict `VERDICT: REVISE` with a new task stating that the previous claim of impossibility was incorrect and describing how to proceed.
 
 Example output for revision:
 VERDICT: REVISE
@@ -155,7 +144,7 @@ zip_processing_error_infoloaders = "ZIP archive processing error"
 unsupported_format_infoloaders = "Format not supported for processing"
 file_open_error_infoloaders = "Error opening file: "
 zip_archive_name_infoloaders = "ZIP archive"
-model_early_loading_error_text = "Loading of image processing models previously ended with error" # import
+model_early_loading_error_text = "Loading of image processing models previously ended with error"
 excel_cheet_text = "Sheet: "
 excel_cheet_size_text = "Size: "
 excel_cheet_strings_text = "rows,"
@@ -174,25 +163,23 @@ what_is_func_text = '''
 To call a command, write three exclamation marks at the beginning of the message, then the command name, then three more exclamation marks, and then the information for the command.
 Do not use json or markdown to call functions.
 If you are writing a command, write only the command, do not comment on your actions.
-If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message
-or a function response if it was called by you.
+If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message or a function response if it was called by you.
 '''
 
 only_one_func_text = """
 Only one command is allowed per message. A command cannot be combined with a message for the interlocutor.
-The interlocutor will not receive a message containing a correctly written and system-recognized command.
-The interlocutor will not see the function's response to your command.
-At the same time, in order for the interlocutor to receive the message, do not write a command!
-You can only call commands available in the system instruction. In parentheses they have a description of their functions:
+The interlocutor will not receive a message containing a correctly written and system-recognized command, nor will they see the function's response to your command.
+At the same time, for the interlocutor to receive the message, do not write a command!
+You can only call commands available in the system instruction. In parentheses is a description of their functions:
 """
 
 last_messages_marker = "\nLast messages:"
 
 rag_context_marker = """
-Retrieved fragments from long-term memory (RAG).
-These fragments were found by semantic similarity and may contain important details from earlier parts of the dialogue that are not included in the recent messages.
-Use them as an additional source of facts and context, but keep in mind that they may be incomplete or not sorted by time.
-Use these fragments to refine your response, but do not contradict the explicit history of recent messages.
+Retrieved fragments from long-term memory.
+They were found by meaning and may contain important details from earlier parts of the dialogue that are not included in the recent messages.
+Use them as an additional source of facts and context, but keep in mind that they may be incomplete, erroneous, or not sorted by time.
+Use them to refine your answer, but do not contradict the explicit history of recent messages.
 """
 
 global_summary_marker = "\nGlobal dialogue summary (overall picture, key decisions and facts from the entire conversation):\n"
@@ -215,14 +202,14 @@ warn_command_text_4 = "Command is inside a Markdown block. Call commands outside
 
 warn_command_text_5 = "Command is inside a JSON structure. Use pure !!!command!!! format."
 
-warn_command_text_6 = warn_command_text_6 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very start of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
+warn_command_text_6 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
 
-warn_command_text_7 = "Command marker is inside formatting (bold, italic, code, etc.)."
+warn_command_text_7 = "Command is inside markdown formatting (bold, italic, code, etc.)."
 
-no_markdown_instruction = '''IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'''
+no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
 
 yes_no_instruction = """
-You must answer only with "Yes." or "No." Do not provide any additional text, explanations, or punctuation other than the single word with a period. It is crucial for the system to parse your response correctly.
+You must answer only "Yes." or "No." Do not add any additional text, explanations, or punctuation other than a single period at the end. This is critically important for the system to parse your response correctly.
 Examples of correct answers:
 - Yes.
 - No.
@@ -231,7 +218,7 @@ Examples of incorrect answers:
 - No, because...
 - Probably yes.
 - Yep.
-- Certainly not.
+- Definitely not.
 Always answer exactly "Yes." or "No." depending on your decision.
 """
 
@@ -239,12 +226,12 @@ yes_word = "Yes."
 
 no_word = "No."
 
-cut_message_prompt = """You are an AI message-compressor. A user will send you their message.
-Your task is to reply with that same message on behalf of the user, paraphrased to be shorter, without any commentary. Just remove the fluff.
+cut_message_prompt = '''You are an AI message compressor. The user will send you their message.
+Your task is to reply with that same message on behalf of the user, paraphrasing to shorten it, without giving any comments. Just remove the fluff.
 If several words can be replaced by one, do so. No detail should be lost.
 Do not shorten ```highlighted text```, !!!commands!!!, quotes, links, formulas, code, or other elements that must not be shortened.
-If there's nothing to shorten, rewrite the message unchanged.
-The user's message will be replaced by your message and embedded into the conversation, so do not provide comments, introductions, or any extraneous text."""
+If there is nothing to shorten, simply rewrite the message unchanged.
+The user's message will be replaced by your message and embedded into the conversation, which is why you cannot give comments, lead-ins, or any extraneous text.'''
 
 write_shortly_prompt = '\nTry to write concisely to save context.'
 
@@ -254,14 +241,10 @@ prompt_global_summary = "Based on the summaries of individual fragments, create 
 
 prompt_recent_summary = "Based on the summaries of fragments, create a brief summary of the recent conversation topic. Highlight the essence of the discussion and important details. Use 1-3 sentences."
 
-text_tokens_coefficient = 0.5 # middle coefficient for english
+text_tokens_coefficient = 0.5 # average coefficient for English
 
 class SystemTextContainer:
     def __init__(self):
-        self.select_little_best_text = select_little_best_text
-        self.solution_text_1 = solution_text_1
-        self.solution_text_2 = solution_text_2
-        self.is_similar_text = is_similar_text
         self.summarize_prompt = summarize_prompt
         self.found_info_1 = found_info_1
         self.grouping_prompt_1 = grouping_prompt_1
@@ -272,7 +255,6 @@ class SystemTextContainer:
         self.func_role_text = func_role_text
         self.start_dialog_history = start_dialog_history
         self.make_exec_first = make_exec_first
-        self.udp_exec_if_needed = udp_exec_if_needed
         self.gigo_dreamer = gigo_dreamer
         self.gigo_realist = gigo_realist
         self.gigo_critic = gigo_critic

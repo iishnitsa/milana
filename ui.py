@@ -1014,7 +1014,10 @@ class ChatApp(CTk):
             self.backend.rescan_and_localize_modules()
             ModuleManager().load_modules(self.backend)
             self.setup_main_ui()
-        self.bind("<Configure>", self._update_message_wraplengths)
+        # Привязываем обновление wraplength к изменению размеров контейнера сообщений, а не всего окна
+        # И используем отложенное обновление для предотвращения лагов
+        self._wraplength_update_pending = False
+        self._last_available_width = 0
         global initialize_work
         from cross_gpt import initialize_work
     @staticmethod
@@ -1143,6 +1146,8 @@ class ChatApp(CTk):
         self.messages_frame = CTkScrollableFrame(self.messages_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
         self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=1.5)
         if hasattr(self.messages_frame, '_scrollbar'): self.messages_frame._scrollbar.configure(width=12)
+        # Привязываем обновление ширины текста к изменению размера контейнера сообщений
+        self.messages_bordered_frame.bind("<Configure>", self._on_message_container_resize)
         self.input_outer_frame = create_styled_frame(right_panel_container)
         self.input_outer_frame.grid(row=1, column=0, sticky="ew")
         self.input_outer_frame.grid_columnconfigure(0, weight=1)
@@ -1263,7 +1268,7 @@ class ChatApp(CTk):
             has_results = results_path.exists() and results_path.is_dir()
             column_offset = 1
             if has_files:
-                files_button = CTkButton(row_frame, text="💾", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
+                files_button = CTkButton(row_frame, text="ƒ", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
                 files_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_console_folders:
@@ -1275,10 +1280,10 @@ class ChatApp(CTk):
                 reports_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_results:
-                results_button = CTkButton(row_frame, text="📊", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "results"))
+                results_button = CTkButton(row_frame, text="✔", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "results"))
                 results_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
-            delete_button = CTkButton(row_frame, text="X", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.delete_selected_chat(c_id))
+            delete_button = CTkButton(row_frame, text="✘", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.delete_selected_chat(c_id))
             delete_button.grid(row=0, column=column_offset, padx=(2,0))
         self.chats_list_frame.update_idletasks()
         if hasattr(self.chats_list_frame, '_parent_canvas'):
@@ -1329,13 +1334,13 @@ class ChatApp(CTk):
         messages = self.backend.get_messages(self.current_chat_id)
         for msg in messages: self.add_message_to_ui(msg["text"], msg["isMy"], attachments=msg.get("attachments", []))
         if hasattr(self.messages_frame, '_parent_canvas'): self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
-        self.after(100, lambda: self.messages_frame._parent_canvas.yview_moveto(1))
+        self.after(0, lambda: self.messages_frame._parent_canvas.yview_moveto(1))
     def copy_text_to_clipboard(self, text):
         self.clipboard_clear()
         self.clipboard_append(text)
     def add_message_to_ui(self, text, is_my, is_question=False, attachments=None):
         bubble, msg_text_widget = create_chat_message_bubble(self.messages_frame, text, is_my, attachments, is_question)
-        setup_message_wraplength(msg_text_widget, self.messages_frame)
+        # Удалён вызов setup_message_wraplength, так как обновление ширины теперь централизовано
         def create_context_menu(event):
             menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE)
             menu.add_command(label=Lang.get("copy"), command=lambda: self.copy_text_to_clipboard(text))
@@ -1353,7 +1358,9 @@ class ChatApp(CTk):
         self.messages_frame.update_idletasks()
         if hasattr(self.messages_frame, '_parent_canvas'):
             self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
-        self.after(100, lambda: self.messages_frame._parent_canvas.yview_moveto(1.0))
+        self.after(0, lambda: self.messages_frame._parent_canvas.yview_moveto(1.0))
+        # После добавления сообщения сразу обновляем его wraplength, если контейнер уже имеет ширину
+        self._update_message_wraplengths(force=True)
     def open_attachment(self, file_path):
         try:
             if sys.platform == "win32": os.startfile(file_path)
@@ -1447,17 +1454,43 @@ class ChatApp(CTk):
         if log_queue:
             log_win = LogWindow(self, self.current_chat_id, log_queue)
             self.log_windows[self.current_chat_id] = log_win
-    def _update_message_wraplengths(self, event=None):
-        if not hasattr(self, 'messages_frame') or not self.messages_frame.winfo_exists(): return
+    def _on_message_container_resize(self, event=None):
+        """Обработчик изменения размера контейнера сообщений с отложенным обновлением"""
+        if self._wraplength_update_pending:
+            return
+        self._wraplength_update_pending = True
+        self.after(50, self._update_message_wraplengths)
+    def _update_message_wraplengths(self, force=False):
+        """Обновляет wraplength для всех текстовых меток сообщений"""
+        self._wraplength_update_pending = False
+        if not hasattr(self, 'messages_frame') or not self.messages_frame.winfo_exists():
+            return
+        if not hasattr(self, 'messages_bordered_frame') or not self.messages_bordered_frame.winfo_exists():
+            return
+
+        # Вычисляем доступную ширину
+        available_width = self.messages_bordered_frame.winfo_width() - 70  # отступы padx=10*2 + небольшой запас
+        if available_width < 50:
+            return
+
+        # Если ширина не изменилась и не принудительно, пропускаем
+        if not force and available_width == self._last_available_width:
+            return
+        self._last_available_width = available_width
+
+        # Обновляем все сообщения
         for row_frame in self.messages_frame.winfo_children():
             try:
+                # Ищем пузырь (CTkFrame) внутри строки
                 bubble = next((w for w in row_frame.winfo_children() if isinstance(w, CTkFrame)), None)
-                if not bubble: continue
-                content_frame = next((w for w in bubble.winfo_children() if isinstance(w, CTkFrame)), None)
-                if not content_frame: continue
-                for widget in content_frame.winfo_children():
-                    if isinstance(widget, CTkTextbox): self._adjust_textbox_height(widget)
-            except (IndexError, tk.TclError, StopIteration): continue
+                if not bubble:
+                    continue
+                # Обновляем все CTkLabel внутри пузыря
+                for child in bubble.winfo_children():
+                    if isinstance(child, CTkLabel):
+                        child.configure(wraplength=available_width)
+            except (IndexError, tk.TclError, StopIteration):
+                continue
 
 class CustomMessageBox(BaseTopLevel):
     def __init__(self, parent, title, message, buttons):
