@@ -160,14 +160,16 @@ user_review_text3 = '\nClient reaction:\n'
 user_review_text4 = '\nAI critic reaction:\n'
 
 what_is_func_text = '''
-To call a command, write three exclamation marks at the beginning of the message, then the command name, then three more exclamation marks, and then the information for the command.
+To call a command, start your message with three exclamation marks, then the command name, then three more exclamation marks, and then the information for the command.
 Do not use json or markdown to call functions.
 If you are writing a command, write only the command, do not comment on your actions.
 If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message or a function response if it was called by you.
 '''
 
 only_one_func_text = """
-Only one command is allowed per message. A command cannot be combined with a message for the interlocutor.
+Only one command (one call) per message is allowed. Do not write multiple commands (different or the same) in one message.
+Even if the system does not issue a protocol violation warning, all commands except the first one in the message will not be executed.
+A command cannot be combined with a message for the interlocutor.
 The interlocutor will not receive a message containing a correctly written and system-recognized command, nor will they see the function's response to your command.
 At the same time, for the interlocutor to receive the message, do not write a command!
 You can only call commands available in the system instruction. In parentheses is a description of their functions:
@@ -194,7 +196,7 @@ wrong_command = 'Wrong command'
 
 warn_command_text_1 = "Protocol violation detected:"
 
-warn_command_text_2 = "Only one command per message is allowed."
+warn_command_text_2 = "Only one command (one call) per message is allowed. Do not write multiple commands (different or the same) in one message."
 
 warn_command_text_3 = "Command must start at the beginning of the message."
 

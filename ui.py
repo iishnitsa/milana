@@ -52,8 +52,8 @@ DARK_TEXT_SECONDARY = "#b0b0b0"
 CORNER_RADIUS = 12
 FONT_FAMILY = "Georgia"
 FONT_REGULAR = (FONT_FAMILY, 12)
-BUTTON_THEME = {"fg_color": DARK_SECONDARY, "border_color": WHITE, "border_width": 1, "hover_color": PURPLE_ACCENT, "corner_radius": 50, "font": FONT_REGULAR}
-ENTRY_THEME = {"fg_color": DARK_ENTRY_BG, "border_color": PURPLE_ACCENT, "border_width": 1, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR}
+BUTTON_THEME = {"fg_color": "transparent", "hover_color": PURPLE_ACCENT, "corner_radius": 50, "font": FONT_REGULAR, "width": 20, "height": 20}  # убраны border_width, border_color, фон прозрачный
+ENTRY_THEME = {"fg_color": PURPLE_ACCENT, "border_width": 0, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR, "text_color": WHITE, "height": 27}  # фиолетовый фон, без рамки, белый текст, высота 27
 TAB_VIEW_THEME = {"segmented_button_selected_color": PURPLE_ACCENT, "segmented_button_unselected_color": DARK_SECONDARY, "segmented_button_selected_hover_color": PURPLE_ACCENT, "fg_color": DARK_BG}
 OPTIONMENU_THEME = {"fg_color": DARK_SECONDARY, "button_color": DARK_SECONDARY, "button_hover_color": PURPLE_ACCENT, "dropdown_fg_color": DARK_SECONDARY, "dropdown_hover_color": PURPLE_ACCENT, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR}
 
@@ -128,8 +128,13 @@ def create_chat_message_bubble(parent, text, is_my, attachments=None, is_questio
     """Создает пузырь сообщения чата (без авто-обновления wraplength)"""
     row_frame = create_styled_frame(parent)
     row_frame.pack(fill=tk.X, pady=2, padx=10, anchor="center")
-    # Основной пузырь с рамкой
-    bubble = create_styled_frame(row_frame, border_width=1, border_color=PURPLE_ACCENT if is_my else WHITE, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
+    # Основной пузырь
+    if is_my:
+        # Сообщения клиента: прозрачная рамка (border_width=0)
+        bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
+    else:
+        # Сообщения системы: фиолетовая заливка, без рамки
+        bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=PURPLE_ACCENT)
     bubble.pack(expand=False, anchor="center")
     # Текст сообщения (wraplength будет установлен динамически позже)
     msg_text_widget = CTkLabel(
@@ -1091,6 +1096,9 @@ class ChatApp(CTk):
             chat_button = row_frame.winfo_children()[0]
             chat_id = getattr(chat_button, "chat_id", None)
             if not chat_id: continue
+            # Проверяем, находится ли мышь над кнопкой – если да, не меняем цвет (оставляем hover_color)
+            if hasattr(chat_button, '_hover') and chat_button._hover:
+                continue
             is_blinking = self.chat_blink_states.get(chat_id, False)
             if self.current_chat_id == chat_id: color = PURPLE_ACCENT
             elif is_blinking: color = ACTIVE_CHAT_COLOR
@@ -1119,19 +1127,19 @@ class ChatApp(CTk):
         bottom_buttons_frame = create_styled_frame(left_panel_container)
         bottom_buttons_frame.grid(row=1, column=0, sticky="ew", pady=(3,0))
         # Кнопка настроек
-        self.settings_btn = create_styled_button(bottom_buttons_frame, text="☰", command=self.open_settings, width=30, height=30,)
+        self.settings_btn = create_styled_button(bottom_buttons_frame, text="☰", command=self.open_settings, width=20, height=20,)
         self.settings_btn.pack(side=tk.LEFT, padx=(0, 2))
         # Кнопка нового чата с символом "+↑"
-        self.new_chat_btn = create_styled_button(bottom_buttons_frame, text="+↑", command=self.create_chat_window_show, width=30, height=30,)
+        self.new_chat_btn = create_styled_button(bottom_buttons_frame, text="+↑", command=self.create_chat_window_show, width=20, height=20,)
         self.new_chat_btn.pack(side=tk.LEFT, padx=(2, 0))
         # Фрейм для кнопок управления чатом (play/stop/log)
         self.control_buttons_frame = create_styled_frame(bottom_buttons_frame, fg_color="transparent")
         self.control_buttons_frame.pack(side=tk.LEFT, padx=(2, 0))
-        self.stop_btn = create_styled_button(self.control_buttons_frame, text="◯", width=30, height=30, command=self.stop_chat)
+        self.stop_btn = create_styled_button(self.control_buttons_frame, text="◯", width=20, height=20, command=self.stop_chat)
         self.stop_btn.pack(side=tk.LEFT, padx=2)
-        self.play_btn = create_styled_button(self.control_buttons_frame, text="ᗞ", width=30, height=30, command=self.resume_chat)
+        self.play_btn = create_styled_button(self.control_buttons_frame, text="ᗞ", width=20, height=20, command=self.resume_chat)
         self.play_btn.pack(side=tk.LEFT, padx=2)
-        self.log_btn = create_styled_button(self.control_buttons_frame, text="log", width=30, height=30, command=self.open_log_window)
+        self.log_btn = create_styled_button(self.control_buttons_frame, text="log", width=20, height=20, command=self.open_log_window)
         self.log_btn.pack(side=tk.LEFT, padx=2)
         # ===== ПРАВАЯ ПАНЕЛЬ (СООБЩЕНИЯ) =====
         right_panel_container = create_styled_frame(self)
@@ -1150,19 +1158,61 @@ class ChatApp(CTk):
         self.messages_bordered_frame.bind("<Configure>", self._on_message_container_resize)
         self.input_outer_frame = create_styled_frame(right_panel_container)
         self.input_outer_frame.grid(row=1, column=0, sticky="ew")
-        self.input_outer_frame.grid_columnconfigure(0, weight=1)
-        self.input_text = CTkTextbox(self.input_outer_frame, corner_radius=CORNER_RADIUS, border_color=PURPLE_ACCENT, border_width=1, fg_color=DARK_SECONDARY, font=FONT_REGULAR, wrap="word")
+        
+        # Белая палка со скруглениями вправо
+        # Настраиваем колонки: 0 для палки, 1 для поля ввода, 2 для кнопок
+        self.input_outer_frame.grid_columnconfigure(0, weight=0)
+        self.input_outer_frame.grid_columnconfigure(1, weight=1)
+        self.input_outer_frame.grid_columnconfigure(2, weight=0)
+
+        # Белая палка со скруглениями вправо. Ширину холста делаем равной радиусу скругления.
+        self.left_bar_canvas = tk.Canvas(self.input_outer_frame, width=6, bg=DARK_BG, highlightthickness=0)
+        # Указываем фиксированную высоту (например, 62)
+        self.left_bar_canvas.configure(height=62) 
+        # sticky="nw" — прижать к левому (West) верхнему (North) углу
+        self.left_bar_canvas.grid(row=0, column=0, sticky="nw", padx=(0, 0))
+        def draw_left_wall(event=None):
+            self.left_bar_canvas.delete("all")
+            h = self.left_bar_canvas.winfo_height()
+            r = 6  # Скругление в 2 раза меньше (было 12)
+            
+            # Цвет берем из конфига (например, WHITE или DARK_BORDER)
+            color = WHITE 
+
+            if h > r * 2:
+                # 1. Верхнее левое скругление
+                # Координаты (x0, y0, x1, y1). Чтобы прижать влево, x0 = 0.
+                self.left_bar_canvas.create_arc(0, 0, r*2, r*2, 
+                                                start=90, extent=90, 
+                                                style="arc", outline=color, width=1)
+                
+                # 2. Вертикальная линия
+                # Рисуем строго по x=0 (самый левый край)
+                self.left_bar_canvas.create_line(0, r, 0, h - r, 
+                                                fill=color, width=1)
+                
+                # 3. Нижнее левое скругление
+                self.left_bar_canvas.create_arc(0, h - r*2, r*2, h, 
+                                                start=180, extent=90, 
+                                                style="arc", outline=color, width=1)
+
+        self.left_bar_canvas.bind("<Configure>", draw_left_wall)
+
+        # Поле ввода сообщения – прозрачное, без рамки
+        self.input_text = CTkTextbox(self.input_outer_frame, corner_radius=CORNER_RADIUS, border_width=0, fg_color="transparent", font=FONT_REGULAR, wrap="word", text_color=WHITE)
         self.input_text._textbox.configure(borderwidth=0, padx=0, pady=0)
-        self.input_text.grid(row=0, column=0, sticky="nsew", padx=2)
+        self.input_text.grid(row=0, column=1, sticky="nsew", padx=0)
         self.input_text.bind("<Return>", self.on_enter_pressed)
         self.input_text.bind("<KeyRelease>", self.adjust_input_height, add=True)
         enhance_text_widget(self.input_text)
+        
         self.adjust_input_height()
+        
         self.right_controls_frame = create_styled_frame(self.input_outer_frame)
-        self.right_controls_frame.grid(row=0, column=1, padx=(2,0), sticky="n")
-        self.send_btn = create_styled_button(self.right_controls_frame, text="↑", width=30, height=30, command=self.send_message)
+        self.right_controls_frame.grid(row=0, column=2, padx=(0,0), sticky="n")
+        self.send_btn = create_styled_button(self.right_controls_frame, text="↑", width=0, height=30, command=self.send_message)
         self.send_btn.pack(side=tk.TOP, anchor="ne")
-        self.attach_btn = create_styled_button(self.right_controls_frame, text="+", width=30, height=30, command=self.add_attachment)
+        self.attach_btn = create_styled_button(self.right_controls_frame, text="+", width=0, height=30, command=self.add_attachment)
         self.attach_btn.pack(side=tk.TOP, anchor="ne", pady=(5,0))
         self.load_chats()
         self.start_chat_blinking()
@@ -1229,7 +1279,7 @@ class ChatApp(CTk):
         for i, attachment in enumerate(self.attachments):
             att_frame = create_styled_frame(scrollable_container)
             att_frame.pack(fill="x", pady=2, padx=2)
-            CTkButton(att_frame, text="X", width=22, height=22, fg_color=DARK_SECONDARY, hover_color=PURPLE_ACCENT, text_color=WHITE, command=lambda idx=i: self.remove_attachment(idx)).pack(side=tk.LEFT)
+            CTkButton(att_frame, text="X", width=22, height=22, fg_color="transparent", hover_color=PURPLE_ACCENT, text_color=WHITE, command=lambda idx=i: self.remove_attachment(idx)).pack(side=tk.LEFT)
             create_styled_label(att_frame, text=attachment.name, font=FONT_REGULAR, anchor="w").pack(side=tk.LEFT, padx=5, expand=True, fill="x")
             
         def _update_height():
@@ -1258,6 +1308,10 @@ class ChatApp(CTk):
             chat_button = create_styled_button(row_frame, text=chat['name'], anchor="center", fg_color="transparent", border_width=0, command=lambda c_id=chat["id"]: self.on_chat_select(c_id))
             chat_button.grid(row=0, column=0, sticky="ew")
             setattr(chat_button, "chat_id", chat["id"])
+            # Добавляем флаги hover для корректного обновления цветов
+            chat_button._hover = False
+            chat_button.bind("<Enter>", lambda e: setattr(e.widget, '_hover', True))
+            chat_button.bind("<Leave>", lambda e: setattr(e.widget, '_hover', False))
             files_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "files")))
             console_folders_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "console_folders")))
             reports_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "reports")))
@@ -1268,22 +1322,22 @@ class ChatApp(CTk):
             has_results = results_path.exists() and results_path.is_dir()
             column_offset = 1
             if has_files:
-                files_button = CTkButton(row_frame, text="ƒ", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
+                files_button = CTkButton(row_frame, text="ƒ", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
                 files_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_console_folders:
-                console_button = CTkButton(row_frame, text=">_", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "console_folders"))
+                console_button = CTkButton(row_frame, text=">_", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "console_folders"))
                 console_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_reports:
-                reports_button = CTkButton(row_frame, text="📄", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
+                reports_button = CTkButton(row_frame, text="📄", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
                 reports_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_results:
-                results_button = CTkButton(row_frame, text="✔", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "results"))
+                results_button = CTkButton(row_frame, text="✔", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "results"))
                 results_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
-            delete_button = CTkButton(row_frame, text="✘", width=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.delete_selected_chat(c_id))
+            delete_button = CTkButton(row_frame, text="✘", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.delete_selected_chat(c_id))
             delete_button.grid(row=0, column=column_offset, padx=(2,0))
         self.chats_list_frame.update_idletasks()
         if hasattr(self.chats_list_frame, '_parent_canvas'):

@@ -2943,10 +2943,7 @@ def tools_selector(text, sid):
         if isinstance(cached[1][1], str): return cached[1][1]
     except: pass
 
-    is_warn = analyze_protocol(text)
-    if is_warn != None:
-        write_cache([False, is_warn])
-        return is_warn
+    #is_warn = analyze_protocol(text) тут возврат не делаем потому что это только сильнее путает модель как оказалось
     # 2) получить словарь команд для сессии
     try: now_commands = global_state.tools_commands_dict.get(sid, {})
     except Exception: now_commands = {}
@@ -2959,7 +2956,14 @@ def tools_selector(text, sid):
         let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
         let_log(text)
         let_log(now_commands)
+        is_warn = analyze_protocol(text)
+        if is_warn != None:
+            let_log(is_warn)
+            write_cache([False, is_warn])
+            let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+            return is_warn
         write_cache([False, False])
+        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
         return None
     found_key, content = match
     let_log(f"[TOOLS_SELECTOR] найден ключ: {found_key}, контент длиной: {len(content) if content else 0}")
@@ -2995,6 +2999,12 @@ def tools_selector(text, sid):
     except Exception: entry = None
     if entry == None:
         let_log("[TOOLS_SELECTOR] команда не найдена в словаре сессии (после сопоставления)")
+        is_warn = analyze_protocol(text)
+        if is_warn != None:
+            let_log(is_warn)
+            write_cache([False, is_warn])
+            let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+            return is_warn
         let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
         write_cache([False, wrong_command])
         return wrong_command

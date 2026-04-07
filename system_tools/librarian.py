@@ -1,6 +1,6 @@
 '''
 need_info
-Call to get missing information. Ask one question per line. If there are several questions, ask them all at once in a single message. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study the phenomenon X?" instead of "What authoritative sources are there?". Only questions are allowed; no other text should be present
+Call to obtain missing information. One question per line. Ask all questions at once in A SINGLE COMMAND but on a new line if there are multiple questions. Each question must be self-contained, as the system does not consider context during the search. For example, "What authoritative sources study the phenomenon X?" instead of "What authoritative sources exist?". Only questions are allowed; no other text.
 '''
 
 import os
