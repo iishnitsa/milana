@@ -655,7 +655,8 @@ class Backend:
             "token_limit": "8192", "model_provider_params": "",
             "model_type": default_provider, "use_rag": "1", 
             "filter_generations": "0", "hierarchy_limit": "0",
-            "write_log": "1", "write_results": "0", "max_critic_reactions": "2"}
+            "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
+            "max_token_limit": "8192"}   # <-- ДОБАВЛЕНО
         for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     def generate_id(self, length=12): return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
     def _load_chats_from_db(self):
@@ -854,6 +855,11 @@ class DynamicModelUI:
         self.token_label.pack(side="left", padx=(0,10))
         self.token_entry = create_styled_entry(token_frame, textvariable=self.settings_vars['token_limit'])
         self.token_entry.pack(side="left", fill="x", expand=True)
+        # --- ДОБАВЛЕНО: отображение максимального лимита ---
+        self.max_token_label = create_styled_label(token_frame, text="", text_color=DARK_TEXT_SECONDARY)
+        self.max_token_label.pack(side="left", padx=(5,0))
+        self.update_max_token_label()
+        # -------------------------------------------------
         if provider_items and not self.settings_vars['model_type'].get(): self.settings_vars['model_type'].set(provider_items[0][0])
         self.toggle_model_frames()
         
@@ -994,6 +1000,35 @@ class DynamicModelUI:
             except (tk.TclError, AttributeError): continue
         self._load_provider_params_from_string()
 
+    # --- НОВЫЕ МЕТОДЫ ДЛЯ РАБОТЫ С МАКС. ЛИМИТОМ ---
+    def update_max_token_label(self):
+        """Обновляет отображение максимального лимита рядом с полем ввода"""
+        if hasattr(self, 'max_token_label') and self.max_token_label.winfo_exists():
+            max_limit = self.settings_vars.get('max_token_limit', tk.StringVar(value="8192")).get()
+            try:
+                max_int = int(max_limit)
+                self.max_token_label.configure(text=f"{max_int}max")
+            except:
+                self.max_token_label.configure(text="")
+    
+    def enforce_token_limit(self):
+        """Проверяет, что token_limit не превышает max_token_limit и не меньше 1"""
+        max_str = self.settings_vars.get('max_token_limit', tk.StringVar(value="8192")).get()
+        cur_str = self.settings_vars['token_limit'].get().strip()
+        try:
+            max_limit = int(max_str) if max_str else 8192
+            cur_limit = int(cur_str) if cur_str else max_limit
+            if cur_limit < 1:
+                cur_limit = max_limit
+            elif cur_limit > max_limit:
+                cur_limit = max_limit
+            self.settings_vars['token_limit'].set(str(cur_limit))
+        except ValueError:
+            # Если в поле ввода не число, ставим максимальное
+            self.settings_vars['token_limit'].set(max_str if max_str else "8192")
+        self.update_max_token_label()
+    # ------------------------------------------------
+
 # ====== БАЗОВЫЙ КЛАСС ДЛЯ НАСТРОЕК ======
 class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
     def __init__(self, master, backend, title_key="settings_title", geometry="500x420"):
@@ -1066,11 +1101,17 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
             self.max_tokens = max_tokens
             self.validated = True
             showinfo(self, Lang.get("success"), msg)
+            # Обновляем глобальный максимальный лимит
+            self.settings_vars['max_token_limit'].set(str(self.max_tokens))
+            # Обновляем отображение
+            self.update_max_token_label()
+            # Принудительно корректируем текущий лимит, если он превышает новый максимум
+            self.enforce_token_limit()
             self.token_label.configure(text=Lang.get("token_limit_info", max_tokens=self.max_tokens))
-            self.settings_vars['token_limit'].set(str(self.max_tokens))
+            # Сохраняем пароль для дальнейшего использования
             if plain_password:
                 encryption_utils.SESSION_PASSWORDS[model_type] = plain_password
-                self.valid_password = plain_password # ДОБАВЛЕНО для привязки к конкретному чату
+                self.valid_password = plain_password
             
             # Обновляем сохраненную строку, чтобы она пошла в базу
             self.settings_vars['model_provider_params'].set(connection_string)
@@ -1078,7 +1119,20 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
             self.validated = False
             showerror(self, Lang.get("validation_error"), msg)
             
-    def _get_default_settings(self): settings = self.backend.get_global_settings(); return {key: tk.StringVar(value=val) for key, val in settings.items()}
+    def _get_default_settings(self): 
+        settings = self.backend.get_global_settings()
+        # Убедимся, что ключ max_token_limit присутствует
+        if 'max_token_limit' not in settings:
+            settings['max_token_limit'] = '8192'
+        # Если token_limit больше max_token_limit, корректируем
+        try:
+            cur = int(settings.get('token_limit', '8192'))
+            mx = int(settings['max_token_limit'])
+            if cur > mx:
+                settings['token_limit'] = str(mx)
+        except:
+            pass
+        return {key: tk.StringVar(value=val) for key, val in settings.items()}
 
 # ====== ГЛАВНОЕ ОКНО ЧАТА ======
 class ChatApp(CTk):
@@ -1717,6 +1771,9 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
     def _get_default_settings(self):
         settings = self.backend.get_global_settings()
         settings['language'] = self.lang_var.get()
+        # Убедимся, что ключ max_token_limit присутствует
+        if 'max_token_limit' not in settings:
+            settings['max_token_limit'] = '8192'
         return {key: tk.StringVar(value=val) for key, val in settings.items()}
         
     def validate_model(self):
@@ -1741,11 +1798,14 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
             self.max_tokens = max_tokens
             self.validated = True
             showinfo(self, Lang.get("success"), msg)
+            # Обновляем максимальный лимит
+            self.settings_vars['max_token_limit'].set(str(self.max_tokens))
+            self.update_max_token_label()
+            self.enforce_token_limit()
             self.token_label.configure(text=Lang.get("token_limit_info", max_tokens=self.max_tokens))
-            self.settings_vars['token_limit'].set(str(self.max_tokens))
             if plain_password:
                 encryption_utils.SESSION_PASSWORDS[model_type] = plain_password
-                self.valid_password = plain_password # ДОБАВЛЕНО
+                self.valid_password = plain_password
             
             self.settings_vars['model_provider_params'].set(connection_string)
             try:
@@ -1762,9 +1822,13 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
         if not self.validated:
             showerror(self, Lang.get("error"), Lang.get("model_not_validated"))
             return
+        # Проверка лимита через enforce_token_limit
+        self.enforce_token_limit()
         try:
             token_limit = int(self.settings_vars['token_limit'].get())
-            if not (1 <= token_limit <= self.max_tokens): raise ValueError
+            max_limit = int(self.settings_vars['max_token_limit'].get())
+            if not (1 <= token_limit <= max_limit):
+                raise ValueError
         except (ValueError, TypeError):
             showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens))
             return
@@ -1772,6 +1836,7 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
             'language': self.lang_var.get(),
             'model_type': self.settings_vars['model_type'].get(),
             'token_limit': self.settings_vars['token_limit'].get(),
+            'max_token_limit': self.settings_vars['max_token_limit'].get(),
             'model_provider_params': self.settings_vars['model_provider_params'].get() # Уже сгенерировано валидацией
         }
         self.backend.update_global_settings(settings_to_save)
@@ -1839,9 +1904,13 @@ class SettingsWindow(BaseSettingsWindow):
             settings_changed = (current_model_type != self.original_model_type or current_connection_string != self.original_connection_string)
             if not self.validated and settings_changed:
                 if not askyesno(self.master, Lang.get("warning"), Lang.get("model_not_validated_continue")): return
+            # Проверка лимита
+            self.enforce_token_limit()
             try:
                 token_limit = int(self.settings_vars['token_limit'].get())
-                if not (1 <= token_limit <= self.max_tokens): raise ValueError
+                max_limit = int(self.settings_vars['max_token_limit'].get())
+                if not (1 <= token_limit <= max_limit):
+                    raise ValueError
             except (ValueError, TypeError):
                 showerror(self.master, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens))
                 return
@@ -1849,6 +1918,7 @@ class SettingsWindow(BaseSettingsWindow):
                 'language': self.settings_vars['language'].get(),
                 'model_type': self.settings_vars['model_type'].get(),
                 'token_limit': self.settings_vars['token_limit'].get(),
+                'max_token_limit': self.settings_vars['max_token_limit'].get(),
                 'model_provider_params': self.settings_vars['model_provider_params'].get(), # Сохранен из validate
                 'use_rag': self.settings_vars['use_rag'].get(),
                 'filter_generations': self.settings_vars['filter_generations'].get(),
@@ -2113,6 +2183,16 @@ class CreateChatWindow(BaseSettingsWindow):
         if not self.validated and settings_changed:
             if not askyesno(self, Lang.get("warning"), Lang.get("model_not_validated_continue")):
                 return
+        # Проверка лимита
+        self.enforce_token_limit()
+        try:
+            token_limit = int(self.settings_vars['token_limit'].get())
+            max_limit = int(self.settings_vars['max_token_limit'].get())
+            if not (1 <= token_limit <= max_limit):
+                raise ValueError
+        except (ValueError, TypeError):
+            showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens))
+            return
         model_config = {
             'model_type': self.settings_vars['model_type'].get(),
             'model_provider_params': self.settings_vars['model_provider_params'].get(), # Из validate
