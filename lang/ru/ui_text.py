@@ -27,17 +27,13 @@ TEXTS = {
 
     # Chat Context Menu
     "active_chat_delete_title": "Активный чат",
-    "active_chat_delete_message": "Чат '{chat_name}' активен. Как удалить?",
-    "active_chat_delete_detail": "Вы можете безопасно остановить его или удалить принудительно.",
+    "active_chat_delete_message": "Чат '{chat_name}' активен. Удалить?",
     "delete_chat_confirm_title": "Удаление чата",
     "delete_chat_confirm_message": "Вы уверены, что хотите удалить чат '{chat_name}'?",
 
     # App Closing
     "active_chats_on_close_title": "Активные чаты",
-    "active_chats_on_close_message": "Есть {count} активных чатов. Выберите действие:",
-
-    # Chat Controls
-    "message_from_model_requires_answer": "Требуется ваш ответ",
+    "active_chats_on_close_message": "Есть {count} активных чатов. Выйти?",
 
     # Attachment
     "attachments": "Вложения",
@@ -47,30 +43,11 @@ TEXTS = {
     "initial_settings_title": "Первоначальная настройка",
     "save_and_continue": "Сохранить и продолжить",
     "validation_error": "Ошибка валидации",
-    "token_limit_info": "Лимит токенов (макс: {max_tokens})",
+    "token_limit_info": "Лимит токенов",
     "validate_model": "Проверить модель",
     "model_validated_success": "Модель прошла валидацию. Максимум токенов: {tokens}",
     "model_not_validated": "Модель не проверена",
     "model_not_validated_continue": "Модель не проверена. Продолжить?",
-
-    # Model Types and Settings
-    "model_type": "Тип модели:",
-    "local_model_path": "Путь к модели:",
-    "gguf_files": "GGUF файлы",
-    "huggingface_model": "Модель HuggingFace:",
-    "hf_token_placeholder": "chat=chat_model_repo;emb=embeddings_model_repo;token=token",
-    "openai_api_key": "chat=chat_model;emb=embeddings_model;token=api_key",
-    "anthropic_api_key": "chat=chat_model;emb=embeddings_model;token=api_key",
-    "mistral_api_key": "token=api_key",
-    "cohere_api_key": "chat=chat_model;emb=embeddings_model;token=api_key",
-    "ollama_model": "host=localhost;port=11434;chat=chat_model;emb=embeddings_model;token=optional",
-    "ollama_model_hint": "",
-    "lmstudio_model_hint": "Введите идентификатор, например 'local-model/model-name'",
-    "lmstudio_model": "host=localhost;port=8080;chat=chat_model;emb=embeddings_model;user=optional;password=optional",
-    "custom_api_server_ip": "IP сервера:",
-    "custom_api_port": "Порт:",
-    "custom_api_key": "API ключ (если требуется):",
-    "token_limit": "Лимит токенов:",
 
     # Create/Edit Chat Window
     "create_chat_title": "Создать новый чат",
@@ -96,7 +73,6 @@ TEXTS = {
     # Global Settings Window
     "settings_title": "Настройки",
     "tab_main": "Основные",
-    "settings_saved": "Настройки успешно сохранены.",
     "reset_settings_button": "Сбросить настройки",
     "reset_settings_confirm_title": "Сброс настроек",
     "reset_settings_confirm_message": "Вы уверены, что хотите сбросить все настройки? Приложение будет закрыто.",

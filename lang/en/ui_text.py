@@ -26,17 +26,13 @@ TEXTS = {
 
     # Chat Context Menu
     "active_chat_delete_title": "Active Chat",
-    "active_chat_delete_message": "Chat '{chat_name}' is active. How to delete?",
-    "active_chat_delete_detail": "You can safely stop it or force delete.",
+    "active_chat_delete_message": "Chat '{chat_name}' is active. Delete?",
     "delete_chat_confirm_title": "Delete Chat",
     "delete_chat_confirm_message": "Are you sure you want to delete chat '{chat_name}'?",
 
     # App Closing
     "active_chats_on_close_title": "Active Chats",
-    "active_chats_on_close_message": "There are {count} active chats. Choose action:",
-
-    # Chat Controls
-    "message_from_model_requires_answer": "Requires your response",
+    "active_chats_on_close_message": "There are {count} active chats. Quit?",
 
     # Attachment
     
@@ -47,30 +43,11 @@ TEXTS = {
     "initial_settings_title": "Initial Setup",
     "save_and_continue": "Save and Continue",
     "validation_error": "Validation Error",
-    "token_limit_info": "Token limit (max: {max_tokens})",
+    "token_limit_info": "Token limit",
     "validate_model": "Validate Model",
     "model_validated_success": "Model validated successfully. Max tokens: {tokens}",
     "model_not_validated": "Model not validated",
     "model_not_validated_continue": "The model is not validated. Continue?",
-
-    # Model Types and Settings
-    "model_type": "Model Type:",
-    "local_model_path": "Model Path:",
-    "gguf_files": "GGUF Files",
-    "huggingface_model": "HuggingFace Model:",
-    "hf_token_placeholder": "chat=chat_model_repo;emb=embeddings_model_repo;token=token",
-    "openai_api_key": "chat=chat_model;emb=embeddings_model;token=api_key",
-    "anthropic_api_key": "chat=chat_model;emb=embeddings_model;token=api_key",
-    "mistral_api_key": "token=api_key",
-    "cohere_api_key": "chat=chat_model;emb=embeddings_model;token=api_key",
-    "ollama_model": "host=localhost;port=11434;chat=chat_model;emb=embeddings_model;token=optional",
-    "ollama_model_hint": "",
-    "lmstudio_model_hint": "Enter identifier, e.g. 'local-model/model-name'",
-    "lmstudio_model": "host=localhost;port=8080;chat=chat_model;emb=embeddings_model;user=optional;password=optional",
-    "custom_api_server_ip": "Server IP:",
-    "custom_api_port": "Port:",
-    "custom_api_key": "API Key (if required):",
-    "token_limit": "Token Limit:",
 
     # Create/Edit Chat Window
     "create_chat_title": "Create New Chat",
@@ -96,7 +73,6 @@ TEXTS = {
     # Global Settings Window
     "settings_title": "Settings",
     "tab_main": "Main",
-    "settings_saved": "Settings saved successfully.",
     "reset_settings_button": "Reset Settings",
     "reset_settings_confirm_title": "Reset Settings",
     "reset_settings_confirm_message": "Are you sure you want to reset all settings? The application will close.",
