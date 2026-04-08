@@ -919,13 +919,13 @@ class DynamicModelUI:
                         if param_name in ["api_token", "token"]:
                             if value:
                                 self.real_token_values[current_provider_module] = value
-                                provider_ui_vars[param_name].set("********")
+                                provider_ui_vars[param_name].set("***")
                             else:
                                 provider_ui_vars[param_name].set("")
                         elif param_name == "password":
                             self.real_pwd_status[current_provider_module] = value
                             if value == "set":
-                                provider_ui_vars[param_name].set("********")
+                                provider_ui_vars[param_name].set("***")
                             else:
                                 provider_ui_vars[param_name].set("")
                         else:
@@ -1377,22 +1377,22 @@ class ChatApp(CTk):
             has_results = results_path.exists() and results_path.is_dir()
             column_offset = 1
             if has_files:
-                files_button = CTkButton(row_frame, text="ƒ", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
+                files_button = CTkButton(row_frame, text="ƒ", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
                 files_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_console_folders:
-                console_button = CTkButton(row_frame, text=">_", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "console_folders"))
+                console_button = CTkButton(row_frame, text=">_", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "console_folders"))
                 console_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_reports:
-                reports_button = CTkButton(row_frame, text="📄", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
+                reports_button = CTkButton(row_frame, text="📄", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
                 reports_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
             if has_results:
-                results_button = CTkButton(row_frame, text="✔", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.open_folder(c_id, "results"))
+                results_button = CTkButton(row_frame, text="✔", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "results"))
                 results_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
-            delete_button = CTkButton(row_frame, text="✘", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda c_id=chat["id"]: self.delete_selected_chat(c_id))
+            delete_button = CTkButton(row_frame, text="✘", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.delete_selected_chat(c_id))
             delete_button.grid(row=0, column=column_offset, padx=(2,0))
         self.chats_list_frame.update_idletasks()
         if hasattr(self.chats_list_frame, '_parent_canvas'):
@@ -1456,7 +1456,7 @@ class ChatApp(CTk):
         msg_text_widget.bind("<Button-3>", create_context_menu)
         if attachments:
             att_container = create_styled_frame(bubble)
-            att_container.pack(fill="x", pady=(8, 5), padx=5)
+            att_container.pack(fill="✘", pady=(8, 5), padx=5)
             for att in attachments:
                 att_frame = create_styled_frame(att_container)
                 att_frame.pack(fill=tk.X, pady=1, anchor='w')

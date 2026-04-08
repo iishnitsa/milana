@@ -3459,19 +3459,47 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         model_disconnect = model_providers_module.disconnect
         connect_params = settings.get("model_provider_params", "")
 
-        # --- ИНТЕГРАЦИЯ ШИФРОВАНИЯ ---
+        # --- ИНТЕГРАЦИЯ ШИФРОВАНИЯ: расшифровка токена перед передачей провайдеру ---
         import encryption_utils
         import inspect
-        decrypted_password = encryption_utils.SESSION_PASSWORDS.get(model_type)
-        if not decrypted_password:
-            decrypted_password = encryption_utils.SESSION_PASSWORDS.get(chat_id)
-            
+
+        # Парсим параметры из строки подключения
+        params_dict = {}
+        for part in connect_params.split(";"):
+            if "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            params_dict[k.strip().lower()] = v.strip()
+
+        decrypted_token = None
+        # Если в параметрах указано, что пароль установлен
+        if params_dict.get("password") == "set":
+            # Пытаемся получить пароль из кэша (сначала по chat_id, потом по model_type)
+            password = None
+            if session_passwords:
+                password = session_passwords.get(chat_id) or session_passwords.get(model_type)
+            if not password:
+                # Пароль не найден — выбрасываем исключение, чтобы процесс не стартовал
+                raise RuntimeError(f"Password not found in session for chat {chat_id} or model {model_type}")
+
+            # Определяем, какой параметр содержит зашифрованный токен
+            encrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
+            if encrypted_token:
+                try:
+                    decrypted_token = encryption_utils.decrypt_token(encrypted_token, password)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to decrypt token: {e}")
+            else:
+                raise RuntimeError("Encrypted token (api_token/token) not found in connection string")
+
+        # Вызываем connect провайдера, передавая расшифрованный токен отдельным параметром
         sig = inspect.signature(model_connect)
-        if '_decrypted_password' in sig.parameters:
-            connection_result = model_connect(connect_params, _decrypted_password=decrypted_password)
+        if '_decrypted_token' in sig.parameters:
+            connection_result = model_connect(connect_params, _decrypted_token=decrypted_token)
         else:
+            # fallback для старых провайдеров, которые ещё не обновлены
             connection_result = model_connect(connect_params)
-        # -----------------------------
+        # -------------------------------------------------------------
 
         if not connection_result or not connection_result[0]:
             let_log(f"Ошибка подключения модели: {connection_result[1] if len(connection_result) > 1 else 'Unknown error'}")
