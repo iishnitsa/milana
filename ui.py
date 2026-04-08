@@ -20,11 +20,14 @@ from contextlib import redirect_stdout
 import io
 from customtkinter import CTkButton, CTkEntry, CTkFrame, CTkLabel, CTkScrollableFrame, CTkTabview, CTkRadioButton, CTkSwitch, CTkOptionMenu, CTkTextbox, CTkCheckBox, CTkToplevel, CTk
 
+# --- ДОБАВЛЕНО ДЛЯ ШИФРОВАНИЯ ---
+import encryption_utils
+# --------------------------------
+
 initialize_work = None
 
 # ====== БАЗОВЫЕ ПУТИ ======
 def get_base_dir():
-    """Возвращает абсолютный путь к каталогу, где находится исполняемый файл (ui.exe) или файл скрипта (ui.py)."""
     if getattr(sys, 'frozen', False): return os.path.dirname(os.path.abspath(sys.executable))
     else: return os.path.dirname(os.path.abspath(__file__))
 def resource_path(relative_path): return os.path.join(get_base_dir(), relative_path)
@@ -33,7 +36,6 @@ if BASE_DIR not in sys.path: sys.path.append(BASE_DIR)
 PROVIDER_DIR = resource_path("providers")
 if os.path.exists(PROVIDER_DIR) and PROVIDER_DIR not in sys.path: sys.path.append(PROVIDER_DIR)
 def get_ast_value(node):
-    """Безопасное получение значения из AST узла"""
     if isinstance(node, ast.Constant): return node.value
     elif isinstance(node, ast.Str): return node.s
     elif isinstance(node, ast.Num): return node.n
@@ -52,8 +54,8 @@ DARK_TEXT_SECONDARY = "#b0b0b0"
 CORNER_RADIUS = 12
 FONT_FAMILY = "Georgia"
 FONT_REGULAR = (FONT_FAMILY, 12)
-BUTTON_THEME = {"fg_color": "transparent", "hover_color": PURPLE_ACCENT, "corner_radius": 50, "font": FONT_REGULAR, "width": 20, "height": 20}  # убраны border_width, border_color, фон прозрачный
-ENTRY_THEME = {"fg_color": PURPLE_ACCENT, "border_width": 0, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR, "text_color": WHITE, "height": 27}  # фиолетовый фон, без рамки, белый текст, высота 27
+BUTTON_THEME = {"fg_color": "transparent", "hover_color": PURPLE_ACCENT, "corner_radius": 50, "font": FONT_REGULAR, "width": 20, "height": 20}
+ENTRY_THEME = {"fg_color": PURPLE_ACCENT, "border_width": 0, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR, "text_color": WHITE, "height": 27}
 TAB_VIEW_THEME = {"segmented_button_selected_color": PURPLE_ACCENT, "segmented_button_unselected_color": DARK_SECONDARY, "segmented_button_selected_hover_color": PURPLE_ACCENT, "fg_color": DARK_BG}
 OPTIONMENU_THEME = {"fg_color": DARK_SECONDARY, "button_color": DARK_SECONDARY, "button_hover_color": PURPLE_ACCENT, "dropdown_fg_color": DARK_SECONDARY, "dropdown_hover_color": PURPLE_ACCENT, "corner_radius": CORNER_RADIUS, "font": FONT_REGULAR}
 
@@ -75,17 +77,16 @@ def create_styled_frame(parent, fg_color="transparent", **kwargs): return CTkFra
 def create_styled_label(parent, text, **kwargs):
     default_kwargs = {"font": FONT_REGULAR}
     default_kwargs.update(kwargs)
-    # По умолчанию делаем прозрачный фон
     if "fg_color" not in default_kwargs: default_kwargs["fg_color"] = "transparent"
-    # Убираем минимальную высоту, если не указана явно
     if "height" not in default_kwargs: default_kwargs["height"] = 0
     return CTkLabel(parent, text=text, **default_kwargs)
-def create_param_widget(parent, param_info, settings_vars_dict, path_vars_dict):
+
+def create_param_widget(parent, param_info, settings_vars_dict, path_vars_dict, on_change_callback=None):
     param_name = param_info['name']
     default_val = param_info.get('default')
     is_file = param_info['is_file']
     param_frame = create_styled_frame(parent)
-    param_frame.pack(fill="x", pady=2, padx=5)  # ДОБАВЛЕН padx=5
+    param_frame.pack(fill="x", pady=2, padx=5)
     param_frame.grid_columnconfigure(1, weight=1)
     label_text = param_name
     if default_val is not None and str(default_val).strip() != '': label_text += f" {default_val}"
@@ -93,6 +94,9 @@ def create_param_widget(parent, param_info, settings_vars_dict, path_vars_dict):
     input_frame = create_styled_frame(param_frame)
     input_frame.grid(row=0, column=1, sticky="ew")
     input_frame.grid_columnconfigure(0, weight=1)
+    
+    is_secret = param_name.lower() in ["api_token", "password", "token"]
+    
     if is_file:
         path_vars_dict[param_name] = tk.StringVar()
         display_var = tk.StringVar()
@@ -103,10 +107,19 @@ def create_param_widget(parent, param_info, settings_vars_dict, path_vars_dict):
         create_styled_button(input_frame, text=Lang.get("browse"), width=80, command=browse_cmd).grid(row=0, column=1)
     else:
         settings_vars_dict[param_name] = tk.StringVar(value='')
-        entry = create_styled_entry(input_frame, textvariable=settings_vars_dict[param_name])
+        if on_change_callback:
+            # Назначаем trace на изменение переменной
+            settings_vars_dict[param_name].trace_add("write", lambda *args: on_change_callback(param_name))
+            
+        entry_kwargs = {}
+        if is_secret:
+            entry_kwargs["show"] = "•"
+            
+        entry = create_styled_entry(input_frame, textvariable=settings_vars_dict[param_name], **entry_kwargs)
         entry.grid(row=0, column=0, sticky="ew")
     return param_frame
-def create_module_ui_item(parent, module_data, module_type, enabled_var=None, on_toggle=None, on_remove=None, show_checkbox=True): # Создает элемент UI для модуля системного или кастомного
+
+def create_module_ui_item(parent, module_data, module_type, enabled_var=None, on_toggle=None, on_remove=None, show_checkbox=True):
     frame = create_styled_frame(parent, border_width=1, border_color=DARK_BORDER, corner_radius=CORNER_RADIUS)
     frame.pack(fill="x", padx=5, pady=3, ipady=5)
     frame.grid_columnconfigure(1, weight=1)
@@ -125,18 +138,13 @@ def create_module_ui_item(parent, module_data, module_type, enabled_var=None, on
         remove_btn.grid(row=0, column=2, rowspan=1, padx=10)
     return frame
 def create_chat_message_bubble(parent, text, is_my, attachments=None, is_question=False):
-    """Создает пузырь сообщения чата (без авто-обновления wraplength)"""
     row_frame = create_styled_frame(parent)
     row_frame.pack(fill=tk.X, pady=2, padx=10, anchor="center")
-    # Основной пузырь
     if is_my:
-        # Сообщения клиента: прозрачная рамка (border_width=0)
         bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
     else:
-        # Сообщения системы: фиолетовая заливка, без рамки
         bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=PURPLE_ACCENT)
     bubble.pack(expand=False, anchor="center")
-    # Текст сообщения (wraplength будет установлен динамически позже)
     msg_text_widget = CTkLabel(
         bubble, 
         text=text, 
@@ -146,12 +154,10 @@ def create_chat_message_bubble(parent, text, is_my, attachments=None, is_questio
         text_color=WHITE,
         font=FONT_REGULAR,
         height=0)
-    # Настраиваем отступы
     if is_question and not is_my: msg_text_widget.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 8), pady=6)
     else: msg_text_widget.pack(fill=tk.X, expand=True, padx=8, pady=6)
     return bubble, msg_text_widget
 def setup_message_wraplength(widget, messages_frame):
-    """Настраивает автоматическое обновление wraplength для сообщений"""
     def update_wraplength(event=None):
         try:
             if widget.winfo_exists():
@@ -161,13 +167,13 @@ def setup_message_wraplength(widget, messages_frame):
     messages_frame.bind("<Configure>", update_wraplength)
     widget.after(100, update_wraplength)
     return update_wraplength
-def setup_window_geometry(window, width=600, height=500): # Настраивает геометрию окна и центрирует его
+def setup_window_geometry(window, width=600, height=500):
     window.geometry(f"{width}x{height}")
     window.minsize(width, height)
     window.after(10, lambda: set_windows_dark_titlebar(window))
     window.after_idle(lambda: center_window(window))
     return window
-def center_window(window): # Центрирует окно на экране
+def center_window(window):
     window.update_idletasks()
     try:
         width, height = window.winfo_width(), window.winfo_height()
@@ -176,7 +182,6 @@ def center_window(window): # Центрирует окно на экране
         window.geometry(f'{width}x{height}+{x}+{y}')
     except tk.TclError: pass
 def create_tabbed_interface(parent, tabs_config):
-    """Создает интерфейс с вкладками"""
     tabview = CTkTabview(parent, **TAB_VIEW_THEME)
     tabview.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
     tabs = {}
@@ -187,13 +192,13 @@ def create_tabbed_interface(parent, tabs_config):
         setup_func(tab)
         tabs[tab_name] = tab
     return tabview, tabs
-def load_settings_from_backend(backend, additional_settings=None): # Загружает настройки из бэкенда
+def load_settings_from_backend(backend, additional_settings=None):
     settings = backend.get_global_settings()
     if additional_settings: settings.update(additional_settings)
     settings_vars = {}
     for key, val in settings.items(): settings_vars[key] = tk.StringVar(value=val)
     return settings_vars
-def save_settings_to_backend(backend, settings_vars, keys_to_save=None): #Сохраняет настройки в бэкенд
+def save_settings_to_backend(backend, settings_vars, keys_to_save=None):
     if keys_to_save is None: keys_to_save = settings_vars.keys()
     settings_to_save = {}
     for key in keys_to_save:
@@ -203,7 +208,6 @@ def save_settings_to_backend(backend, settings_vars, keys_to_save=None): #Сох
 
 # ====== ОБЩИЕ ФУНКЦИИ ======
 def create_scrollable_frame(parent, **kwargs):
-    """Создает скроллируемый фрейм с единым стилем скроллбара"""
     scroll_frame = CTkScrollableFrame(parent, 
         scrollbar_button_color=PURPLE_ACCENT,
         scrollbar_button_hover_color=WHITE,
@@ -212,7 +216,6 @@ def create_scrollable_frame(parent, **kwargs):
         scroll_frame._scrollbar.configure(width=10)
     return scroll_frame
 def browse_file_dialog(entry_widget, entry_var, full_path_var, filetypes=None):
-    """Общая функция для выбора файлов"""
     if filetypes is None: 
         filetypes = [("All files", "*.*")]
     path = filedialog.askopenfilename(filetypes=filetypes)
@@ -222,24 +225,18 @@ def browse_file_dialog(entry_widget, entry_var, full_path_var, filetypes=None):
         entry_widget.delete(0, "end")
         entry_widget.insert(0, Path(path).name)
 def show_message_dialog(parent, title, message, buttons):
-    """Общая функция для показа диалоговых окон"""
     dialog = CustomMessageBox(parent, title, message, buttons)
     parent.wait_window(dialog)
     return dialog.result
 def showinfo(parent, title, message):
-    """Показать информационное сообщение"""
     return show_message_dialog(parent, title, message, [("OK", True)])
 def showerror(parent, title, message):
-    """Показать сообщение об ошибке"""
     return show_message_dialog(parent, title, message, [("OK", True)])
 def showwarning(parent, title, message):
-    """Показать предупреждение"""
     return show_message_dialog(parent, title, message, [("OK", True)])
 def askyesno(parent, title, message):
-    """Задать вопрос с выбором Да/Нет"""
     return show_message_dialog(parent, title, message, [("Yes", True), ("No", False)])
 def enhance_text_widget(widget):
-    """Добавляет контекстное меню и горячие клавиши к текстовым виджетам"""
     is_textbox = isinstance(widget, CTkTextbox)
     is_entry = isinstance(widget, CTkEntry)
     def select_all(event=None):
@@ -314,7 +311,6 @@ def enhance_text_widget(widget):
     widget.bind("<Button-3>", show_menu)
     if sys.platform == "darwin": widget.bind("<Button-2>", show_menu)
 def set_windows_dark_titlebar(window):
-    """Устанавливает темную тему заголовка окна на Windows"""
     if sys.platform != "win32": return
     try:
         import ctypes
@@ -328,7 +324,6 @@ def set_windows_dark_titlebar(window):
         ctypes.windll.user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)
     except Exception as e: print(f"Failed to set dark title bar: {e}")
 def setup_icon(root: tk.Tk):
-    """Устанавливает иконку приложения"""
     base = Path(__file__).resolve().parent
     png_path = str(base / "data" / "icons" / "icon.png")
     ico_path = str(base / "data" / "icons" / "icon.ico")
@@ -554,7 +549,7 @@ class ModuleManager:
             self.custom_modules = []
     def get_default_modules(self): return self.default_modules
     def get_custom_modules(self): return self.custom_modules
-    def update_custom_modules(self, backend): self.custom_modules = backend.get_custom_mods() # Обновляет только кастомные модули (при добавлении/удалении)
+    def update_custom_modules(self, backend): self.custom_modules = backend.get_custom_mods()
 
 class Backend:
     def __init__(self):
@@ -576,7 +571,6 @@ class Backend:
             return None
         finally:
             if 'conn' in locals(): conn.close()
-    # ИСПРАВЛЕНО: добавлен параметр lang, используется переданный язык или глобальный
     def _get_localized_doc(self, mod_path: Path, lang=None):
         localized_name, localized_desc = None, None
         if lang is None:
@@ -603,7 +597,6 @@ class Backend:
     def rescan_and_localize_modules(self):
         db_path = self.db_path
         system_os = platform.system().lower()
-        # Используем текущий язык интерфейса для всех операций
         current_language = Lang.current_language
         self._check_existing_modules(db_path, current_language)
         self._scan_default_tools(db_path, system_os, current_language)
@@ -776,7 +769,8 @@ class Backend:
         settings = self.get_global_settings()
         if not settings: return False
         return bool(settings.get("model_type")) and bool(settings.get("model_provider_params"))
-    def validate_model_settings(self, model_type, connection_string):
+    
+    def validate_model_settings(self, model_type, connection_string, plain_password=None):
         max_tokens = 8192
         try:
             if not model_type: return False, Lang.get("model_err_no_provider"), max_tokens
@@ -786,13 +780,24 @@ class Backend:
             provider_module = importlib.import_module(f"model_providers.{model_type}")
             f = io.StringIO()
             with redirect_stdout(f):
-                try: valid, tokens, _ = provider_module.connect(connection_string)
-                except:
-                    valid, tokens, _, error_text = provider_module.connect(connection_string)
-                    return False, Lang.get("model_err_validation_generic", e=error_text), max_tokens
+                try: 
+                    import inspect
+                    sig = inspect.signature(provider_module.connect)
+                    if '_decrypted_password' in sig.parameters:
+                        valid, tokens, _, *rest = provider_module.connect(connection_string, _decrypted_password=plain_password)
+                    else:
+                        valid, tokens, _, *rest = provider_module.connect(connection_string)
+                except Exception as ex:
+                    try:
+                        valid, tokens, _, error_text = provider_module.connect(connection_string)
+                        return False, Lang.get("model_err_validation_generic", e=error_text), max_tokens
+                    except:
+                        return False, Lang.get("model_err_validation_generic", e=str(ex)), max_tokens
             if hasattr(provider_module, 'disconnect'): provider_module.disconnect()
             if valid: return True, Lang.get("model_validated_success", tokens=tokens), tokens
-            else: return False, Lang.get("custom_api_fail"), max_tokens
+            else:
+                err_msg = rest[0] if rest else Lang.get("custom_api_fail")
+                return False, err_msg, max_tokens
         except ImportError as e: print(e); return False, Lang.get("model_err_provider_missing", provider=model_type), max_tokens
         except Exception as e: return False, Lang.get("model_err_validation_generic", e=str(e)), max_tokens
 
@@ -818,11 +823,13 @@ class DynamicModelUI:
         self.model_frames = {}
         self.provider_manager = ProviderManager()
         self.providers = self.provider_manager.get_providers()
+        self.real_token_values = {}
+        self.real_pwd_status = {}
+        
     def _create_model_ui(self, parent):
         model_type_frame = create_styled_frame(parent)
         model_type_frame.pack(fill="x", pady=10)
         create_styled_label(model_type_frame, text=Lang.get("model_type")).pack(side="top")
-        # Горизонтальный скроллируемый контейнер для радиокнопок провайдеров
         radio_scroll = CTkScrollableFrame(parent, orientation="horizontal", fg_color="transparent", height=50,
                                           scrollbar_button_color=PURPLE_ACCENT,
                                           scrollbar_button_hover_color=WHITE)
@@ -838,7 +845,7 @@ class DynamicModelUI:
                            value=module_name, command=self.toggle_model_frames,
                            fg_color=PURPLE_ACCENT, font=FONT_REGULAR).pack(side="left", padx=5, pady=2)
         self.frames_container = create_styled_frame(parent)
-        self.frames_container.pack(fill="x", pady=10)  # убрал expand=True
+        self.frames_container.pack(fill="x", pady=10)
         self.model_frames = {}
         self._create_specific_model_frames(self.frames_container)
         token_frame = create_styled_frame(parent)
@@ -849,27 +856,47 @@ class DynamicModelUI:
         self.token_entry.pack(side="left", fill="x", expand=True)
         if provider_items and not self.settings_vars['model_type'].get(): self.settings_vars['model_type'].set(provider_items[0][0])
         self.toggle_model_frames()
+        
     def _create_specific_model_frames(self, container):
         try:
             for module_name, p_data in self.providers.items():
                 main_frame = create_styled_frame(container, border_color=WHITE, border_width=1)
                 self.model_frames[module_name] = main_frame
-                # Фиксируем высоту белой рамки и запрещаем ей менять размер под содержимое
                 main_frame.pack_propagate(False)
-                main_frame.configure(height=170)  # можно подобрать нужное значение
+                main_frame.configure(height=170)
                 params = p_data.get('params', [])
-                # Всегда используем scrollable frame с фиксированной высотой для единообразия
-                scroll_frame = create_scrollable_frame(main_frame, fg_color=DARK_BG, height=170)  # чуть меньше, чтобы вместить рамку
+                scroll_frame = create_scrollable_frame(main_frame, fg_color=DARK_BG, height=170)
                 scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
                 content_parent = scroll_frame
 
                 self.provider_param_full_paths.setdefault(module_name, {})
                 self.settings_vars.setdefault(module_name, {})
                 for param in params:
-                    create_param_widget(content_parent, param, self.settings_vars[module_name], self.provider_param_full_paths[module_name])
-                # Упаковываем основной фрейм после создания всех виджетов
+                    def make_callback(m_name=module_name):
+                        return lambda p_name: self.on_param_change(p_name, m_name)
+                    create_param_widget(content_parent, param, self.settings_vars[module_name], self.provider_param_full_paths[module_name], make_callback())
                 main_frame.pack(fill="x", padx=5, pady=5)
         except Exception as e: print(f"Error creating specific model frames: {e}")
+
+    def on_param_change(self, param_name, provider_name):
+        """Очищает связанные поля паролей/токенов при редактировании (ТЗ 8 и 9)"""
+        if param_name not in ["api_token", "token", "password"]:
+            return
+            
+        val = self.settings_vars[provider_name][param_name].get()
+        if val == "********": return # Игнорируем программные установки
+        
+        if param_name in ["api_token", "token"]:
+            pwd_var = self.settings_vars[provider_name].get("password")
+            if pwd_var and pwd_var.get() == "********":
+                pwd_var.set("") # Очищаем пароль, так как токен изменился
+        
+        if param_name == "password":
+            tok_var = self.settings_vars[provider_name].get("api_token")
+            if not tok_var: tok_var = self.settings_vars[provider_name].get("token")
+            if tok_var and tok_var.get() == "********":
+                tok_var.set("") # Очищаем токен, так как пароль изменился
+
     def _load_provider_params_from_string(self):
         params_str = self.settings_vars['model_provider_params'].get()
         current_provider_module = self.settings_vars['model_type'].get()
@@ -880,20 +907,38 @@ class DynamicModelUI:
             provider_path_vars = self.provider_param_full_paths.get(current_provider_module, {})
             provider_info = self.providers.get(current_provider_module, {})
             if not provider_info: return
+            
             for param_info in provider_info.get('params', []):
                 param_name = param_info['name']
                 value = params_map.get(param_name, '')
                 if param_info['is_file']:
                     if param_name in provider_path_vars: provider_path_vars[param_name].set(value)
                 else:
-                    if param_name in provider_ui_vars: provider_ui_vars[param_name].set(value)
+                    if param_name in provider_ui_vars:
+                        # Скрываем секреты
+                        if param_name in ["api_token", "token"]:
+                            if value:
+                                self.real_token_values[current_provider_module] = value
+                                provider_ui_vars[param_name].set("********")
+                            else:
+                                provider_ui_vars[param_name].set("")
+                        elif param_name == "password":
+                            self.real_pwd_status[current_provider_module] = value
+                            if value == "set":
+                                provider_ui_vars[param_name].set("********")
+                            else:
+                                provider_ui_vars[param_name].set("")
+                        else:
+                            provider_ui_vars[param_name].set(value)
         except (ValueError, KeyError) as e: print(f"Warning: Could not parse provider params string: {params_str}. Error: {e}")
+        
     def _build_connection_string(self) -> str:
         provider_module_name = self.settings_vars['model_type'].get()
         if not provider_module_name: return ""
         provider_data = self.providers.get(provider_module_name)
         if not provider_data: return ""
         parts = []
+        self._last_plain_password = None
         provider_params_info = provider_data.get('params', [])
         provider_ui_vars = self.settings_vars.get(provider_module_name, {})
         provider_path_vars = self.provider_param_full_paths.get(provider_module_name, {})
@@ -904,11 +949,36 @@ class DynamicModelUI:
                 if param_name in provider_path_vars: value = provider_path_vars[param_name].get().strip()
             else:
                 if param_name in provider_ui_vars: value = provider_ui_vars[param_name].get().strip()
+            
+            # Обработка секретов и шифрования
+            if param_name in ["api_token", "token"]:
+                if value == "********":
+                    value = self.real_token_values.get(provider_module_name, "")
+                else:
+                    raw_token = value
+                    raw_pwd = provider_ui_vars.get("password", tk.StringVar()).get()
+                    if raw_pwd == "********": raw_pwd = "" # Защита от сбоя логики очистки
+                    if raw_pwd and raw_token:
+                        value = encryption_utils.encrypt_token(raw_token, raw_pwd)
+                        self._last_plain_password = raw_pwd
+                    else:
+                        value = raw_token
+            elif param_name == "password":
+                if value == "********":
+                    value = self.real_pwd_status.get(provider_module_name, "")
+                else:
+                    if value:
+                        self._last_plain_password = value
+                        value = "set"
+                    else:
+                        value = "empty"
+
             if not value:
                 default_val = param.get('default')
                 if default_val is not None: value = str(default_val)
             if value: parts.append(f"{param_name}={value}")
         return ";".join(parts)
+        
     def toggle_model_frames(self):
         self.validated = False
         try:
@@ -918,7 +988,7 @@ class DynamicModelUI:
         for name, frame in self.model_frames.items():
             try:
                 if name == selected_type and frame.winfo_exists():
-                    frame.pack(fill="x", padx=5, pady=5)  # убрал expand=True
+                    frame.pack(fill="x", padx=5, pady=5)
                 elif frame.winfo_exists():
                     frame.pack_forget()
             except (tk.TclError, AttributeError): continue
@@ -926,7 +996,7 @@ class DynamicModelUI:
 
 # ====== БАЗОВЫЙ КЛАСС ДЛЯ НАСТРОЕК ======
 class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
-    def __init__(self, master, backend, title_key="settings_title", geometry="500x420"):  # УМЕНЬШЕНА ВЫСОТА С 500x500
+    def __init__(self, master, backend, title_key="settings_title", geometry="500x420"):
         BaseTopLevel.__init__(self, master)
         DynamicModelUI.__init__(self)
         self.master = master
@@ -940,15 +1010,14 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
         self.grid_rowconfigure(0, weight=1)
     def setup_model_tab(self, parent):
         parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(0, weight=0)  # Изменено для прилипания к верху
+        parent.grid_rowconfigure(0, weight=0)
         main_frame = create_styled_frame(parent)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)  # Уменьшены отступы
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         main_frame.grid_columnconfigure(0, weight=1)
         self._create_model_ui(main_frame)
     def setup_chat_settings_tab(self, parent):
         parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(0, weight=0)  # Изменено для прилипания к верху
-        # Определяем какие настройки булевы, а какие числовые на основе данных из БД
+        parent.grid_rowconfigure(0, weight=0)
         all_settings = self.backend.get_global_settings()
         boolean_keys = ['use_rag', 'filter_generations', 'write_log', 'write_results']
         numeric_keys = ['hierarchy_limit', 'max_critic_reactions']
@@ -956,7 +1025,6 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
         scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         scrollable_frame.grid_columnconfigure(0, weight=1)
         row = 0
-        # Булевы настройки (переключатели)
         for key in boolean_keys:
             if key not in self.settings_vars: self.settings_vars[key] = tk.StringVar(value=all_settings.get(key, '1' if key == 'use_rag' else '0'))
             frame = create_styled_frame(scrollable_frame)
@@ -965,7 +1033,6 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
             switch = CTkSwitch(frame, text="", variable=self.settings_vars[key], onvalue="1", offvalue="0", switch_width=50, switch_height=25, progress_color=PURPLE_ACCENT, font=FONT_REGULAR)
             switch.pack(side="right")
             row += 1
-        # Числовые настройки (поля ввода)
         for key in numeric_keys:
             if key not in self.settings_vars: self.settings_vars[key] = tk.StringVar(value=all_settings.get(key, '0' if key == 'hierarchy_limit' else '2'))
             frame = create_styled_frame(scrollable_frame)
@@ -975,19 +1042,42 @@ class BaseSettingsWindow(BaseTopLevel, DynamicModelUI):
             entry = create_styled_entry(frame, textvariable=self.settings_vars[key])
             entry.grid(row=0, column=1, sticky="ew")
             row += 1
+            
     def validate_model(self):
         model_type = self.settings_vars['model_type'].get()
         connection_string = self._build_connection_string()
-        valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string)
+        plain_password = getattr(self, '_last_plain_password', None)
+        
+        # ТЗ: Если в параметрах провайдера есть токен, то должен быть пароль.
+        has_token_param = False
+        has_pwd_param = False
+        provider_data = self.providers.get(model_type, {})
+        for param in provider_data.get('params', []):
+            p_name = param['name'].lower()
+            if "api_token" in p_name or "token" in p_name: has_token_param = True
+            if "password" in p_name: has_pwd_param = True
+            
+        if has_token_param and not has_pwd_param:
+            showerror(self, Lang.get("error", "Error"), "Провайдер не валиден: отсутствует параметр password при наличии api_token.")
+            return
+
+        valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string, plain_password)
         if valid:
             self.max_tokens = max_tokens
             self.validated = True
             showinfo(self, Lang.get("success"), msg)
             self.token_label.configure(text=Lang.get("token_limit_info", max_tokens=self.max_tokens))
             self.settings_vars['token_limit'].set(str(self.max_tokens))
+            if plain_password:
+                encryption_utils.SESSION_PASSWORDS[model_type] = plain_password
+                self.valid_password = plain_password # ДОБАВЛЕНО для привязки к конкретному чату
+            
+            # Обновляем сохраненную строку, чтобы она пошла в базу
+            self.settings_vars['model_provider_params'].set(connection_string)
         else:
             self.validated = False
             showerror(self, Lang.get("validation_error"), msg)
+            
     def _get_default_settings(self): settings = self.backend.get_global_settings(); return {key: tk.StringVar(value=val) for key, val in settings.items()}
 
 # ====== ГЛАВНОЕ ОКНО ЧАТА ======
@@ -1019,8 +1109,6 @@ class ChatApp(CTk):
             self.backend.rescan_and_localize_modules()
             ModuleManager().load_modules(self.backend)
             self.setup_main_ui()
-        # Привязываем обновление wraplength к изменению размеров контейнера сообщений, а не всего окна
-        # И используем отложенное обновление для предотвращения лагов
         self._wraplength_update_pending = False
         self._last_available_width = 0
         global initialize_work
@@ -1096,7 +1184,6 @@ class ChatApp(CTk):
             chat_button = row_frame.winfo_children()[0]
             chat_id = getattr(chat_button, "chat_id", None)
             if not chat_id: continue
-            # Проверяем, находится ли мышь над кнопкой – если да, не меняем цвет (оставляем hover_color)
             if hasattr(chat_button, '_hover') and chat_button._hover:
                 continue
             is_blinking = self.chat_blink_states.get(chat_id, False)
@@ -1116,23 +1203,17 @@ class ChatApp(CTk):
         left_panel_container.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         left_panel_container.grid_rowconfigure(0, weight=1)
         left_panel_container.grid_rowconfigure(1, weight=0)
-        # Внешняя белая рамка
         chats_bordered_frame = create_styled_frame(left_panel_container, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
         chats_bordered_frame.grid(row=0, column=0, sticky="nsew")
-        # Внутренний скроллируемый фрейм
         self.chats_list_frame = CTkScrollableFrame(chats_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
         self.chats_list_frame.pack(fill="both", expand=True, padx=10, pady=1.5)
         if hasattr(self.chats_list_frame, '_scrollbar'): self.chats_list_frame._scrollbar.configure(width=12)
-        # ====== КНОПКИ "НОВЫЙ ЧАТ", "НАСТРОЙКИ" И УПРАВЛЕНИЯ ЧАТОМ ======
         bottom_buttons_frame = create_styled_frame(left_panel_container)
         bottom_buttons_frame.grid(row=1, column=0, sticky="ew", pady=(3,0))
-        # Кнопка настроек
         self.settings_btn = create_styled_button(bottom_buttons_frame, text="☰", command=self.open_settings, width=20, height=20,)
         self.settings_btn.pack(side=tk.LEFT, padx=(0, 2))
-        # Кнопка нового чата с символом "+↑"
         self.new_chat_btn = create_styled_button(bottom_buttons_frame, text="+↑", command=self.create_chat_window_show, width=20, height=20,)
         self.new_chat_btn.pack(side=tk.LEFT, padx=(2, 0))
-        # Фрейм для кнопок управления чатом (play/stop/log)
         self.control_buttons_frame = create_styled_frame(bottom_buttons_frame, fg_color="transparent")
         self.control_buttons_frame.pack(side=tk.LEFT, padx=(2, 0))
         self.stop_btn = create_styled_button(self.control_buttons_frame, text="◯", width=20, height=20, command=self.stop_chat)
@@ -1141,12 +1222,11 @@ class ChatApp(CTk):
         self.play_btn.pack(side=tk.LEFT, padx=2)
         self.log_btn = create_styled_button(self.control_buttons_frame, text="log", width=20, height=20, command=self.open_log_window)
         self.log_btn.pack(side=tk.LEFT, padx=2)
-        # ===== ПРАВАЯ ПАНЕЛЬ (СООБЩЕНИЯ) =====
         right_panel_container = create_styled_frame(self)
         right_panel_container.grid(row=0, column=1, sticky="nsew", padx=(0, 5), pady=5)
         right_panel_container.grid_columnconfigure(0, weight=1)
-        right_panel_container.grid_rowconfigure(0, weight=1)  # для messages_bordered_frame
-        right_panel_container.grid_rowconfigure(1, weight=0)  # для input_outer_frame
+        right_panel_container.grid_rowconfigure(0, weight=1)
+        right_panel_container.grid_rowconfigure(1, weight=0)
         self.messages_bordered_frame = create_styled_frame(right_panel_container, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
         self.messages_bordered_frame.grid(row=0, column=0, sticky="nsew", pady=(0,5))
         self.messages_bordered_frame.grid_rowconfigure(0, weight=1)
@@ -1154,51 +1234,29 @@ class ChatApp(CTk):
         self.messages_frame = CTkScrollableFrame(self.messages_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
         self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=1.5)
         if hasattr(self.messages_frame, '_scrollbar'): self.messages_frame._scrollbar.configure(width=12)
-        # Привязываем обновление ширины текста к изменению размера контейнера сообщений
         self.messages_bordered_frame.bind("<Configure>", self._on_message_container_resize)
         self.input_outer_frame = create_styled_frame(right_panel_container)
         self.input_outer_frame.grid(row=1, column=0, sticky="ew")
         
-        # Белая палка со скруглениями вправо
-        # Настраиваем колонки: 0 для палки, 1 для поля ввода, 2 для кнопок
         self.input_outer_frame.grid_columnconfigure(0, weight=0)
         self.input_outer_frame.grid_columnconfigure(1, weight=1)
         self.input_outer_frame.grid_columnconfigure(2, weight=0)
 
-        # Белая палка со скруглениями вправо. Ширину холста делаем равной радиусу скругления.
         self.left_bar_canvas = tk.Canvas(self.input_outer_frame, width=6, bg=DARK_BG, highlightthickness=0)
-        # Указываем фиксированную высоту (например, 62)
         self.left_bar_canvas.configure(height=62) 
-        # sticky="nw" — прижать к левому (West) верхнему (North) углу
         self.left_bar_canvas.grid(row=0, column=0, sticky="nw", padx=(0, 0))
         def draw_left_wall(event=None):
             self.left_bar_canvas.delete("all")
             h = self.left_bar_canvas.winfo_height()
-            r = 6  # Скругление в 2 раза меньше (было 12)
-            
-            # Цвет берем из конфига (например, WHITE или DARK_BORDER)
+            r = 6
             color = WHITE 
-
             if h > r * 2:
-                # 1. Верхнее левое скругление
-                # Координаты (x0, y0, x1, y1). Чтобы прижать влево, x0 = 0.
-                self.left_bar_canvas.create_arc(0, 0, r*2, r*2, 
-                                                start=90, extent=90, 
-                                                style="arc", outline=color, width=1)
-                
-                # 2. Вертикальная линия
-                # Рисуем строго по x=0 (самый левый край)
-                self.left_bar_canvas.create_line(0, r, 0, h - r, 
-                                                fill=color, width=1)
-                
-                # 3. Нижнее левое скругление
-                self.left_bar_canvas.create_arc(0, h - r*2, r*2, h, 
-                                                start=180, extent=90, 
-                                                style="arc", outline=color, width=1)
+                self.left_bar_canvas.create_arc(0, 0, r*2, r*2, start=90, extent=90, style="arc", outline=color, width=1)
+                self.left_bar_canvas.create_line(0, r, 0, h - r, fill=color, width=1)
+                self.left_bar_canvas.create_arc(0, h - r*2, r*2, h, start=180, extent=90, style="arc", outline=color, width=1)
 
         self.left_bar_canvas.bind("<Configure>", draw_left_wall)
 
-        # Поле ввода сообщения – прозрачное, без рамки
         self.input_text = CTkTextbox(self.input_outer_frame, corner_radius=CORNER_RADIUS, border_width=0, fg_color="transparent", font=FONT_REGULAR, wrap="word", text_color=WHITE)
         self.input_text._textbox.configure(borderwidth=0, padx=0, pady=0)
         self.input_text.grid(row=0, column=1, sticky="nsew", padx=0)
@@ -1224,12 +1282,10 @@ class ChatApp(CTk):
             if event.num == 4: canvas.yview_scroll(-1, "units")
             elif event.num == 5: canvas.yview_scroll(1, "units")
     def update_chat_controls(self):
-        # Сначала скрываем все кнопки управления
         self.stop_btn.pack_forget()
         self.play_btn.pack_forget()
         self.log_btn.pack_forget()
         if not self.current_chat_id:
-            # Нет активного чата – показываем play (disabled)
             self.play_btn.pack(side=tk.LEFT, padx=2)
             self.play_btn.configure(state="disabled")
             return
@@ -1270,9 +1326,9 @@ class ChatApp(CTk):
         self.attachment_overlay_frame = None
         if not self.attachments: return
         self.attachment_overlay_frame = create_styled_frame(self.messages_bordered_frame, fg_color=DARK_BG, border_color=PURPLE_ACCENT, border_width=1, corner_radius=CORNER_RADIUS)
-        self.attachment_overlay_frame.place(relx=0.5, y=5, anchor='n', relwidth=0.75)  # УЖЕ ЕСТЬ y=10
+        self.attachment_overlay_frame.place(relx=0.5, y=5, anchor='n', relwidth=0.75)
         header_text = f"{Lang.get('attachments')}"
-        inner_frame = create_styled_frame(self.attachment_overlay_frame, fg_color=DARK_SECONDARY, corner_radius=CORNER_RADIUS)  # ДОБАВЛЕН corner_radius
+        inner_frame = create_styled_frame(self.attachment_overlay_frame, fg_color=DARK_SECONDARY, corner_radius=CORNER_RADIUS)
         inner_frame.pack(fill="both", expand=True, padx=0, pady=0)
         scrollable_container = create_scrollable_frame(inner_frame, fg_color="transparent", label_text=header_text, label_text_color=WHITE)
         scrollable_container.pack(fill="both", expand=True, padx=5, pady=5)
@@ -1308,7 +1364,6 @@ class ChatApp(CTk):
             chat_button = create_styled_button(row_frame, text=chat['name'], anchor="center", fg_color="transparent", border_width=0, command=lambda c_id=chat["id"]: self.on_chat_select(c_id))
             chat_button.grid(row=0, column=0, sticky="ew")
             setattr(chat_button, "chat_id", chat["id"])
-            # Добавляем флаги hover для корректного обновления цветов
             chat_button._hover = False
             chat_button.bind("<Enter>", lambda e: setattr(e.widget, '_hover', True))
             chat_button.bind("<Leave>", lambda e: setattr(e.widget, '_hover', False))
@@ -1394,7 +1449,6 @@ class ChatApp(CTk):
         self.clipboard_append(text)
     def add_message_to_ui(self, text, is_my, is_question=False, attachments=None):
         bubble, msg_text_widget = create_chat_message_bubble(self.messages_frame, text, is_my, attachments, is_question)
-        # Удалён вызов setup_message_wraplength, так как обновление ширины теперь централизовано
         def create_context_menu(event):
             menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE)
             menu.add_command(label=Lang.get("copy"), command=lambda: self.copy_text_to_clipboard(text))
@@ -1413,7 +1467,6 @@ class ChatApp(CTk):
         if hasattr(self.messages_frame, '_parent_canvas'):
             self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
         self.after(0, lambda: self.messages_frame._parent_canvas.yview_moveto(1.0))
-        # После добавления сообщения сразу обновляем его wraplength, если контейнер уже имеет ширину
         self._update_message_wraplengths(force=True)
     def open_attachment(self, file_path):
         try:
@@ -1440,10 +1493,49 @@ class ChatApp(CTk):
             if self.current_chat_id not in self.chat_processes: self.resume_chat()
             else: self.update_chat_controls()
     def start_chat_process(self, chat_id):
+        # --- НОВАЯ ЛОГИКА АВТОМАТИЧЕСКОЙ ПРОВЕРКИ И ЗАПРОСА ПАРОЛЯ ---
+        chat_settings = self.backend.get_chat_settings(chat_id)
+        params_str = chat_settings.get('model_provider_params', '')
+        model_type = chat_settings.get('model_type', '')
+        
+        params_map = dict(part.split('=', 1) for part in params_str.split(';') if '=' in part)
+        if params_map.get('password') == 'set':
+            pwd = encryption_utils.SESSION_PASSWORDS.get(chat_id)
+            if not pwd and model_type in encryption_utils.SESSION_PASSWORDS:
+                pwd = encryption_utils.SESSION_PASSWORDS.get(model_type)
+                
+            encrypted_token = params_map.get('api_token') or params_map.get('token')
+            
+            valid_cached = False
+            if pwd and encrypted_token:
+                try:
+                    encryption_utils.decrypt_token(encrypted_token, pwd)
+                    valid_cached = True
+                    encryption_utils.SESSION_PASSWORDS[chat_id] = pwd
+                except Exception:
+                    valid_cached = False
+                    
+            if not valid_cached:
+                while True:
+                    pwd_input = encryption_utils.ask_for_password(self)
+                    if not pwd_input:
+                        return # Пользователь отменил ввод, процесс не запускаем
+                    try:
+                        if encrypted_token:
+                            encryption_utils.decrypt_token(encrypted_token, pwd_input)
+                        encryption_utils.SESSION_PASSWORDS[chat_id] = pwd_input
+                        break
+                    except Exception:
+                        showerror(self, Lang.get("error", "Error"), "Неверный пароль!")
+        # -------------------------------------------------------------
+        
         input_queue = multiprocessing.Queue()
         output_queue = multiprocessing.Queue()
         log_queue = multiprocessing.Queue()
-        p = multiprocessing.Process(target=initialize_work, args=(BASE_DIR, chat_id, input_queue, output_queue, log_queue))
+        
+        # Передаем обновленный кэш (содержащий пароль для chat_id)
+        current_passwords = encryption_utils.SESSION_PASSWORDS.copy()
+        p = multiprocessing.Process(target=initialize_work, args=(BASE_DIR, chat_id, input_queue, output_queue, log_queue, current_passwords))
         p.start()
         self.chat_processes[chat_id] = p
         self.input_queues[chat_id] = input_queue
@@ -1458,7 +1550,6 @@ class ChatApp(CTk):
         try:
             while True:
                 response = self.output_queues[chat_id].get_nowait()
-                # Извлекаем текст и вложения
                 if isinstance(response, dict):
                     message_text = response.get('text', '')
                     attachments = response.get('attachments')
@@ -1471,7 +1562,6 @@ class ChatApp(CTk):
                 if not message_text:
                     continue
 
-                # Сохраняем в БД с вложениями
                 self.backend.add_message(chat_id, message_text, False, attachments)
 
                 if chat_id == self.current_chat_id:
@@ -1509,37 +1599,27 @@ class ChatApp(CTk):
             log_win = LogWindow(self, self.current_chat_id, log_queue)
             self.log_windows[self.current_chat_id] = log_win
     def _on_message_container_resize(self, event=None):
-        """Обработчик изменения размера контейнера сообщений с отложенным обновлением"""
         if self._wraplength_update_pending:
             return
         self._wraplength_update_pending = True
         self.after(50, self._update_message_wraplengths)
     def _update_message_wraplengths(self, force=False):
-        """Обновляет wraplength для всех текстовых меток сообщений"""
         self._wraplength_update_pending = False
         if not hasattr(self, 'messages_frame') or not self.messages_frame.winfo_exists():
             return
         if not hasattr(self, 'messages_bordered_frame') or not self.messages_bordered_frame.winfo_exists():
             return
-
-        # Вычисляем доступную ширину
-        available_width = self.messages_bordered_frame.winfo_width() - 70  # отступы padx=10*2 + небольшой запас
+        available_width = self.messages_bordered_frame.winfo_width() - 70
         if available_width < 50:
             return
-
-        # Если ширина не изменилась и не принудительно, пропускаем
         if not force and available_width == self._last_available_width:
             return
         self._last_available_width = available_width
-
-        # Обновляем все сообщения
         for row_frame in self.messages_frame.winfo_children():
             try:
-                # Ищем пузырь (CTkFrame) внутри строки
                 bubble = next((w for w in row_frame.winfo_children() if isinstance(w, CTkFrame)), None)
                 if not bubble:
                     continue
-                # Обновляем все CTkLabel внутри пузыря
                 for child in bubble.winfo_children():
                     if isinstance(child, CTkLabel):
                         child.configure(wraplength=available_width)
@@ -1594,8 +1674,8 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
         self.master = master
         self.backend = backend
         self.title("Setup") 
-        self.geometry("500x450")  # Уменьшен размер окна
-        self.minsize(500, 450)   # Уменьшены минимальные размеры
+        self.geometry("500x450")
+        self.minsize(500, 450)
         self.configure(fg_color=DARK_BG)
         self.max_tokens = 8192
         self.validated = False
@@ -1638,16 +1718,36 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
         settings = self.backend.get_global_settings()
         settings['language'] = self.lang_var.get()
         return {key: tk.StringVar(value=val) for key, val in settings.items()}
+        
     def validate_model(self):
         model_type = self.settings_vars['model_type'].get()
         connection_string = self._build_connection_string()
-        valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string)
+        plain_password = getattr(self, '_last_plain_password', None)
+        
+        has_token_param = False
+        has_pwd_param = False
+        provider_data = self.providers.get(model_type, {})
+        for param in provider_data.get('params', []):
+            p_name = param['name'].lower()
+            if "api_token" in p_name or "token" in p_name: has_token_param = True
+            if "password" in p_name: has_pwd_param = True
+            
+        if has_token_param and not has_pwd_param:
+            showerror(self, Lang.get("error", "Error"), "Провайдер не валиден: отсутствует параметр password при наличии api_token.")
+            return
+            
+        valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string, plain_password)
         if valid:
             self.max_tokens = max_tokens
             self.validated = True
             showinfo(self, Lang.get("success"), msg)
             self.token_label.configure(text=Lang.get("token_limit_info", max_tokens=self.max_tokens))
             self.settings_vars['token_limit'].set(str(self.max_tokens))
+            if plain_password:
+                encryption_utils.SESSION_PASSWORDS[model_type] = plain_password
+                self.valid_password = plain_password # ДОБАВЛЕНО
+            
+            self.settings_vars['model_provider_params'].set(connection_string)
             try:
                 if hasattr(self, 'save_btn') and self.save_btn.winfo_exists(): self.save_btn.configure(state="normal")
             except (tk.TclError, AttributeError): pass
@@ -1657,6 +1757,7 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
             try:
                 if hasattr(self, 'save_btn') and self.save_btn.winfo_exists(): self.save_btn.configure(state="disabled")
             except (tk.TclError, AttributeError): pass
+            
     def save_settings(self):
         if not self.validated:
             showerror(self, Lang.get("error"), Lang.get("model_not_validated"))
@@ -1671,7 +1772,7 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
             'language': self.lang_var.get(),
             'model_type': self.settings_vars['model_type'].get(),
             'token_limit': self.settings_vars['token_limit'].get(),
-            'model_provider_params': self._build_connection_string()
+            'model_provider_params': self.settings_vars['model_provider_params'].get() # Уже сгенерировано валидацией
         }
         self.backend.update_global_settings(settings_to_save)
         self.on_close()
@@ -1685,9 +1786,9 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
 
 class SettingsWindow(BaseSettingsWindow):
     def __init__(self, master, backend):
-        super().__init__(master, backend, "settings_title", "500x450")  # УМЕНЬШЕНА ВЫСОТА С 500x500
+        super().__init__(master, backend, "settings_title", "500x450")
         tabview = CTkTabview(self, **TAB_VIEW_THEME)
-        tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)  # Уменьшены отступы
+        tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         main_tab = tabview.add(Lang.get("tab_main"))
         chat_settings_tab = tabview.add(Lang.get("tab_chat_settings"))
         mods_tab = tabview.add(Lang.get("tab_modules"))
@@ -1696,7 +1797,7 @@ class SettingsWindow(BaseSettingsWindow):
         self.setup_mods_tab(mods_tab)
     def setup_main_tab(self, parent):
         parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(0, weight=0)  # Изменено для прилипания к верху
+        parent.grid_rowconfigure(0, weight=0)
         self.max_tokens = int(self.backend.get_global_settings().get("token_limit", 8192))
         self.validated = True
         self.settings_vars = self._get_default_settings()
@@ -1704,7 +1805,7 @@ class SettingsWindow(BaseSettingsWindow):
         self.original_model_type = self.settings_vars['model_type'].get()
         self.original_connection_string = self.settings_vars['model_provider_params'].get()
         main_frame = create_styled_frame(parent)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)  # Уменьшены отступы
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         main_frame.grid_columnconfigure(0, weight=1)
         lang_frame = create_styled_frame(main_frame)
         lang_frame.pack(fill='x', pady=5)
@@ -1720,12 +1821,13 @@ class SettingsWindow(BaseSettingsWindow):
         lang_content.grid_columnconfigure(1, weight=1)
         self._create_model_ui(main_frame)
         btn_frame = create_styled_frame(parent)
-        btn_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))  # Уменьшены отступы
+        btn_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
         create_styled_button(btn_frame, text=Lang.get("validate_model"), command=self.validate_model).pack(side="left", padx=5)
         self.save_btn_settings = create_styled_button(btn_frame, text=Lang.get("save"), command=self.save_settings)
         self.save_btn_settings.pack(side="left", padx=5)
         create_styled_button(btn_frame, text=Lang.get("reset_settings_button"), command=self.reset_settings).pack(side="right", padx=5)
         self._load_provider_params_from_string()
+        
     def save_settings(self):
         try:
             if self.master.winfo_exists():
@@ -1747,7 +1849,7 @@ class SettingsWindow(BaseSettingsWindow):
                 'language': self.settings_vars['language'].get(),
                 'model_type': self.settings_vars['model_type'].get(),
                 'token_limit': self.settings_vars['token_limit'].get(),
-                'model_provider_params': self._build_connection_string(),
+                'model_provider_params': self.settings_vars['model_provider_params'].get(), # Сохранен из validate
                 'use_rag': self.settings_vars['use_rag'].get(),
                 'filter_generations': self.settings_vars['filter_generations'].get(),
                 'hierarchy_limit': self.settings_vars['hierarchy_limit'].get(),
@@ -1755,6 +1857,9 @@ class SettingsWindow(BaseSettingsWindow):
                 'write_results': self.settings_vars['write_results'].get(),
                 'max_critic_reactions': self.settings_vars['max_critic_reactions'].get()
             }
+            if settings_changed:
+                settings_to_save['model_provider_params'] = self._build_connection_string()
+                
             self.backend.update_global_settings(settings_to_save)
             new_language = self.settings_vars['language'].get()
             if new_language != self.original_language: Lang.load_language(new_language)
@@ -1775,9 +1880,9 @@ class SettingsWindow(BaseSettingsWindow):
         parent.grid_rowconfigure(0, weight=1)
         parent.grid_columnconfigure(0, weight=1)
         self.scrollable_frame = create_scrollable_frame(parent, fg_color="transparent", label_text="")
-        self.scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)  # Уменьшены отступы
+        self.scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self.rebuild_mods_list()
-        create_styled_button(parent, text=Lang.get("add_module"), command=self.add_custom_mod).grid(row=1, column=0, pady=5, padx=5)  # Уменьшены отступы
+        create_styled_button(parent, text=Lang.get("add_module"), command=self.add_custom_mod).grid(row=1, column=0, pady=5, padx=5)
     def rebuild_mods_list(self):
         for widget in self.scrollable_frame.winfo_children(): widget.destroy()
         self.scrollable_frame.grid_columnconfigure(0, weight=1)
@@ -1785,9 +1890,9 @@ class SettingsWindow(BaseSettingsWindow):
         default_mods = module_manager.get_default_modules()
         custom_mods = module_manager.get_custom_modules()
         if default_mods:
-            create_styled_label(self.scrollable_frame, text=Lang.get("system_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(5,2))  # Уменьшены отступы
+            create_styled_label(self.scrollable_frame, text=Lang.get("system_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(5,2))
             for mod in default_mods: self.create_mod_ui(self.scrollable_frame, mod, is_default=True)
-        create_styled_label(self.scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))  # Уменьшены отступы
+        create_styled_label(self.scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))
         for mod in custom_mods: self.create_mod_ui(self.scrollable_frame, mod, is_default=False)
     def create_mod_ui(self, parent, mod_data, is_default):
         enabled_var = tk.BooleanVar(value=mod_data["enabled"])
@@ -1817,7 +1922,7 @@ class SettingsWindow(BaseSettingsWindow):
         except ValueError as e: showerror(self, Lang.get("error"), str(e))
 
 class LogWindow(BaseTopLevel):
-    MAX_LOG_MESSAGES = 10  # лимит отображаемых сообщений
+    MAX_LOG_MESSAGES = 10
 
     def __init__(self, master, chat_id, log_queue):
         super().__init__(master, fg_color=DARK_BG)
@@ -1842,34 +1947,25 @@ class LogWindow(BaseTopLevel):
         self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.messages_frame.grid_columnconfigure(0, weight=1)
 
-        self.log_message_widgets = []  # храним пузыри для управления лимитом
+        self.log_message_widgets = []
         self.check_log_queue()
 
     def setup_and_center(self):
-        # Переопределяем, чтобы не делать окно модальным (убираем grab_set)
         setup_icon(self)
         self.lift()
-        # не вызываем self.grab_set()
         center_window(self)
 
     def add_log_message_to_ui(self, text):
-        """Добавляет сообщение лога, оформленное как в чате.
-        Если достигнут лимит сообщений, полностью очищает окно и показывает только новое."""
         try:
-            # Если достигнут лимит сообщений, очищаем всё и показываем только новое сообщение
             if len(self.log_message_widgets) >= self.MAX_LOG_MESSAGES:
-                # Удаляем все виджеты из messages_frame
                 for widget in self.messages_frame.winfo_children():
                     widget.destroy()
-                # Очищаем список хранения
                 self.log_message_widgets.clear()
-                # Создаём пузырь для нового сообщения (оно будет единственным)
                 bubble, msg_text = create_chat_message_bubble(
                     self.messages_frame, text, is_my=False, is_question=False
                 )
                 setup_message_wraplength(msg_text, self.messages_frame)
                 self.log_message_widgets.append(bubble)
-                # Настройка контекстного меню для копирования
                 def copy_text():
                     self.master.clipboard_clear()
                     self.master.clipboard_append(text)
@@ -1879,7 +1975,6 @@ class LogWindow(BaseTopLevel):
                 if sys.platform == "darwin":
                     msg_text.bind("<Button-2>", lambda e: menu.tk_popup(e.x_root, e.y_root))
             else:
-                # Стандартное добавление
                 bubble, msg_text = create_chat_message_bubble(
                     self.messages_frame, text, is_my=False, is_question=False
                 )
@@ -1897,7 +1992,6 @@ class LogWindow(BaseTopLevel):
 
                 self.log_message_widgets.append(bubble)
 
-            # Обновляем scrollregion и прокручиваем вниз
             self.messages_frame.update_idletasks()
             canvas = self.messages_frame._parent_canvas
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -1907,7 +2001,6 @@ class LogWindow(BaseTopLevel):
             print(f"Ошибка при добавлении лога в UI: {e}")
 
     def check_log_queue(self):
-        """Периодически проверяет очередь и добавляет новые сообщения."""
         try:
             while True:
                 msg = self.log_queue.get_nowait()
@@ -1923,7 +2016,7 @@ class LogWindow(BaseTopLevel):
 
 class CreateChatWindow(BaseSettingsWindow):
     def __init__(self, master, backend):
-        super().__init__(master, backend, "create_chat_title", "500x550")  # УМЕНЬШЕНА ВЫСОТА С 500x600
+        super().__init__(master, backend, "create_chat_title", "500x550")
         module_manager = ModuleManager()
         self.custom_mods_for_chat = module_manager.get_custom_modules().copy()
         self.newly_added_mods = []
@@ -1935,12 +2028,12 @@ class CreateChatWindow(BaseSettingsWindow):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         top_frame = create_styled_frame(self)
-        top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)  # Уменьшены отступы
+        top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         create_styled_label(top_frame, text=Lang.get("chat_name")).pack(side='left', padx=(0,10))
         e = create_styled_entry(top_frame, textvariable=self.settings_vars['chat_name'])
         e.pack(fill='x', expand=True)
         tabview = CTkTabview(self, **TAB_VIEW_THEME)
-        tabview.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)  # Уменьшены отступы
+        tabview.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
         model_tab = tabview.add(Lang.get("tab_model"))
         chat_tab = tabview.add(Lang.get("tab_chat_settings"))
         mods_tab = tabview.add(Lang.get("tab_modules"))
@@ -1948,7 +2041,7 @@ class CreateChatWindow(BaseSettingsWindow):
         self.setup_chat_settings_tab(chat_tab)
         self.setup_mods_tab(mods_tab)
         bottom_frame = create_styled_frame(self)
-        bottom_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(5, 5))  # Уменьшены отступы
+        bottom_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(5, 5))
         self.create_btn = create_styled_button(bottom_frame, text=Lang.get("create"), command=self.create_chat_finalize)
         self.create_btn.pack(side='left')
         create_styled_button(bottom_frame, text=Lang.get("validate_model"), command=self.validate_model).pack(side='left', padx=5)
@@ -1966,7 +2059,7 @@ class CreateChatWindow(BaseSettingsWindow):
         parent.grid_rowconfigure(0, weight=1)
         parent.grid_columnconfigure(0, weight=1)
         self.mods_scrollable_frame = create_scrollable_frame(parent, fg_color="transparent")
-        self.mods_scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)  # Уменьшены отступы
+        self.mods_scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.rebuild_mods_list()
     def rebuild_mods_list(self):
         for widget in self.mods_scrollable_frame.winfo_children(): widget.destroy()
@@ -1974,13 +2067,13 @@ class CreateChatWindow(BaseSettingsWindow):
         module_manager = ModuleManager()
         default_mods = module_manager.get_default_modules()
         if default_mods:
-            create_styled_label(self.mods_scrollable_frame, text=Lang.get("system_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(5,2))  # Уменьшены отступы
+            create_styled_label(self.mods_scrollable_frame, text=Lang.get("system_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(5,2))
             for mod in default_mods: self.create_mod_ui(self.mods_scrollable_frame, mod, "default")
         if self.custom_mods_for_chat:
-            create_styled_label(self.mods_scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))  # Уменьшены отступы
+            create_styled_label(self.mods_scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))
             for mod in self.custom_mods_for_chat: self.create_mod_ui(self.mods_scrollable_frame, mod, "global_custom")
         header_frame = create_styled_frame(self.mods_scrollable_frame)
-        header_frame.pack(fill='x', pady=(10,2))  # Уменьшены отступы
+        header_frame.pack(fill='x', pady=(10,2))
         create_styled_label(header_frame, text=Lang.get("chat_specific_modules"), font=FONT_REGULAR).pack(side='left', anchor="w", padx=5)
         create_styled_button(header_frame, text="+", width=30, command=self.add_new_local_mod).pack(side='left', padx=5)
         if self.newly_added_mods:
@@ -2022,9 +2115,12 @@ class CreateChatWindow(BaseSettingsWindow):
                 return
         model_config = {
             'model_type': self.settings_vars['model_type'].get(),
-            'model_provider_params': self._build_connection_string(),
+            'model_provider_params': self.settings_vars['model_provider_params'].get(), # Из validate
             'token_limit': self.settings_vars['token_limit'].get()
         }
+        if settings_changed:
+            model_config['model_provider_params'] = self._build_connection_string()
+            
         chat_config = {
             "language": Lang.current_language,
             "use_rag": self.settings_vars['use_rag'].get(),
@@ -2047,6 +2143,13 @@ class CreateChatWindow(BaseSettingsWindow):
         if not chat_data:
             showerror(self.master, Lang.get("error"), Lang.get("chat_name_exists"))
             return
+            
+        # ДОБАВЛЕНО: Привязка пароля из окна валидации к конкретному ID чата
+        if hasattr(self, 'valid_password') and self.valid_password:
+            encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = self.valid_password
+        elif model_config['model_type'] in encryption_utils.SESSION_PASSWORDS:
+            encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = encryption_utils.SESSION_PASSWORDS[model_config['model_type']]
+            
         self.master.load_chats()
         self.master.on_chat_select(chat_data["id"])
 

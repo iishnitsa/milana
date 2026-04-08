@@ -3342,7 +3342,7 @@ def init_chromadb(chroma_path, use_rag, max_attempts=3):
 
     raise RuntimeError("Unexpected: failed to initialize ChromaDB after all attempts")
 
-def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
+def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None):
     global memory_sql
     global actual_handlers_names, another_tools_files_addresses
     global token_limit, emb_token_limit, most_often, chunk_size
@@ -3362,6 +3362,11 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     global clean_variables_content
     global filter_generations
     global is_save_log
+
+    # Загружаем пароли из родительского процесса UI в память этого процесса
+    if session_passwords:
+        import encryption_utils
+        encryption_utils.SESSION_PASSWORDS.update(session_passwords)
 
     ui_conn = [input_queue, output_queue, log_queue]
 
@@ -3403,7 +3408,6 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     if int(settings.get("write_log", 1)) == 0:
         is_save_log = False
 
-    # === ДОБАВЛЕНО: Получение максимального количества реакций критика ===
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
 
     # === Инициализация ChromaDB ===
@@ -3455,12 +3459,26 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         model_disconnect = model_providers_module.disconnect
         connect_params = settings.get("model_provider_params", "")
 
-        connection_result = model_connect(connect_params)
+        # --- ИНТЕГРАЦИЯ ШИФРОВАНИЯ ---
+        import encryption_utils
+        import inspect
+        decrypted_password = encryption_utils.SESSION_PASSWORDS.get(model_type)
+        if not decrypted_password:
+            decrypted_password = encryption_utils.SESSION_PASSWORDS.get(chat_id)
+            
+        sig = inspect.signature(model_connect)
+        if '_decrypted_password' in sig.parameters:
+            connection_result = model_connect(connect_params, _decrypted_password=decrypted_password)
+        else:
+            connection_result = model_connect(connect_params)
+        # -----------------------------
+
         if not connection_result or not connection_result[0]:
             let_log(f"Ошибка подключения модели: {connection_result[1] if len(connection_result) > 1 else 'Unknown error'}")
             return
 
-        success, _, tags = connection_result
+        success = connection_result[0]
+        tags = connection_result[2] if len(connection_result) > 2 else {}
         if tags:
             global unified_tags
             unified_tags = tags
@@ -3497,7 +3515,6 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         filter_generations = True
     else: filter_generations = False
 
-    # 1. Сначала загружаем специальные модули (web_search, ask_user), чтобы они были доступны librarian
     let_log(f"\n=== ЗАГРУЗКА СПЕЦИАЛЬНЫХ МОДУЛЕЙ (до системных) ===")
     special_files = {'web_search': None, 'ask_user': None}
     other_files = []
@@ -3510,7 +3527,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
         else:
             other_files.append(file_path)
 
-    loaded_tools = []  # сюда будут добавлены все пользовательские инструменты (special + other)
+    loaded_tools = []
     for module_type, file_path in special_files.items():
         if file_path:
             let_log(f"Загрузка {module_type}: {file_path}")
@@ -3527,10 +3544,8 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
             else:
                 let_log(f"⚠ Не удалось загрузить {module_type}")
 
-    # 2. Загружаем системные инструменты (теперь они видят web_search в globals)
     global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
 
-    # 3. Загружаем остальные пользовательские модули
     if other_files:
         let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
         other_loaded = mod_loader(other_files)
@@ -3538,7 +3553,6 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     else:
         let_log("Нет обычных модулей для загрузки")
 
-    # Настраиваем global_state
     global_state.another_tools = loaded_tools
 
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
@@ -3547,20 +3561,16 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue):
     let_log(f"Ask_user доступен: {'ask_user' in globals()}")
     let_log("Список инструментов:")
     for tt, t, _ in global_state.another_tools:
-        # Добавляем в module_tools_keys всегда (для поиска при вызове)
         global_state.module_tools_keys.append(tt)
-        # В tools_str добавляем только если команда не в skip-списке
         if tt not in global_state.skip_tools_keys:
             global_state.tools_str += tt + ' (' + t + ')\n'
         let_log(tt)
 
-    # === Загрузка пользовательских данных ===
     if fl:
         send_output_message(text=start_load_attachments_text)
         upload_user_data(fl)
         send_output_message(text=end_load_attachments_text)
 
-    # === Запуск обработки ===
     let_log("ЗАПУСК")
     try:
         worker(initial_text)
