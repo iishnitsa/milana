@@ -214,6 +214,8 @@ def create_scrollable_frame(parent, **kwargs):
         **kwargs)
     if hasattr(scroll_frame, '_scrollbar'): 
         scroll_frame._scrollbar.configure(width=10)
+        try: scroll_frame._scrollbar.configure(corner_radius=50)
+        except: pass
     return scroll_frame
 def browse_file_dialog(entry_widget, entry_var, full_path_var, filetypes=None):
     if filetypes is None: 
@@ -834,6 +836,9 @@ class DynamicModelUI:
         radio_scroll = CTkScrollableFrame(parent, orientation="horizontal", fg_color="transparent", height=50,
                                           scrollbar_button_color=PURPLE_ACCENT,
                                           scrollbar_button_hover_color=WHITE)
+        if hasattr(radio_scroll, '_scrollbar'):
+            try: radio_scroll._scrollbar.configure(corner_radius=50)
+            except: pass
         radio_scroll.pack(fill="x", pady=5)
         inner_frame = create_styled_frame(radio_scroll, fg_color="transparent")
         inner_frame.pack(fill="both", expand=True)
@@ -856,7 +861,7 @@ class DynamicModelUI:
         self.token_entry = create_styled_entry(token_frame, textvariable=self.settings_vars['token_limit'])
         self.token_entry.pack(side="left", fill="x", expand=True)
         # --- ДОБАВЛЕНО: отображение максимального лимита ---
-        self.max_token_label = create_styled_label(token_frame, text="", text_color=DARK_TEXT_SECONDARY)
+        self.max_token_label = create_styled_label(token_frame, text="", text_color=WHITE)
         self.max_token_label.pack(side="left", padx=(5,0))
         self.update_max_token_label()
         # -------------------------------------------------
@@ -866,13 +871,26 @@ class DynamicModelUI:
     def _create_specific_model_frames(self, container):
         try:
             for module_name, p_data in self.providers.items():
-                main_frame = create_styled_frame(container, border_color=WHITE, border_width=1)
+                main_frame = create_styled_frame(container, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
                 self.model_frames[module_name] = main_frame
                 main_frame.pack_propagate(False)
                 main_frame.configure(height=170)
                 params = p_data.get('params', [])
-                scroll_frame = create_scrollable_frame(main_frame, fg_color=DARK_BG, height=170)
-                scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
+                
+                scroll_frame = CTkScrollableFrame(
+                    main_frame,
+                    scrollbar_button_color=PURPLE_ACCENT,
+                    scrollbar_button_hover_color=WHITE,
+                    fg_color="transparent",
+                    border_width=0,
+                    corner_radius=0
+                )
+                scroll_frame.pack(fill="both", expand=True, padx=10, pady=1.5)
+                if hasattr(scroll_frame, '_scrollbar'):
+                    scroll_frame._scrollbar.configure(width=12)
+                    try: scroll_frame._scrollbar.configure(corner_radius=50)
+                    except: pass
+                
                 content_parent = scroll_frame
 
                 self.provider_param_full_paths.setdefault(module_name, {})
@@ -1253,6 +1271,11 @@ class ChatApp(CTk):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
+        
+        self.bind("<Control-o>", self.add_attachment)
+        if sys.platform == "darwin":
+            self.bind("<Command-o>", self.add_attachment)
+            
         left_panel_container = create_styled_frame(self, width=200)
         left_panel_container.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         left_panel_container.grid_rowconfigure(0, weight=1)
@@ -1261,7 +1284,10 @@ class ChatApp(CTk):
         chats_bordered_frame.grid(row=0, column=0, sticky="nsew")
         self.chats_list_frame = CTkScrollableFrame(chats_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
         self.chats_list_frame.pack(fill="both", expand=True, padx=10, pady=1.5)
-        if hasattr(self.chats_list_frame, '_scrollbar'): self.chats_list_frame._scrollbar.configure(width=12)
+        if hasattr(self.chats_list_frame, '_scrollbar'):
+            self.chats_list_frame._scrollbar.configure(width=12)
+            try: self.chats_list_frame._scrollbar.configure(corner_radius=50)
+            except: pass
         bottom_buttons_frame = create_styled_frame(left_panel_container)
         bottom_buttons_frame.grid(row=1, column=0, sticky="ew", pady=(3,0))
         self.settings_btn = create_styled_button(bottom_buttons_frame, text="☰", command=self.open_settings, width=20, height=20,)
@@ -1287,7 +1313,10 @@ class ChatApp(CTk):
         self.messages_bordered_frame.grid_columnconfigure(0, weight=1)
         self.messages_frame = CTkScrollableFrame(self.messages_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
         self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=1.5)
-        if hasattr(self.messages_frame, '_scrollbar'): self.messages_frame._scrollbar.configure(width=12)
+        if hasattr(self.messages_frame, '_scrollbar'):
+            self.messages_frame._scrollbar.configure(width=12)
+            try: self.messages_frame._scrollbar.configure(corner_radius=50)
+            except: pass
         self.messages_bordered_frame.bind("<Configure>", self._on_message_container_resize)
         self.input_outer_frame = create_styled_frame(right_panel_container)
         self.input_outer_frame.grid(row=1, column=0, sticky="ew")
@@ -1297,8 +1326,8 @@ class ChatApp(CTk):
         self.input_outer_frame.grid_columnconfigure(2, weight=0)
 
         self.left_bar_canvas = tk.Canvas(self.input_outer_frame, width=6, bg=DARK_BG, highlightthickness=0)
-        self.left_bar_canvas.configure(height=62) 
-        self.left_bar_canvas.grid(row=0, column=0, sticky="nw", padx=(0, 0))
+        self.left_bar_canvas.configure(height=45) 
+        self.left_bar_canvas.grid(row=0, column=0, sticky="nsw", padx=(0, 0))
         def draw_left_wall(event=None):
             self.left_bar_canvas.delete("all")
             h = self.left_bar_canvas.winfo_height()
@@ -1311,9 +1340,23 @@ class ChatApp(CTk):
 
         self.left_bar_canvas.bind("<Configure>", draw_left_wall)
 
-        self.input_text = CTkTextbox(self.input_outer_frame, corner_radius=CORNER_RADIUS, border_width=0, fg_color="transparent", font=FONT_REGULAR, wrap="word", text_color=WHITE)
-        self.input_text._textbox.configure(borderwidth=0, padx=0, pady=0)
-        self.input_text.grid(row=0, column=1, sticky="nsew", padx=0)
+        self.input_text = CTkTextbox(
+            self.input_outer_frame,
+            corner_radius=0,
+            border_width=0,
+            fg_color="transparent",
+            font=FONT_REGULAR,
+            wrap="word",
+            text_color=WHITE,
+            scrollbar_button_color=PURPLE_ACCENT,
+            scrollbar_button_hover_color=WHITE
+        )
+        if hasattr(self.input_text, '_scrollbar'):
+            try: self.input_text._scrollbar.configure(corner_radius=50)
+            except: pass
+            
+        self.input_text._textbox.configure(borderwidth=0, padx=0, pady=0, selectbackground=PURPLE_ACCENT)
+        self.input_text.grid(row=0, column=1, sticky="nsew")
         self.input_text.bind("<Return>", self.on_enter_pressed)
         self.input_text.bind("<KeyRelease>", self.adjust_input_height, add=True)
         enhance_text_widget(self.input_text)
@@ -1321,11 +1364,11 @@ class ChatApp(CTk):
         self.adjust_input_height()
         
         self.right_controls_frame = create_styled_frame(self.input_outer_frame)
-        self.right_controls_frame.grid(row=0, column=2, padx=(0,0), sticky="n")
-        self.send_btn = create_styled_button(self.right_controls_frame, text="↑", width=0, height=30, command=self.send_message)
-        self.send_btn.pack(side=tk.TOP, anchor="ne")
-        self.attach_btn = create_styled_button(self.right_controls_frame, text="+", width=0, height=30, command=self.add_attachment)
-        self.attach_btn.pack(side=tk.TOP, anchor="ne", pady=(5,0))
+        self.right_controls_frame.grid(row=0, column=2, padx=(0,0), sticky="se")
+        self.send_btn = create_styled_button(self.right_controls_frame, text="↑", width=20, height=20, command=self.send_message)
+        self.send_btn.pack(side=tk.TOP)
+        self.attach_btn = create_styled_button(self.right_controls_frame, text="+", width=20, height=20, command=self.add_attachment)
+        self.attach_btn.pack(side=tk.TOP, pady=(5,0))
         self.load_chats()
         self.start_chat_blinking()
         self.update_chat_controls()
@@ -1370,7 +1413,7 @@ class ChatApp(CTk):
             self.send_message()
             return "break"
         return None
-    def add_attachment(self):
+    def add_attachment(self, event=None):
         files = filedialog.askopenfilenames()
         if files:
             self.attachments.extend(Path(file) for file in files)
@@ -1510,13 +1553,16 @@ class ChatApp(CTk):
         msg_text_widget.bind("<Button-3>", create_context_menu)
         if attachments:
             att_container = create_styled_frame(bubble)
-            att_container.pack(fill="x", pady=(8, 5), padx=5)
+            att_container.pack(fill=tk.X, pady=(8, 5), padx=5)
             for att in attachments:
                 att_frame = create_styled_frame(att_container)
                 att_frame.pack(fill=tk.X, pady=1, anchor='w')
                 create_styled_label(att_frame, text=Path(att).name).pack(side=tk.LEFT)
+                
+                hover_color = PURPLE_ACCENT if is_my else DARK_BG
+                
                 CTkButton(att_frame, text="📂", font=FONT_REGULAR, width=25, height=25,
-                    fg_color="transparent", hover_color=PURPLE_ACCENT, command=lambda a=att: self.open_attachment(a)).pack(side=tk.RIGHT)
+                    fg_color="transparent", hover_color=hover_color, command=lambda a=att: self.open_attachment(a)).pack(side=tk.RIGHT)
         self.messages_frame.update_idletasks()
         if hasattr(self.messages_frame, '_parent_canvas'):
             self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
@@ -1852,6 +1898,11 @@ class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
 class SettingsWindow(BaseSettingsWindow):
     def __init__(self, master, backend):
         super().__init__(master, backend, "settings_title", "500x450")
+        
+        self.bind("<Control-o>", self.add_custom_mod)
+        if sys.platform == "darwin":
+            self.bind("<Command-o>", self.add_custom_mod)
+            
         tabview = CTkTabview(self, **TAB_VIEW_THEME)
         tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         main_tab = tabview.add(Lang.get("tab_main"))
@@ -1982,7 +2033,7 @@ class SettingsWindow(BaseSettingsWindow):
             ModuleManager().update_custom_modules(self.backend)
             self.rebuild_mods_list()
 
-    def add_custom_mod(self):
+    def add_custom_mod(self, event=None):
         path = filedialog.askopenfilename(filetypes=[(Lang.get("python_files"), "*.py")])
         if not path: return
         try:
@@ -2011,11 +2062,24 @@ class LogWindow(BaseTopLevel):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        self.messages_frame = create_scrollable_frame(
-            self, fg_color="transparent", label_text=""
+        self.messages_bordered_frame = create_styled_frame(self, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
+        self.messages_bordered_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self.messages_bordered_frame.grid_rowconfigure(0, weight=1)
+        self.messages_bordered_frame.grid_columnconfigure(0, weight=1)
+
+        self.messages_frame = CTkScrollableFrame(
+            self.messages_bordered_frame,
+            scrollbar_button_color=PURPLE_ACCENT,
+            scrollbar_button_hover_color=WHITE,
+            fg_color="transparent",
+            border_width=0,
+            corner_radius=0
         )
-        self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        self.messages_frame.grid_columnconfigure(0, weight=1)
+        self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=1.5)
+        if hasattr(self.messages_frame, '_scrollbar'):
+            self.messages_frame._scrollbar.configure(width=12)
+            try: self.messages_frame._scrollbar.configure(corner_radius=50)
+            except: pass
 
         self.log_message_widgets = []
         self.check_log_queue()
@@ -2087,6 +2151,11 @@ class LogWindow(BaseTopLevel):
 class CreateChatWindow(BaseSettingsWindow):
     def __init__(self, master, backend):
         super().__init__(master, backend, "create_chat_title", "500x550")
+        
+        self.bind("<Control-o>", self.add_new_local_mod)
+        if sys.platform == "darwin":
+            self.bind("<Command-o>", self.add_new_local_mod)
+            
         module_manager = ModuleManager()
         self.custom_mods_for_chat = module_manager.get_custom_modules().copy()
         self.newly_added_mods = []
@@ -2160,7 +2229,7 @@ class CreateChatWindow(BaseSettingsWindow):
     def remove_mod_from_chat_list(self, mod_id_to_remove, mod_list):
         mod_list[:] = [m for m in mod_list if m.get("id") != mod_id_to_remove]
         self.rebuild_mods_list()
-    def add_new_local_mod(self):
+    def add_new_local_mod(self, event=None):
         path_str = filedialog.askopenfilename(filetypes=[(Lang.get("python_files"), "*.py")])
         if not path_str: return
         path = str(Path(path_str).resolve())
