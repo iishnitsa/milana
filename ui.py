@@ -1510,7 +1510,7 @@ class ChatApp(CTk):
         msg_text_widget.bind("<Button-3>", create_context_menu)
         if attachments:
             att_container = create_styled_frame(bubble)
-            att_container.pack(fill="✘", pady=(8, 5), padx=5)
+            att_container.pack(fill="x", pady=(8, 5), padx=5)
             for att in attachments:
                 att_frame = create_styled_frame(att_container)
                 att_frame.pack(fill=tk.X, pady=1, anchor='w')
