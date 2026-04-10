@@ -1,3 +1,4 @@
+# lang/en/ui_text.py
 """
 Dictionary with text variables for English language.
 """
@@ -35,7 +36,6 @@ TEXTS = {
     "active_chats_on_close_message": "There are {count} active chats. Quit?",
 
     # Attachment
-    
     "attachments": "Attachments",
     "attachment_open_error": "Attachment Open Error",
 
@@ -43,7 +43,7 @@ TEXTS = {
     "initial_settings_title": "Initial Setup",
     "save_and_continue": "Save and Continue",
     "validation_error": "Validation Error",
-    "token_limit_info": "Token limit",
+    "token_limit_info": "Token limit: {max_tokens}",
     "validate_model": "Validate Model",
     "model_validated_success": "Model validated successfully. Max tokens: {tokens}",
     "model_not_validated": "Model not validated",
@@ -109,12 +109,34 @@ TEXTS = {
     "model_err_ollama_missing": "Ollama model is required",
     "model_err_lmstudio_missing": "LM Studio model is required",
     "model_err_custom_api_missing": "Server IP and port are required",
+    
+    # Model Validator (added)
+    "model_err_no_provider": "No model provider selected",
+    "model_err_provider_missing": "Provider '{provider}' not found",
 
     "write_log": "Record a log",
     "write_results": "Record results",
 
+    # Text Editor Context Menu
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "select_all": "Select All",
+
+    # File Dialog
+    "all_files": "All files",
+
+    # Folder Operations
+    "folder_not_found": "Folder '{folder_name}' not found",
+    "open_folder_error": "Error opening folder: {e}",
+
+    # Providers
+    "no_providers_found": "No providers found",
+
+    # Settings
+    "restart_required": "Restart required for changes to take effect",
+
     "ok": "OK",
     "yes": "Yes",
     "no": "No",
-    "cancel": "Cancel",
 }

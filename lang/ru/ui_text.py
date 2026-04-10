@@ -43,7 +43,7 @@ TEXTS = {
     "initial_settings_title": "Первоначальная настройка",
     "save_and_continue": "Сохранить и продолжить",
     "validation_error": "Ошибка валидации",
-    "token_limit_info": "Лимит токенов",
+    "token_limit_info": "Лимит токенов: {max_tokens}",
     "validate_model": "Проверить модель",
     "model_validated_success": "Модель прошла валидацию. Максимум токенов: {tokens}",
     "model_not_validated": "Модель не проверена",
@@ -109,12 +109,34 @@ TEXTS = {
     "model_err_ollama_missing": "Укажите модель Ollama",
     "model_err_lmstudio_missing": "Укажите модель LM Studio",
     "model_err_custom_api_missing": "Укажите IP и порт сервера",
+    
+    # Model Validator (добавленные)
+    "model_err_no_provider": "Не выбран провайдер модели",
+    "model_err_provider_missing": "Провайдер '{provider}' не найден",
 
     "write_log": "Записывать лог",
     "write_results": "Записывать результаты",
 
+    # Text Editor Context Menu
+    "cut": "Вырезать",
+    "copy": "Копировать",
+    "paste": "Вставить",
+    "select_all": "Выделить всё",
+
+    # File Dialog
+    "all_files": "Все файлы",
+
+    # Folder Operations
+    "folder_not_found": "Папка '{folder_name}' не найдена",
+    "open_folder_error": "Ошибка открытия папки: {e}",
+
+    # Providers
+    "no_providers_found": "Провайдеры не найдены",
+
+    # Settings
+    "restart_required": "Для применения изменений требуется перезапуск приложения",
+
     "ok": "ОК",
     "yes": "Да",
     "no": "Нет",
-    "cancel": "Отмена",
 }
