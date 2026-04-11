@@ -131,6 +131,8 @@ TEXTS = {
     "open_folder_error": "Error opening folder: {e}",
 
     # Providers
+    "model_type": "Providers",
+    "token_limit": "Token limit",
     "no_providers_found": "No providers found",
 
     # Settings

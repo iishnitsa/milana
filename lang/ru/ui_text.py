@@ -131,6 +131,8 @@ TEXTS = {
     "open_folder_error": "Ошибка открытия папки: {e}",
 
     # Providers
+    "model_type": "Провайдеры",
+    "token_limit": "Лимит токенов",
     "no_providers_found": "Провайдеры не найдены",
 
     # Settings
