@@ -100,6 +100,7 @@ if False:
     from urllib.parse import quote_plus, urlparse, urljoin
     from ddgs import DDGS
     from bs4 import BeautifulSoup
+    import cryptography
 
 def run_as_interpreter():
     """Режим исполнения ui.py внутри среды лаунчера"""
