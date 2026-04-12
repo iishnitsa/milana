@@ -3086,62 +3086,40 @@ def _standard_agent_func(text, agent_number):
 # ВЕРСИЯ ДЛЯ RAG РЕЖИМА
 
 def _rag_agent_func(text, agent_number):
-    # Проверка чередования агентов
-    if global_state.last_agent is not None and global_state.last_agent == agent_number:
-        error_msg = (
-            f"Agent alternation violation: agent {agent_number} called twice in a row. "
-            f"Expected alternating calls (0,1,0,1...). Last agent: {global_state.last_agent}"
-        )
-        let_log(error_msg)
-        # Аварийное завершение, как в кэшере
-        sys.exit(1)
-
     global_state.last_agent = agent_number
-
     global_state.stop_agent = False
     talk_prompt = text
     sid = global_state.conversations - agent_number
     global_state.now_agent_id = sid
-
-    if agent_number:  # 1 - Милана
+    if agent_number: # 1 - Милана
         you = operator_role_text
         msg_from = worker_role_text
-    else:  # 0 - Иван
+    else: # 0 - Иван
         you = worker_role_text
         if global_state.dialog_ended:
             msg_from = func_role_text
             global_state.dialog_ended = False
-        else:
-            msg_from = operator_role_text
-
+        else: msg_from = operator_role_text
     while not global_state.stop_agent:
         let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}")
         # 1. Сохраняем входящее сообщение от предыдущего агента в RAG-историю
         update_history(sid, talk_prompt, msg_from)
-
         # 2. Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
-
         # 3. Вызываем модель, добавив роль текущего агента для корректной генерации
-        try:
-            talk_prompt = ask_model(final_prompt_for_model + you)
+        try: talk_prompt = ask_model(final_prompt_for_model + you)
         except Exception as e:
             let_log(f"Ошибка в _rag_agent_func: {e}")
             # Здесь RAG уже должен был обработать длинный контекст
-
         talk_prompt = remove_commands_roles(talk_prompt)
-
         # 4. Сохраняем ответ самой модели в RAG-историю
         update_history(sid, talk_prompt, you)
-
         answer = tools_selector(talk_prompt, sid)
         if answer:
             let_log(global_state.stop_agent)
             talk_prompt = answer
             msg_from = func_role_text
-        else:
-            break
-
+        else: break
     global_state.stop_agent = False
     return talk_prompt
 

@@ -1930,7 +1930,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             output_queue = multiprocessing.Queue()
             log_queue = multiprocessing.Queue()
             current_passwords = encryption_utils.SESSION_PASSWORDS.copy()
-            p = multiprocessing.Process(target=initialize_work, args=(BASE_DIR, chat_id, input_queue, output_queue, log_queue, current_passwords))
+            p = multiprocessing.Process(target=initialize_work, args=(get_base_dir(), chat_id, input_queue, output_queue, log_queue, current_passwords))
             p.start()
             self.chat_processes[chat_id] = p
             self.input_queues[chat_id] = input_queue
@@ -2358,15 +2358,11 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 (chat['name'] for chat in self.master.backend.get_chats() if chat['id'] == chat_id),
                 chat_id
             )
-            self.title(f"Log - {chat_name}")
+            self.title(f"log {chat_name}")
             self.grid_rowconfigure(0, weight=1)
             self.grid_columnconfigure(0, weight=1)
-            self.messages_bordered_frame = create_styled_frame(self, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
-            self.messages_bordered_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-            self.messages_bordered_frame.grid_rowconfigure(0, weight=1)
-            self.messages_bordered_frame.grid_columnconfigure(0, weight=1)
             self.messages_frame = CTkScrollableFrame(
-                self.messages_bordered_frame,
+                self,
                 scrollbar_button_color=PURPLE_ACCENT,
                 scrollbar_button_hover_color=WHITE,
                 fg_color="transparent",

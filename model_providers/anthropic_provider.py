@@ -2,9 +2,11 @@
 import requests
 import json
 import traceback
+import time
 import tiktoken
 from typing import Optional, Dict, Any, List, Tuple
 from sentence_transformers import SentenceTransformer
+from cross_gpt import let_log  # добавлен импорт для логирования
 
 # Глобальные переменные состояния
 client = None
@@ -39,14 +41,16 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
             if key in params:
                 params[key] = value
 
-    # Инициализация клиента Anthropic
+    # Проверка: модель должна быть известна
+    if params['chat'] not in AnthropicClient.MODEL_LIMITS:
+        return False, token_limit, tags, f"Неподдерживаемая модель: {params['chat']}. Доступные: {list(AnthropicClient.MODEL_LIMITS.keys())}"
+
     client = AnthropicClient(
         api_key=params['token'],
         timeout=timeout,
         chat_model=params['chat']
     )
 
-    # Установка модели для эмбеддингов
     emb_model = params['emb']
 
     try:
@@ -61,7 +65,7 @@ def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[
 
     except Exception as e:
         traceback.print_exc()
-        return False, token_limit, tags
+        return False, token_limit, tags, str(e)
 
 def disconnect() -> bool:
     global client, emb_model
@@ -95,8 +99,6 @@ def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
         if not messages:
             raise ValueError("Нет сообщений для чата")
         
-        # --- ИСПРАВЛЕННАЯ ПРОВЕРКА ---
-        # Суммируем токены всех сообщений
         total_tokens = 0
         for msg in messages:
             total_tokens += client.count_tokens(msg.get("content", ""))
@@ -127,13 +129,9 @@ def create_embeddings(text: str) -> List[float]:
         raise RuntimeError("Модель для эмбеддингов не указана")
     
     try:
-        # Используем локальную модель из sentence-transformers
         model = SentenceTransformer(emb_model)
-        
-        # Проверка лимита токенов (примерная оценка)
-        if len(text.split()) * 1.4 > emb_token_limit:  # ~1.4 токена на слово
+        if len(text.split()) * 1.4 > emb_token_limit:
             raise RuntimeError("ContextOverflowError")
-            
         return model.encode(text, convert_to_numpy=True).tolist()
     except Exception as e:
         traceback.print_exc()
@@ -208,6 +206,68 @@ class AnthropicClient:
         except Exception as e:
             raise APIError(f"Ошибка API: {str(e)}")
 
+    def _handle_http_error(self, resp, attempt, max_retries):
+        """Обработка HTTP ошибок Anthropic."""
+        MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get('retry-after') or resp.headers.get('Retry-After')
+            wait_time = None
+            if retry_after and retry_after.isdigit():
+                wait_time = int(retry_after)
+                # Если время ожидания больше 5 часов – исключение
+                if wait_time > MAX_QUOTA_WAIT:
+                    raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                let_log(f"Anthropic 429 with Retry-After={wait_time}s. Waiting...")
+                time.sleep(wait_time)
+                return True
+            try:
+                err_data = resp.json()
+                err_msg = str(err_data).lower()
+                if 'insufficient_quota' in err_msg or 'balance' in err_msg:
+                    raise RuntimeError("balance end")
+                # Некоторые квотные ошибки могут не иметь Retry-After, но содержать текст о лимите сессии/недели
+                if 'session limit' in err_msg:
+                    wait_time = 5 * 60 * 60  # 5 часов
+                elif 'weekly limit' in err_msg:
+                    wait_time = 7 * 24 * 60 * 60  # 7 дней
+                if wait_time is not None:
+                    if wait_time > MAX_QUOTA_WAIT:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                    let_log(f"Anthropic квотная ошибка: ожидание {wait_time}с...")
+                    time.sleep(wait_time)
+                    return True
+            except:
+                pass
+            # Обычный rate limit
+            if attempt < max_retries:
+                wait_time = min(60, 2 ** attempt)
+                let_log(f"Anthropic 429 (Rate Limit). Waiting {wait_time:.2f}s...")
+                time.sleep(wait_time)
+                return True
+            else:
+                resp.raise_for_status()
+        elif resp.status_code == 402:
+            raise RuntimeError("balance end")
+        elif resp.status_code == 400:
+            try:
+                err_data = resp.json()
+                err_msg = str(err_data).lower()
+                if 'context' in err_msg or 'token' in err_msg or 'length' in err_msg:
+                    raise RuntimeError("ContextOverflowError")
+            except:
+                pass
+            resp.raise_for_status()
+        elif 500 <= resp.status_code < 600:
+            if attempt < max_retries:
+                wait_time = min(60, 2 ** attempt)
+                let_log(f"Anthropic {resp.status_code} Server Error. Waiting {wait_time:.2f}s...")
+                time.sleep(wait_time)
+                return True
+            else:
+                resp.raise_for_status()
+        return False
+
     def generate(self, generation_params: Dict[str, Any]) -> str:
         if "prompt" not in generation_params:
             raise ValueError("'prompt' обязателен")
@@ -224,22 +284,30 @@ class AnthropicClient:
         if payload["top_p"] is None:
             del payload["top_p"]
 
-        try:
-            r = requests.post(
-                f"{self.base_url}/messages",
-                json=payload,
-                headers=self.headers,
-                timeout=self.timeout
-            )
-            r.raise_for_status()
-            return r.json()["content"][0]["text"]
-        except requests.RequestException as e:
-            msg = str(e).lower()
-            if "context" in msg or "token" in msg or "limit" in msg:
-                raise RuntimeError("ContextOverflowError")
-            raise ConnectionError(f"Ошибка генерации: {str(e)}")
-        except Exception as e:
-            raise APIError(f"Ошибка обработки ответа: {str(e)}")
+        max_retries = 10
+        for attempt in range(1, max_retries + 1):
+            try:
+                r = requests.post(
+                    f"{self.base_url}/messages",
+                    json=payload,
+                    headers=self.headers,
+                    timeout=self.timeout
+                )
+                if self._handle_http_error(r, attempt, max_retries):
+                    continue
+                r.raise_for_status()
+                return r.json()["content"][0]["text"]
+            except RuntimeError as e:
+                raise
+            except requests.RequestException as e:
+                msg = str(e).lower()
+                if "context" in msg or "token" in msg or "limit" in msg:
+                    raise RuntimeError("ContextOverflowError")
+                if attempt == max_retries:
+                    raise ConnectionError(f"Ошибка генерации: {str(e)}")
+                time.sleep(2 ** attempt)
+            except Exception as e:
+                raise APIError(f"Ошибка обработки ответа: {str(e)}")
 
     def chat(self, messages: List[Dict[str, str]], generation_params: Dict[str, Any]) -> str:
         system_messages = [m["content"] for m in messages if m["role"] == "system"]
@@ -258,19 +326,27 @@ class AnthropicClient:
         if payload["top_p"] is None:
             del payload["top_p"]
 
-        try:
-            r = requests.post(
-                f"{self.base_url}/messages",
-                json=payload,
-                headers=self.headers,
-                timeout=self.timeout
-            )
-            r.raise_for_status()
-            return r.json()["content"][0]["text"]
-        except requests.RequestException as e:
-            msg = str(e).lower()
-            if "context" in msg or "token" in msg or "limit" in msg:
-                raise RuntimeError("ContextOverflowError")
-            raise ConnectionError(f"Ошибка чата: {str(e)}")
-        except Exception as e:
-            raise APIError(f"Ошибка обработки ответа: {str(e)}")
+        max_retries = 10
+        for attempt in range(1, max_retries + 1):
+            try:
+                r = requests.post(
+                    f"{self.base_url}/messages",
+                    json=payload,
+                    headers=self.headers,
+                    timeout=self.timeout
+                )
+                if self._handle_http_error(r, attempt, max_retries):
+                    continue
+                r.raise_for_status()
+                return r.json()["content"][0]["text"]
+            except RuntimeError as e:
+                raise
+            except requests.RequestException as e:
+                msg = str(e).lower()
+                if "context" in msg or "token" in msg or "limit" in msg:
+                    raise RuntimeError("ContextOverflowError")
+                if attempt == max_retries:
+                    raise ConnectionError(f"Ошибка чата: {str(e)}")
+                time.sleep(2 ** attempt)
+            except Exception as e:
+                raise APIError(f"Ошибка обработки ответа: {str(e)}")

@@ -132,6 +132,11 @@ pyinstaller --onedir --icon="data\icons\icon.ico" --name "Milana" ^
 --hidden-import sklearn.neighbors._typedefs ^
 --hidden-import sklearn.neighbors._quad_tree ^
 --hidden-import scipy._lib.messagestream ^
+--hidden-import cryptography ^
+--hidden-import cryptography.fernet ^
+--hidden-import cryptography.hazmat.primitives ^
+--hidden-import cryptography.hazmat.primitives.kdf.pbkdf2 ^
+--hidden-import cryptography.hazmat.backends ^
 --noconsole ^
 --clean ^
 --noconfirm ^

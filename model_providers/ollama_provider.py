@@ -24,6 +24,9 @@ MAX_RETRIES = 20          # Максимальное количество поп
 MAX_WAIT_TOTAL = 420      # 7 минут в секундах
 BASE_BACKOFF = 2.0        # Основание экспоненты
 
+# Флаг облачного режима (если указан токен)
+is_cloud_mode = False
+
 def normalize_url(url, default_port, default_scheme="http"):
     """Добавляет схему и порт по умолчанию, если они отсутствуют."""
     if not url:
@@ -53,10 +56,33 @@ def find_context_size(model_data, base_url, headers):
     print('получение контекста')
     # Поиск в model_info (наиболее надёжное место)
     model_info = model_data.get('model_info', {})
+    # Сначала проверяем точные ключи для разных архитектур
+    direct_keys = [
+        'context_length',
+        'max_position_embeddings',
+        'max_seq_len',
+        'n_ctx',
+        'llama.context_length',
+        'gemma2.context_length',
+        'gemma3.context_length',
+        'mistral.context_length',
+        'qwen2.context_length',
+        'phi3.context_length',
+    ]
+    for key in direct_keys:
+        if key in model_info:
+            try:
+                val = int(model_info[key])
+                if val > 0:
+                    return val
+            except (ValueError, TypeError):
+                continue
+
+    # Если точных ключей нет, ищем любой ключ, содержащий 'context_length' (регистронезависимо)
     for key, value in model_info.items():
         if 'context_length' in key.lower() and isinstance(value, (int, float)):
             return int(value)
-    
+
     # Поиск в parameters (например, "num_ctx 4096" или "num_ctx=4096")
     parameters = model_data.get('parameters', '')
     if parameters:
@@ -68,15 +94,15 @@ def find_context_size(model_data, base_url, headers):
         match = re.search(r'num_ctx\s+(\d+)', parameters, re.IGNORECASE)
         if match:
             return int(match.group(1))
-    
+
     # Поиск в model_file (редко, но может быть)
     model_file = model_data.get('model_file', '')
     if model_file:
         match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', model_file, re.IGNORECASE)
         if match:
             return int(match.group(1))
-    
-    # Попытка найти в любом текстовом представлении модели
+
+    # Попытка найти в любом текстовом представлении модели (запасной вариант)
     possible_paths = [
         ['parameters', 'num_ctx'],
         ['parameters', 'context_length'],
@@ -97,15 +123,15 @@ def find_context_size(model_data, base_url, headers):
                 return int(value)
         except (KeyError, TypeError):
             continue
-    
+
     # Fallback: ищем числа 2048, 4096, 8192 и т.д. в сериализованных данных
-    context_sizes = [2048, 4096, 8192, 16384, 32768, 65536, 128000, 200000]
+    context_sizes = [2048, 4096, 8192, 16384, 32768, 65536, 128000, 200000, 262144]
     model_text = json.dumps(model_data)
-    found_sizes = sorted([int(num) for num in re.findall(r'\b\d{4,6}\b', model_text)
+    found_sizes = sorted([int(num) for num in re.findall(r'\b\d{4,7}\b', model_text)
                           if int(num) in context_sizes], reverse=True)
     if found_sizes:
         return found_sizes[0]
-    
+
     # Значение по умолчанию
     return 4095
 
@@ -126,7 +152,7 @@ def _parse_template_info(template_info):
         "tool_call_start": "", "tool_call_end": "",
         "tool_result_start": "", "tool_result_end": "",
     }
-    
+
     # Пытаемся извлечь BOS/EOS из model_info, если доступно
     model_info = template_info.get('model_info', {})
     if 'tokenizer.ggml.bos_token_id' in model_info:
@@ -139,7 +165,7 @@ def _parse_template_info(template_info):
         eos_id = model_info.get('tokenizer.ggml.eos_token_id')
         if eos_id is not None:
             parsed_tags["eos"] = f"<0x{eos_id:02X}>"
-    
+
     # Пытаемся извлечь системный тег
     if system_msg:
         # Ищем паттерны типа "<|im_start|>system" или "system:"
@@ -179,10 +205,11 @@ def connect(connection_string, timeout=30):
     """
     Подключение к серверу Ollama API.
     Формат строки подключения:
-    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest"
+    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest; token=xxx" (token - для облачного режима)
     """
     global session, base_url, default_chat_model, token_limit, emb_token_limit
     global emb_model, do_chat_construct, native_func_call, tags, model_template_info
+    global is_cloud_mode
     # Параметры по умолчанию (только необходимые)
     params = {
         "url": "http://localhost:11434",
@@ -211,11 +238,14 @@ def connect(connection_string, timeout=30):
     emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"
     native_func_call = params["native_func_call"].lower().strip() == "true"
+
     print('подключение')
     try:
         # === Подключение к Ollama ===
         session = requests.Session()
         session.headers.update({"Content-Type": "application/json"})
+        if is_cloud_mode:
+            session.headers.update({"Authorization": f"Bearer {params['token']}"})
         api_url = f"{base_url}/api/tags"
         response = session.get(api_url, timeout=timeout)
         response.raise_for_status()
@@ -223,12 +253,20 @@ def connect(connection_string, timeout=30):
         available_models = [model['name'] for model in models_data.get('models', [])]
         if not available_models:
             return [False, 0, tags, "Не удалось получить список моделей с сервера Ollama."]
+
         # Устанавливаем модель для чата
         requested_model = params.get("model")
+        # ИЗМЕНЕНИЕ: если запрошенная модель не найдена, возвращаем ошибку, а не берём первую попавшуюся
         if requested_model and requested_model in available_models:
             default_chat_model = requested_model
         else:
-            default_chat_model = available_models[0]
+            # Собираем понятное сообщение об ошибке
+            if requested_model:
+                error_msg = f"Запрошенная модель '{requested_model}' не найдена. Доступные модели: {available_models}"
+            else:
+                error_msg = f"Модель не указана в строке подключения. Доступные модели: {available_models}"
+            return [False, 0, tags, error_msg]
+
         # Получаем информацию о модели для извлечения тегов и контекста
         try:
             show_url = f"{base_url}/api/show"
@@ -252,6 +290,7 @@ def connect(connection_string, timeout=30):
                 "tool_call_start": "", "tool_call_end": "",
                 "tool_result_start": "", "tool_result_end": "",
             }
+
         # Проверяем и устанавливаем модель для эмбеддингов
         if emb_model not in available_models:
             let_log(f"Модель для эмбеддингов '{emb_model}' не найдена. Доступные модели: {available_models}")
@@ -264,6 +303,7 @@ def connect(connection_string, timeout=30):
                 # Если нет моделей для эмбеддингов, используем чат-модель
                 emb_model = default_chat_model
                 let_log(f"Модель для эмбеддингов не найдена. Используем чат-модель: {emb_model}")
+
         # Автоматическое определение лимита токенов для эмбеддингов
         try:
             if emb_model != default_chat_model:  # Если модели разные, получаем детали для эмбеддинг-модели
@@ -280,7 +320,9 @@ def connect(connection_string, timeout=30):
         except Exception as e:
             let_log(f"Не удалось определить лимит токенов для эмбеддингов: {e}")
             emb_token_limit = 4095
+
         return [True, token_limit, tags]
+
     except requests.exceptions.RequestException as e:
         session = None
         return [False, 0, tags, f"Ошибка подключения: {e}"]
@@ -303,7 +345,7 @@ def disconnect() -> bool:
 def _request_with_backoff(api_url, json_payload):
     """
     Универсальный метод для запросов к Ollama с прогрессивной задержкой.
-    Экспоненциальный backoff, ограничение по времени 7 минут.
+    Для облачного режима отдельно обрабатывает 429 с лимитами сессии/недели.
     """
     start_time = time.time()
     last_exception = None
@@ -315,11 +357,54 @@ def _request_with_backoff(api_url, json_payload):
         try:
             response = session.post(api_url, json=json_payload)
             # Обработка HTTP ошибок с повторными попытками
-            if response.status_code in (429, 500, 502, 503, 504):
-                # 429 – слишком много запросов, 5xx – временные ошибки сервера
+            if response.status_code == 429:
+                # Пытаемся определить, является ли ошибка квотной (сессионный/недельный лимит)
+                retry_after = response.headers.get('Retry-After')
+                wait_time = None
+                if retry_after and retry_after.isdigit():
+                    wait_time = int(retry_after)
+                else:
+                    # Пытаемся извлечь из текста ошибки
+                    try:
+                        err_data = response.json()
+                        err_msg = err_data.get('error', '').lower()
+                        if 'session limit' in err_msg:
+                            wait_time = 5 * 60 * 60  # 5 часов
+                        elif 'weekly limit' in err_msg:
+                            wait_time = 7 * 24 * 60 * 60  # 7 дней
+                        elif 'insufficient_quota' in err_msg:
+                            raise RuntimeError("balance end")
+                    except:
+                        pass
+                if wait_time is not None:
+                    # ИЗМЕНЕНИЕ: если время ожидания больше 5 часов (18000 секунд) – сразу исключение
+                    MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
+                    if wait_time > MAX_QUOTA_WAIT:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                    # Дополнительная проверка на общий лимит MAX_WAIT_TOTAL (420с) – для квотных ошибок она обычно не сработает,
+                    # но оставим для безопасности
+                    if wait_time > MAX_WAIT_TOTAL:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
+                    let_log(f"Обнаружен лимит квоты (429). Ожидание {wait_time:.2f} с...")
+                    time.sleep(wait_time)
+                    continue  # повторяем запрос после ожидания
+                # Иначе это обычный rate limit - используем экспоненциальный backoff
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
-                    # Не превышаем оставшееся время
+                    remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
+                    if wait_time > remaining:
+                        wait_time = remaining
+                    if wait_time < 0.1:
+                        wait_time = 0.1
+                    let_log(f"HTTP 429 (Rate Limit) на попытке {attempt}. Ожидание {wait_time:.2f} с...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    response.raise_for_status()
+            if response.status_code in (500, 502, 503, 504):
+                # Временные серверные ошибки - используем экспоненциальный backoff
+                if attempt < MAX_RETRIES:
+                    wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
                     if wait_time > remaining:
                         wait_time = remaining
@@ -478,6 +563,47 @@ def create_embeddings(text):
                         'exceeds context length']
                     if any(keyword in error_text for keyword in context_error_keywords):
                         raise RuntimeError('ContextOverflowError')
+                if response.status_code == 429:
+                    # Аналогичная логика как в _request_with_backoff
+                    retry_after = response.headers.get('Retry-After')
+                    wait_time = None
+                    if retry_after and retry_after.isdigit():
+                        wait_time = int(retry_after)
+                    else:
+                        try:
+                            err_data = response.json()
+                            err_msg = err_data.get('error', '').lower()
+                            if 'session limit' in err_msg:
+                                wait_time = 5 * 60 * 60
+                            elif 'weekly limit' in err_msg:
+                                wait_time = 7 * 24 * 60 * 60
+                            elif 'insufficient_quota' in err_msg:
+                                raise RuntimeError("balance end")
+                        except:
+                            pass
+                    if wait_time is not None:
+                        # ИЗМЕНЕНИЕ: если время ожидания больше 5 часов (18000 секунд) – сразу исключение
+                        MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
+                        if wait_time > MAX_QUOTA_WAIT:
+                            raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                        if wait_time > MAX_WAIT_TOTAL:
+                            raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
+                        let_log(f"create_embeddings: Обнаружен лимит квоты (429). Ожидание {wait_time:.2f} с...")
+                        time.sleep(wait_time)
+                        attempt += 1
+                        continue
+                    # Обычный rate limit
+                    if attempt < MAX_RETRIES:
+                        wait_time = BASE_BACKOFF ** attempt
+                        remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
+                        if wait_time > remaining:
+                            wait_time = remaining
+                        if wait_time < 0.1:
+                            wait_time = 0.1
+                        let_log(f"create_embeddings: HTTP 429 (Rate Limit), повтор через {wait_time:.2f} с...")
+                        time.sleep(wait_time)
+                        attempt += 1
+                        continue
                 if response.status_code in (429, 500, 502, 503, 504):
                     # Временные ошибки - повторяем с экспоненциальной задержкой
                     if attempt < MAX_RETRIES:

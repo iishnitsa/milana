@@ -1,0 +1,14 @@
+[d:\milana\model_providers\ollama_provider.py:209 connect] подключение к Ollama
+[d:\milana\model_providers\ollama_provider.py:51 find_context_size] определение лимита контекста
+[d:\milana\model_providers\ollama_provider.py:56 find_context_size] контекст найден в model_info: gemma3.context_length -> 32768
+[d:\milana\model_providers\ollama_provider.py:234 connect] модель: gemma3:1b, контекст: 32768
+[d:\milana\model_providers\ollama_provider.py:51 find_context_size] определение лимита контекста
+[d:\milana\model_providers\ollama_provider.py:56 find_context_size] контекст найден в model_info: bert.context_length -> 512
+[d:\milana\model_providers\ollama_provider.py:209 connect] подключение к Ollama
+[d:\milana\model_providers\ollama_provider.py:51 find_context_size] определение лимита контекста
+[d:\milana\model_providers\ollama_provider.py:56 find_context_size] контекст найден в model_info: gemma3.context_length -> 32768
+[d:\milana\model_providers\ollama_provider.py:234 connect] модель: gemma3:1b, контекст: 32768
+[d:\milana\model_providers\ollama_provider.py:51 find_context_size] определение лимита контекста
+[d:\milana\model_providers\ollama_provider.py:56 find_context_size] контекст найден в model_info: bert.context_length -> 512
+[d:\milana\model_providers\ollama_provider.py:243 connect] Ошибка при получении деталей модели: raw_content
+[d:\milana\model_providers\ollama_provider.py:279 connect] Не удалось определить лимит токенов для эмбеддингов: raw_content
