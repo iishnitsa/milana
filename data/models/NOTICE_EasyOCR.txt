@@ -1,0 +1,3 @@
+EasyOCR
+Copyright (c) 2020 Jaided AI
+This product includes software developed by Jaided AI.

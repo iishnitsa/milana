@@ -11,7 +11,8 @@ dist/
 
 # Мои проектные папки
 /data/chats/*
-/data/models/*
+/data/models/blip/*
+/data/models/easyocr/*
 /data/settings.db
 notebooks/.ipynb_checkpoints/
 models/checkpoints/

@@ -62,6 +62,7 @@ TEXTS = {
     "use_rag": "Use advanced dialogue memory",
     "filter_generations": "Purify the generation",
     "hierarchy_limit": "Hierarchy level limit",
+    "use_librarian": "Use Librarian",
     "system_modules": "System Modules",
     "global_custom_modules": "Custom Modules (Global)",
     "chat_specific_modules": "New Modules (Chat-specific)",
@@ -93,22 +94,7 @@ TEXTS = {
     "module_desc_missing": "Description missing",
 
     # Model Validator
-    "model_err_path_missing": "Model path is required",
-    "model_err_invalid_file": "Invalid model file",
     "model_err_validation_generic": "Model validation error: {e}",
-    "custom_api_success": "API connection successful",
-    "custom_api_fail": "Failed to connect to API",
-    "custom_api_connect_error": "Connection error: {e}",
-    "model_cfg_validated": "Settings validated successfully",
-    "model_type_no_validation": "Model type doesn't require validation",
-    "model_err_hf_missing": "HuggingFace model is required",
-    "model_err_openai_key_missing": "Enter OpenAI API key",
-    "model_err_anthropic_key_missing": "Enter Anthropic API key",
-    "model_err_mistral_key_missing": "Enter Mistral API key",
-    "model_err_cohere_key_missing": "Enter Cohere API key",
-    "model_err_ollama_missing": "Ollama model is required",
-    "model_err_lmstudio_missing": "LM Studio model is required",
-    "model_err_custom_api_missing": "Server IP and port are required",
     
     # Model Validator (added)
     "model_err_no_provider": "No model provider selected",

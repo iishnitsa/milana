@@ -67,6 +67,7 @@ remove_loops = True
 cache_path = ''
 cache_can_write = False
 agent_func = None
+use_librarian = True  # добавлена глобальная переменная
 
 default_handlers_names = { # это из настроек должно выгружаться
     'doc': 'process_docx',
@@ -1111,13 +1112,21 @@ def system_tools_loader():
             break
     if found_start_dialog_index != -1: global_state.start_dialog_command_name = found_start_dialog_command
     # Формируем словари с ключом — кортеж токенов имени команды
-    def to_dict(modules):
+    def to_dict(modules, files):
         d = {}
-        for cmd_t, desc_tokens, func in modules: d[cmd_t] = (desc_tokens, func)
+        # Используем глобальную переменную use_librarian
+        global use_librarian
+        for i, (cmd_t, desc_tokens, func) in enumerate(modules):
+            filename = os.path.basename(files[i])
+            # Если use_librarian == False и это librarian.py - пропускаем добавление в словарь
+            if not use_librarian and filename == 'librarian.py':
+                let_log(f"librarian.py загружен глобально, но НЕ добавлен в словарь команд (use_librarian=False)")
+                continue
+            d[cmd_t] = (desc_tokens, func)
         return d
-    common_dict = to_dict(common_modules)
-    milana_dict = to_dict(milana_modules)
-    ivan_dict = to_dict(ivan_modules)
+    common_dict = to_dict(common_modules, common_files)
+    milana_dict = to_dict(milana_modules, milana_files)
+    ivan_dict = to_dict(ivan_modules, ivan_files)
     # Выводим отладочную информацию
     let_log("\nЗагруженные системные команды:")
     for cmd in global_state.system_tools_keys: let_log(cmd)
@@ -1836,7 +1845,7 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
     current_pos = 0
     text_length = len(text)
     while current_pos < text_length:
-        end_pos = min(current_pos + chunk_size, text_length)
+        end_pos = int(min(current_pos + chunk_size, text_length))
         if end_pos == text_length:
             chunk = text[current_pos:end_pos]
             if chunk.strip(): chunks.append(chunk)
@@ -3340,6 +3349,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global clean_variables_content
     global filter_generations
     global is_save_log
+    global use_librarian  # добавлено
 
     # Загружаем пароли из родительского процесса UI в память этого процесса
     if session_passwords:
@@ -3387,6 +3397,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         is_save_log = False
 
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
+
+    # === Чтение параметра use_librarian ===
+    use_librarian = int(settings.get("use_librarian", 1)) == 1
 
     # === Инициализация ChromaDB ===
     chroma_path = os.path.join(chat_path, "chroma_db")

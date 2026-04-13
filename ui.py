@@ -506,8 +506,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             if not hasattr(self, 'initialized'):
                 self.chats = None
                 self.global_settings = None
+                self.settings_metadata = None   # кэш для метаданных настроек (ключ -> widget_type)
                 self.chats_loaded = False
                 self.settings_loaded = False
+                self.metadata_loaded = False
                 self.initialized = True
         def clear_chats_cache(self):
             self.chats = None
@@ -515,6 +517,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def clear_settings_cache(self):
             self.global_settings = None
             self.settings_loaded = False
+        def clear_metadata_cache(self):
+            self.settings_metadata = None
+            self.metadata_loaded = False
         def get_chats(self, backend):
             if not self.chats_loaded or self.chats is None:
                 self.chats = backend._load_chats_from_db()
@@ -531,6 +536,14 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def update_global_settings(self, settings):
             self.global_settings = settings
             self.settings_loaded = True
+        def get_settings_metadata(self, backend):
+            if not self.metadata_loaded or self.settings_metadata is None:
+                self.settings_metadata = backend._load_settings_metadata_from_db()
+                self.metadata_loaded = True
+            return self.settings_metadata
+        def update_settings_metadata(self, metadata):
+            self.settings_metadata = metadata
+            self.metadata_loaded = True
 
     class LanguageManager:
         _instance = None
@@ -862,6 +875,11 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             Path("data").mkdir(exist_ok=True)
             db_path = self.db_path
             self.sql_exec(db_path, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+            # Добавляем столбец widget_type, если его нет
+            try:
+                self.sql_exec(db_path, "ALTER TABLE settings ADD COLUMN widget_type TEXT DEFAULT 'entry'")
+            except sqlite3.OperationalError:
+                pass  # столбец уже существует
             self.sql_exec(db_path, """CREATE TABLE IF NOT EXISTS default_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE, enabled INTEGER DEFAULT 0, lang TEXT DEFAULT 'en')""")
             self.sql_exec(db_path, """CREATE TABLE IF NOT EXISTS custom_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE, enabled INTEGER DEFAULT 1, lang TEXT DEFAULT 'en')""")
             self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'en')")
@@ -872,10 +890,29 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "model_type": default_provider, "use_rag": "1",
                 "filter_generations": "0", "hierarchy_limit": "0",
                 "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
-                "max_token_limit": "8192"
+                "max_token_limit": "8192", "use_librarian": "1"
             }
             for key, value in defaults.items():
                 self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            # Устанавливаем widget_type для известных ключей
+            widget_type_map = {
+                "use_rag": "switch",
+                "filter_generations": "switch",
+                "write_log": "switch",
+                "write_results": "switch",
+                "use_librarian": "switch",
+                "hierarchy_limit": "entry",
+                "max_critic_reactions": "entry",
+                # Остальные ключи оставляем с widget_type = 'entry' (по умолчанию)
+            }
+            for key, wtype in widget_type_map.items():
+                self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
+        def _load_settings_metadata_from_db(self):
+            """Возвращает список кортежей (key, widget_type) для всех записей settings."""
+            rows = self.sql_exec(self.db_path, "SELECT key, widget_type FROM settings", fetchall=True) or []
+            return {row[0]: row[1] for row in rows}
+        def get_settings_metadata(self):
+            return self.cache.get_settings_metadata(self)
         def generate_id(self, length=12):
             return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
         def _load_chats_from_db(self):
@@ -1059,6 +1096,39 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def on_close(self):
             self.grab_release()
             self.destroy()
+
+    # ===== Общая функция для построения UI настроек чата =====
+    def build_chat_settings_ui(parent, settings_vars, metadata):
+        """
+        Строит виджеты для настроек чата на основе переданных метаданных.
+        metadata: список кортежей (key, widget_type)
+        settings_vars: словарь, где для каждого ключа уже должен быть создан tk.StringVar
+        Возвращает словарь созданных виджетов (на случай, если понадобится дополнительная настройка)
+        """
+        created_widgets = {}
+        for key, wtype in metadata.items():
+            # Пропускаем служебные ключи, которые не должны отображаться в настройках чата
+            if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name'):
+                continue
+            frame = create_styled_frame(parent)
+            frame.pack(fill="x", pady=2)
+            frame.grid_columnconfigure(1, weight=1)
+            create_styled_label(frame, text=Lang.get(key, default=key)).grid(row=0, column=0, sticky="w", padx=(0, 10))
+            if wtype == 'switch':
+                # Создаем Switch
+                var = settings_vars[key]
+                switch = CTkSwitch(
+                    frame, text="", variable=var, onvalue="1", offvalue="0",
+                    switch_width=50, switch_height=25, progress_color=PURPLE_ACCENT,
+                    font=FONT_REGULAR
+                )
+                switch.grid(row=0, column=1, sticky="e")
+                created_widgets[key] = switch
+            else:  # 'entry' или любой другой тип, используем entry
+                entry = create_styled_entry(frame, textvariable=settings_vars[key])
+                entry.grid(row=0, column=1, sticky="ew")
+                created_widgets[key] = entry
+        return created_widgets
 
     class DynamicModelUI:
         def __init__(self):
@@ -1317,32 +1387,13 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def setup_chat_settings_tab(self, parent):
             parent.grid_columnconfigure(0, weight=1)
             parent.grid_rowconfigure(0, weight=0)
-            all_settings = self.backend.get_global_settings()
-            boolean_keys = ['use_rag', 'filter_generations', 'write_log', 'write_results']
-            numeric_keys = ['hierarchy_limit', 'max_critic_reactions']
             scrollable_frame = create_scrollable_frame(parent, fg_color="transparent")
             scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             scrollable_frame.grid_columnconfigure(0, weight=1)
-            row = 0
-            for key in boolean_keys:
-                if key not in self.settings_vars:
-                    self.settings_vars[key] = tk.StringVar(value=all_settings.get(key, '1' if key == 'use_rag' else '0'))
-                frame = create_styled_frame(scrollable_frame)
-                frame.pack(fill="x", pady=2)
-                create_styled_label(frame, text=Lang.get(key)).pack(side="left", padx=(0, 10))
-                switch = CTkSwitch(frame, text="", variable=self.settings_vars[key], onvalue="1", offvalue="0", switch_width=50, switch_height=25, progress_color=PURPLE_ACCENT, font=FONT_REGULAR)
-                switch.pack(side="right")
-                row += 1
-            for key in numeric_keys:
-                if key not in self.settings_vars:
-                    self.settings_vars[key] = tk.StringVar(value=all_settings.get(key, '0' if key == 'hierarchy_limit' else '2'))
-                frame = create_styled_frame(scrollable_frame)
-                frame.pack(fill="x", pady=2)
-                frame.grid_columnconfigure(1, weight=1)
-                create_styled_label(frame, text=Lang.get(key)).grid(row=0, column=0, sticky="w", padx=(0, 10))
-                entry = create_styled_entry(frame, textvariable=self.settings_vars[key])
-                entry.grid(row=0, column=1, sticky="ew")
-                row += 1
+            # Получаем метаданные из кэша
+            metadata = self.backend.get_settings_metadata()
+            # Строим UI динамически
+            build_chat_settings_ui(scrollable_frame, self.settings_vars, metadata)
         def validate_model(self):
             model_type = self.settings_vars['model_type'].get()
             connection_string = self._build_connection_string()
@@ -2259,19 +2310,19 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 except (ValueError, TypeError):
                     showerror(self.master, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens))
                     return
+                # Собираем значения всех настроек, включая динамические из метаданных
                 settings_to_save = {
                     'language': self.settings_vars['language'].get(),
                     'model_type': self.settings_vars['model_type'].get(),
                     'token_limit': self.settings_vars['token_limit'].get(),
                     'max_token_limit': self.settings_vars['max_token_limit'].get(),
                     'model_provider_params': self.settings_vars['model_provider_params'].get(),
-                    'use_rag': self.settings_vars['use_rag'].get(),
-                    'filter_generations': self.settings_vars['filter_generations'].get(),
-                    'hierarchy_limit': self.settings_vars['hierarchy_limit'].get(),
-                    'write_log': self.settings_vars['write_log'].get(),
-                    'write_results': self.settings_vars['write_results'].get(),
-                    'max_critic_reactions': self.settings_vars['max_critic_reactions'].get()
                 }
+                # Добавляем все настройки чата из метаданных
+                metadata = self.backend.get_settings_metadata()
+                for key in metadata:
+                    if key in self.settings_vars:
+                        settings_to_save[key] = self.settings_vars[key].get()
                 if settings_changed:
                     settings_to_save['model_provider_params'] = self._build_connection_string()
                 self.backend.update_global_settings(settings_to_save)
@@ -2564,15 +2615,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             }
             if settings_changed:
                 model_config['model_provider_params'] = self._build_connection_string()
-            chat_config = {
-                "language": Lang.current_language,
-                "use_rag": self.settings_vars['use_rag'].get(),
-                "filter_generations": self.settings_vars['filter_generations'].get(),
-                "hierarchy_limit": self.settings_vars['hierarchy_limit'].get(),
-                "write_log": self.settings_vars['write_log'].get(),
-                "write_results": self.settings_vars['write_results'].get(),
-                "max_critic_reactions": self.settings_vars['max_critic_reactions'].get()
-            }
+            # Собираем настройки чата динамически из метаданных
+            metadata = self.backend.get_settings_metadata()
+            chat_config = {"language": Lang.current_language}
+            for key in metadata:
+                if key in self.settings_vars:
+                    chat_config[key] = self.settings_vars[key].get()
             module_manager = ModuleManager()
             default_mods = module_manager.get_default_modules()
             default_mods_config = {mid: var.get() for mid, var in self.settings_vars['default_mods'].items()}

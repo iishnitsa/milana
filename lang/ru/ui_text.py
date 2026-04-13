@@ -62,6 +62,7 @@ TEXTS = {
     "use_rag": "Использовать продвинутую память диалога",
     "filter_generations": "Очищать генерации",
     "hierarchy_limit": "Лимит ступеней иерархии",
+    "use_librarian": "Использовать Библиотекаря",
     "system_modules": "Системные модули",
     "global_custom_modules": "Пользовательские модули (глобальные)",
     "chat_specific_modules": "Новые модули (только для этого чата)",
@@ -93,22 +94,7 @@ TEXTS = {
     "module_desc_missing": "Описание отсутствует",
 
     # Model Validator
-    "model_err_path_missing": "Укажите путь к модели",
-    "model_err_invalid_file": "Неверный файл модели",
     "model_err_validation_generic": "Ошибка при валидации модели: {e}",
-    "custom_api_success": "Успешное подключение к API",
-    "custom_api_fail": "Не удалось подключиться к API",
-    "custom_api_connect_error": "Ошибка подключения: {e}",
-    "model_cfg_validated": "Настройки прошли валидацию",
-    "model_type_no_validation": "Тип модели не требует валидации",
-    "model_err_hf_missing": "Укажите модель HuggingFace",
-    "model_err_openai_key_missing": "Введите API ключ OpenAI",
-    "model_err_anthropic_key_missing": "Введите API ключ Anthropic",
-    "model_err_mistral_key_missing": "Введите API ключ Mistral",
-    "model_err_cohere_key_missing": "Введите API ключ Cohere",
-    "model_err_ollama_missing": "Укажите модель Ollama",
-    "model_err_lmstudio_missing": "Укажите модель LM Studio",
-    "model_err_custom_api_missing": "Укажите IP и порт сервера",
     
     # Model Validator (добавленные)
     "model_err_no_provider": "Не выбран провайдер модели",
