@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# === linux_macos.sh ===
-# Clean version with proper read -r and explicit python3.8+ (<=3.13)
+# === linux_macos.sh (pyenv version) ===
+# Uses pyenv to install Python 3.13.7 if missing, then creates venv
 
 set -e
 
@@ -8,36 +8,38 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 echo "Project root: $PROJECT_ROOT"
 
-# 2) Explicitly require Python 3.8 - 3.13
-if ! command -v python3 &> /dev/null; then
-    echo "ERROR: Python 3 not found! Install Python 3.8-3.13 first."
-    echo ""
-    echo "  Ubuntu/Debian: sudo apt install python3 python3-venv python3-pip"
-    echo "  Fedora: sudo dnf install python3 python3-virtualenv"
-    echo "  macOS: brew install python@3.11"
-    echo "  Or download from https://python.org"
+# 2) Check for pyenv
+if ! command -v pyenv &> /dev/null; then
+    echo "ERROR: pyenv is not installed."
+    echo "Please install pyenv first, then re-run this script."
     exit 1
 fi
 
-# Check Python version (must be 3.8 - 3.13)
-PYTHON_CMD="python3"
-PY_VERSION=$($PYTHON_CMD -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJOR=$(echo $PY_VERSION | cut -d. -f1)
-PY_MINOR=$(echo $PY_VERSION | cut -d. -f2)
+echo "✓ pyenv found: $(which pyenv)"
 
-if [ "$PY_MAJOR" -ne 3 ] || [ "$PY_MINOR" -lt 8 ] || [ "$PY_MINOR" -gt 13 ]; then
-    echo "ERROR: Python 3.8 - 3.13 required, but found $PY_VERSION"
-    echo ""
-    echo "Current Python: $(which $PYTHON_CMD)"
-    echo ""
-    echo "Please install Python 3.8 - 3.13 and ensure it's the default python3."
+# 3) Install Python 3.13.7 via pyenv if not already present
+PYTHON_VERSION="3.13.7"
+echo "Checking for Python $PYTHON_VERSION via pyenv..."
+
+if pyenv versions --bare | grep -qx "$PYTHON_VERSION"; then
+    echo "Python $PYTHON_VERSION already installed."
+else
+    echo "Python $PYTHON_VERSION not found. Installing..."
+    pyenv install "$PYTHON_VERSION"
+fi
+
+# Get the full path to the interpreter
+PYENV_ROOT="$(pyenv root)"
+PYTHON_CMD="$PYENV_ROOT/versions/$PYTHON_VERSION/bin/python3.13"
+
+if [ ! -f "$PYTHON_CMD" ]; then
+    echo "ERROR: Cannot find Python $PYTHON_VERSION at $PYTHON_CMD"
     exit 1
 fi
 
-echo "✓ Python $PY_VERSION found: $(which $PYTHON_CMD)"
-echo ""
+echo "✓ Python $PYTHON_VERSION found: $PYTHON_CMD"
 
-# 3) Create/verify virtual environment
+# 4) Create/verify virtual environment using this specific Python
 VENV_PATH="$PROJECT_ROOT/mvenv"
 
 if [ -d "$VENV_PATH" ]; then
@@ -47,14 +49,14 @@ if [ -d "$VENV_PATH" ]; then
     if [[ "$yn" =~ ^[Yy]$ ]]; then
         echo "Removing old virtual environment..."
         rm -rf "$VENV_PATH"
-        echo "Creating new virtual environment..."
-        $PYTHON_CMD -m venv "$VENV_PATH"
+        echo "Creating new virtual environment with Python $PYTHON_VERSION..."
+        "$PYTHON_CMD" -m venv "$VENV_PATH"
     else
         echo "Using existing virtual environment."
     fi
 else
-    echo "Creating virtual environment at $VENV_PATH..."
-    $PYTHON_CMD -m venv "$VENV_PATH"
+    echo "Creating virtual environment with Python $PYTHON_VERSION..."
+    "$PYTHON_CMD" -m venv "$VENV_PATH"
 fi
 
 # Verify virtual environment
@@ -65,7 +67,7 @@ fi
 echo "✓ Virtual environment verified."
 echo ""
 
-# 4) Activate venv and install dependencies
+# 5) Activate venv and install dependencies
 echo "Activating virtual environment..."
 source "$VENV_PATH/bin/activate"
 echo "✓ Python in venv: $(which python)"
@@ -98,7 +100,7 @@ fi
 echo "✓ Dependencies installed."
 echo ""
 
-# 5) Verify key packages
+# 6) Verify key packages
 echo "Verifying key packages..."
 python -c "import torch; print('  PyTorch:', torch.__version__)" 2>/dev/null || echo "  PyTorch: Not installed"
 python -c "import transformers; print('  Transformers: OK')" 2>/dev/null || echo "  Transformers: Not installed"
@@ -106,7 +108,7 @@ python -c "import easyocr; print('  EasyOCR: OK')" 2>/dev/null || echo "  EasyOC
 python -c "import customtkinter; print('  CustomTkinter: OK')" 2>/dev/null || echo "  CustomTkinter: Not installed"
 echo ""
 
-# 6) Create launcher script
+# 7) Create launcher script
 echo "Creating launcher: run_milana.sh"
 LAUNCHER="$PROJECT_ROOT/run_milana.sh"
 
@@ -170,7 +172,7 @@ else
 fi
 echo ""
 
-# 7) Create desktop entry (only if GUI and xdg-desktop-menu exists)
+# 8) Create desktop entry (only if GUI and xdg-desktop-menu exists)
 if [ -n "$DISPLAY" ] && command -v xdg-desktop-menu &> /dev/null; then
     echo "Creating desktop entry..."
     
@@ -203,7 +205,7 @@ EOF
     fi
 fi
 
-# 8) Final message
+# 9) Final message
 echo ""
 echo "========================================"
 echo "✓ INSTALLATION COMPLETE!"
@@ -217,13 +219,13 @@ echo "  ./run_milana.sh"
 echo ""
 echo "Project folder: $PROJECT_ROOT"
 echo "Virtual environment: $VENV_PATH"
-echo "Python version: $PY_VERSION (3.8-3.13)"
+echo "Python version: $PYTHON_VERSION"
 echo ""
 echo "Troubleshooting:"
 echo "  • If run_milana.sh doesn't start: chmod +x run_milana.sh"
 echo "  • If Python packages fail: check internet connection"
 echo "  • For CUDA support on Linux: pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu118"
-echo "  • Python version must be 3.8 - 3.13 (found: $PY_VERSION)"
+echo "  • Python version is fixed to $PYTHON_VERSION via pyenv"
 echo ""
 
 # Keep terminal open if script was double-clicked
