@@ -6,13 +6,10 @@ import os
 
 # ====== БАЗОВЫЕ ПУТИ (остаются глобальными для заставки и других вызовов) ======
 def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        return os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False): return os.path.dirname(os.path.abspath(sys.executable))
+    else: return os.path.dirname(os.path.abspath(__file__))
 
-def resource_path(relative_path):
-    return os.path.join(get_base_dir(), relative_path)
+def resource_path(relative_path): return os.path.join(get_base_dir(), relative_path)
 
 # ====== ЗАСТАВКА (использует только лёгкие модули) ======
 def show_splash(app_ready_event: multiprocessing.Event):
@@ -34,8 +31,7 @@ def show_splash(app_ready_event: multiprocessing.Event):
             max_ratio = 0.3
             max_size = int(min(sw, sh) * max_ratio)
             ratio = min(max_size / img.width, max_size / img.height)
-            if ratio < 1:
-                img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+            if ratio < 1: img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
             img_tk = ImageTk.PhotoImage(img)
             w, h = img_tk.width(), img_tk.height()
             label = tk.Label(splash, image=img_tk, bg='black')
@@ -50,10 +46,8 @@ def show_splash(app_ready_event: multiprocessing.Event):
         splash.attributes('-topmost', True)
         splash.attributes('-transparentcolor', 'black')
         def poll():
-            if app_ready_event.is_set():
-                splash.after(500, lambda: (splash.destroy(), root.quit()))
-            else:
-                splash.after(50, poll)
+            if app_ready_event.is_set(): splash.after(500, lambda: (splash.destroy(), root.quit()))
+            else: splash.after(50, poll)
         splash.after(50, poll)
         root.mainloop()
     else:
@@ -61,12 +55,10 @@ def show_splash(app_ready_event: multiprocessing.Event):
         if not os.path.exists(icon_path):
             print(f"Иконка для сплэша не найдена: {icon_path}")
             return
-
         splash = tk.Tk()
         splash.overrideredirect(True)
         bg_color = '#1da244'
         splash.configure(bg=bg_color)
-
         sw, sh = 800, 600
         try:
             img = Image.open(icon_path)
@@ -83,27 +75,20 @@ def show_splash(app_ready_event: multiprocessing.Event):
         except Exception as e:
             print(f"Splash image load failed: {e}")
             w, h = 400, 300
-            label = tk.Label(splash, text="Loading...", font=("Georgia", 24),
-                            bg=bg_color, fg='white')
-
+            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg=bg_color, fg='white')
         splash.configure(bg=bg_color)
         x, y = (sw - w) // 2, (sh - h) // 2
         splash.geometry(f"{w}x{h}+{x}+{y}")
         label.pack()
         splash.attributes('-topmost', True)
-
         def poll():
             if app_ready_event.is_set(): splash.after(500, splash.destroy)
             else: splash.after(50, poll)
-
         splash.after(50, poll)
         splash.mainloop()
 
 # ====== ОСНОВНАЯ ФУНКЦИЯ (все тяжёлые импорты и логика приложения внутри) ======
 def run_main_app(app_ready_event: multiprocessing.Event):
-    # ------------------------------------------------------------
-    # 1. Все тяжёлые импорты (customtkinter, sqlite3 и др.)
-    # ------------------------------------------------------------
     import customtkinter
     import sqlite3
     import json
@@ -125,10 +110,6 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     )
     from pathlib import Path
     from tkinter import filedialog
-
-    # ------------------------------------------------------------
-    # 2. Константы оформления
-    # ------------------------------------------------------------
     DARK_BG = "#000000"
     DARK_ENTRY_BG = "#1e1e1e"
     DARK_SECONDARY = "#2a2a2a"
@@ -171,40 +152,26 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         "corner_radius": CORNER_RADIUS,
         "font": FONT_REGULAR
     }
-
-    # ------------------------------------------------------------
-    # 3. Вспомогательные функции для UI (раньше были глобальными)
-    # ------------------------------------------------------------
     def create_styled_button(parent, text, command=None, width=None, height=None, **kwargs):
         default_kwargs = BUTTON_THEME.copy()
-        if width:
-            default_kwargs["width"] = width
-        if height:
-            default_kwargs["height"] = height
+        if width: default_kwargs["width"] = width
+        if height: default_kwargs["height"] = height
         default_kwargs.update(kwargs)
         return CTkButton(parent, text=text, command=command, **default_kwargs)
-
     def create_styled_entry(parent, textvariable=None, **kwargs):
         default_kwargs = ENTRY_THEME.copy()
-        if textvariable:
-            default_kwargs["textvariable"] = textvariable
+        if textvariable: default_kwargs["textvariable"] = textvariable
         default_kwargs.update(kwargs)
         entry = CTkEntry(parent, **default_kwargs)
         enhance_text_widget(entry)
         return entry
-
-    def create_styled_frame(parent, fg_color="transparent", **kwargs):
-        return CTkFrame(parent, fg_color=fg_color, **kwargs)
-
+    def create_styled_frame(parent, fg_color="transparent", **kwargs): return CTkFrame(parent, fg_color=fg_color, **kwargs)
     def create_styled_label(parent, text, **kwargs):
         default_kwargs = {"font": FONT_REGULAR}
         default_kwargs.update(kwargs)
-        if "fg_color" not in default_kwargs:
-            default_kwargs["fg_color"] = "transparent"
-        if "height" not in default_kwargs:
-            default_kwargs["height"] = 0
+        if "fg_color" not in default_kwargs: default_kwargs["fg_color"] = "transparent"
+        if "height" not in default_kwargs: default_kwargs["height"] = 0
         return CTkLabel(parent, text=text, **default_kwargs)
-
     def create_param_widget(parent, param_info, settings_vars_dict, path_vars_dict, on_change_callback=None):
         param_name = param_info['name']
         default_val = param_info.get('default')
@@ -213,15 +180,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         param_frame.pack(fill="x", pady=2, padx=5)
         param_frame.grid_columnconfigure(1, weight=1)
         label_text = param_name
-        if default_val is not None and str(default_val).strip() != '':
-            label_text += f" {default_val}"
+        if default_val is not None and str(default_val).strip() != '': label_text += f" {default_val}"
         create_styled_label(param_frame, label_text).grid(row=0, column=0, sticky="w", padx=(0, 10))
         input_frame = create_styled_frame(param_frame)
         input_frame.grid(row=0, column=1, sticky="ew")
         input_frame.grid_columnconfigure(0, weight=1)
-
         is_secret = param_name.lower() in ["api_token", "password", "token"]
-
         if is_file:
             path_vars_dict[param_name] = tk.StringVar()
             display_var = tk.StringVar()
@@ -232,15 +196,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             create_styled_button(input_frame, text=Lang.get("browse"), width=80, command=browse_cmd).grid(row=0, column=1)
         else:
             settings_vars_dict[param_name] = tk.StringVar(value='')
-            if on_change_callback:
-                settings_vars_dict[param_name].trace_add("write", lambda *args: on_change_callback(param_name))
+            if on_change_callback: settings_vars_dict[param_name].trace_add("write", lambda *args: on_change_callback(param_name))
             entry_kwargs = {}
-            if is_secret:
-                entry_kwargs["show"] = "•"
+            if is_secret: entry_kwargs["show"] = "•"
             entry = create_styled_entry(input_frame, textvariable=settings_vars_dict[param_name], **entry_kwargs)
             entry.grid(row=0, column=0, sticky="ew")
         return param_frame
-
     def create_module_ui_item(parent, module_data, module_type, enabled_var=None, on_toggle=None, on_remove=None, show_checkbox=True):
         frame = create_styled_frame(parent, border_width=1, border_color=DARK_BORDER, corner_radius=CORNER_RADIUS)
         frame.pack(fill="x", padx=5, pady=3, ipady=5)
@@ -265,8 +226,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     def create_chat_message_bubble(parent, text, is_my, attachments=None, is_question=False):
         row_frame = create_styled_frame(parent)
         row_frame.pack(fill=tk.X, pady=2, padx=10, anchor="center")
-        if is_my:
-            bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
+        if is_my: bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
         else:
             bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=PURPLE_ACCENT)
         bubble.pack(expand=False, anchor="center")
