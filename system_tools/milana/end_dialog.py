@@ -14,6 +14,9 @@ from cross_gpt import (
     get_chat_context,
     delete_chat,
     chat_path,
+    recreate_agents,
+    send_output_message,
+    get_input_message
 )
 import os
 from datetime import datetime
@@ -21,14 +24,19 @@ base_dir = os.path.join(chat_path, "results")
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = ('end_dialog_return',)
+        main.attr_names = ('end_dialog_return', 'got_client_answer')
         main.end_dialog_return = 'Response saved.'
+        main.got_client_answer = "The client's response was received:"
         return
     let_log('\n' + '='*60)
     let_log('ЗАВЕРШЕНИЕ ДИАЛОГА')
     let_log(f"Current hierarchy ID: {global_state.now_try}")
     let_log(f"Result length: {len(text)} characters")
     let_log(f"Conversations counter: {global_state.conversations}")
+    if not recreate_agents and global_state.conversations <= 2 and len(global_state.critic_reactions.keys()) == global_state.max_critic_reactions:
+        let_log('НЕ ЗАВЕРШАЕМ ДИАЛОГ')
+        send_output_message(text=text, command='ask_user')
+        return '\n' + main.got_client_answer + '\n' + get_input_message(command='answer_user')['text']
     # Устанавливаем состояние диалога
     global_state.dialog_state = False
     global_state.stop_agent = True

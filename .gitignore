@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,7 +8,6 @@ dist/
 *.egg-info/
 /mvenv/
 
-# Мои проектные папки
 /data/chats/*
 /data/models/blip/*
 /data/models/easyocr/*
@@ -19,6 +17,7 @@ models/checkpoints/
 /tests/
 _internal/
 Output/
+/Milana
 Milana.exe
 /Milana.spec
 /start_milana.cmd

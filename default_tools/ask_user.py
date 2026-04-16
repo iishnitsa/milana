@@ -9,7 +9,7 @@ from cross_gpt import get_input_message, send_output_message, let_log
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = ('answer_text',)
+        main.attr_names = ()
         let_log('ИНИЦИАЛИЗАЦИЯ')
         return
     let_log('ВОПРОС')

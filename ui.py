@@ -25,48 +25,88 @@ def send_log_to_ui(log_queue, message: str):
 
 # ====== ЗАСТАВКА (использует только лёгкие модули) ======
 def show_splash(app_ready_event: multiprocessing.Event):
-    if not sys.platform.startswith("win32"):
-        return
-    icon_path = resource_path(os.path.join("data", "icons", "icon.png"))
-    if not os.path.exists(icon_path):
-        print(f"Иконка для сплэша не найдена: {icon_path}")
-        return
-    root = tk.Tk()
-    root.withdraw()
-    splash = tk.Toplevel(root)
-    splash.overrideredirect(True)
-    splash.configure(bg='black')
-    sw, sh = 800, 600
-    try:
-        img = Image.open(icon_path)
-        sw = splash.winfo_screenwidth()
-        sh = splash.winfo_screenheight()
-        max_ratio = 0.3
-        max_size = int(min(sw, sh) * max_ratio)
-        ratio = min(max_size / img.width, max_size / img.height)
-        if ratio < 1:
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-        img_tk = ImageTk.PhotoImage(img)
-        w, h = img_tk.width(), img_tk.height()
-        label = tk.Label(splash, image=img_tk, bg='black')
-        label.image = img_tk
-    except Exception as e:
-        print(f"Splash image load failed: {e}")
-        w, h = 400, 300
-        label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg='black', fg='white')
-    x, y = (sw - w) // 2, (sh - h) // 2
-    splash.geometry(f"{w}x{h}+{x}+{y}")
-    label.pack()
-    splash.attributes('-topmost', True)
-    if sys.platform == "win32":
+    if sys.platform.startswith("win32"):
+        icon_path = resource_path(os.path.join("data", "icons", "icon.png"))
+        if not os.path.exists(icon_path):
+            print(f"Иконка для сплэша не найдена: {icon_path}")
+            return
+        root = tk.Tk()
+        root.withdraw()
+        splash = tk.Toplevel(root)
+        splash.overrideredirect(True)
+        splash.configure(bg='black')
+        sw, sh = 800, 600
+        try:
+            img = Image.open(icon_path)
+            sw = splash.winfo_screenwidth()
+            sh = splash.winfo_screenheight()
+            max_ratio = 0.3
+            max_size = int(min(sw, sh) * max_ratio)
+            ratio = min(max_size / img.width, max_size / img.height)
+            if ratio < 1:
+                img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+            img_tk = ImageTk.PhotoImage(img)
+            w, h = img_tk.width(), img_tk.height()
+            label = tk.Label(splash, image=img_tk, bg='black')
+            label.image = img_tk
+        except Exception as e:
+            print(f"Splash image load failed: {e}")
+            w, h = 400, 300
+            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg='black', fg='white')
+        x, y = (sw - w) // 2, (sh - h) // 2
+        splash.geometry(f"{w}x{h}+{x}+{y}")
+        label.pack()
+        splash.attributes('-topmost', True)
         splash.attributes('-transparentcolor', 'black')
-    def poll():
-        if app_ready_event.is_set():
-            splash.after(500, lambda: (splash.destroy(), root.quit()))
-        else:
-            splash.after(50, poll)
-    splash.after(50, poll)
-    root.mainloop()
+        def poll():
+            if app_ready_event.is_set():
+                splash.after(500, lambda: (splash.destroy(), root.quit()))
+            else:
+                splash.after(50, poll)
+        splash.after(50, poll)
+        root.mainloop()
+    else:
+        icon_path = resource_path(os.path.join("data", "icons", "icon.png"))
+        if not os.path.exists(icon_path):
+            print(f"Иконка для сплэша не найдена: {icon_path}")
+            return
+
+        splash = tk.Tk()
+        splash.overrideredirect(True)
+        bg_color = '#1da244'
+        splash.configure(bg=bg_color)
+
+        sw, sh = 800, 600
+        try:
+            img = Image.open(icon_path)
+            sw = splash.winfo_screenwidth()
+            sh = splash.winfo_screenheight()
+            max_ratio = 0.3
+            max_size = int(min(sw, sh) * max_ratio)
+            ratio = min(max_size / img.width, max_size / img.height)
+            if ratio < 1: img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+            img_tk = ImageTk.PhotoImage(img)
+            w, h = img_tk.width(), img_tk.height()
+            label = tk.Label(splash, image=img_tk, bg=bg_color)
+            label.image = img_tk
+        except Exception as e:
+            print(f"Splash image load failed: {e}")
+            w, h = 400, 300
+            label = tk.Label(splash, text="Loading...", font=("Georgia", 24),
+                            bg=bg_color, fg='white')
+
+        splash.configure(bg=bg_color)
+        x, y = (sw - w) // 2, (sh - h) // 2
+        splash.geometry(f"{w}x{h}+{x}+{y}")
+        label.pack()
+        splash.attributes('-topmost', True)
+
+        def poll():
+            if app_ready_event.is_set(): splash.after(500, splash.destroy)
+            else: splash.after(50, poll)
+
+        splash.after(50, poll)
+        splash.mainloop()
 
 # ====== ОСНОВНАЯ ФУНКЦИЯ (все тяжёлые импорты и логика приложения внутри) ======
 def run_main_app(app_ready_event: multiprocessing.Event):
@@ -360,7 +400,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     def askyesno(parent, title, message):
         return show_message_dialog(parent, title, message, [("Yes", True), ("No", False)])
 
-    def enhance_text_widget(widget):
+    def enhance_text_widget(widget, on_change=None):
         is_textbox = isinstance(widget, CTkTextbox)
         is_entry = isinstance(widget, CTkEntry)
         def select_all(event=None):
@@ -392,6 +432,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     widget.delete(tk.SEL_FIRST, tk.SEL_LAST)
                 elif is_entry and widget.select_present():
                     widget.delete(widget.index(tk.SEL_FIRST), widget.index(tk.SEL_LAST))
+                # Вызываем callback изменения содержимого, если он предоставлен
+                if callable(on_change):
+                    on_change()
             except (tk.TclError, AttributeError):
                 pass
             return "break"
@@ -409,6 +452,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     if widget.select_present():
                         widget.delete(widget.index(tk.SEL_FIRST), widget.index(tk.SEL_LAST))
                     widget.insert(tk.INSERT, clipboard_content)
+                # Вызываем callback изменения содержимого, если он предоставлен
+                if callable(on_change):
+                    on_change()
             except tk.TclError:
                 pass
             return "break"
@@ -874,12 +920,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def init_settings_db(self):
             Path("data").mkdir(exist_ok=True)
             db_path = self.db_path
-            self.sql_exec(db_path, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-            # Добавляем столбец widget_type, если его нет
-            try:
-                self.sql_exec(db_path, "ALTER TABLE settings ADD COLUMN widget_type TEXT DEFAULT 'entry'")
-            except sqlite3.OperationalError:
-                pass  # столбец уже существует
+            self.sql_exec(db_path, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, widget_type TEXT DEFAULT 'entry')")
             self.sql_exec(db_path, """CREATE TABLE IF NOT EXISTS default_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE, enabled INTEGER DEFAULT 0, lang TEXT DEFAULT 'en')""")
             self.sql_exec(db_path, """CREATE TABLE IF NOT EXISTS custom_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE, enabled INTEGER DEFAULT 1, lang TEXT DEFAULT 'en')""")
             self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'en')")
@@ -890,7 +931,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "model_type": default_provider, "use_rag": "1",
                 "filter_generations": "0", "hierarchy_limit": "0",
                 "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
-                "max_token_limit": "8192", "use_librarian": "1"
+                "max_token_limit": "8192", "use_librarian": "1",
+                "recreate_agents": "0"        # новая настройка-переключатель
             }
             for key, value in defaults.items():
                 self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -901,6 +943,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "write_log": "switch",
                 "write_results": "switch",
                 "use_librarian": "switch",
+                "recreate_agents": "switch",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",
                 # Остальные ключи оставляем с widget_type = 'entry' (по умолчанию)
@@ -1101,12 +1144,15 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     def build_chat_settings_ui(parent, settings_vars, metadata):
         """
         Строит виджеты для настроек чата на основе переданных метаданных.
-        metadata: список кортежей (key, widget_type)
+        metadata: словарь {key: widget_type}
         settings_vars: словарь, где для каждого ключа уже должен быть создан tk.StringVar
         Возвращает словарь созданных виджетов (на случай, если понадобится дополнительная настройка)
         """
         created_widgets = {}
-        for key, wtype in metadata.items():
+        # Разделяем настройки: сначала поля ввода (entry), затем переключатели (switch)
+        entry_items = [(k, v) for k, v in metadata.items() if v != 'switch']
+        switch_items = [(k, v) for k, v in metadata.items() if v == 'switch']
+        for key, wtype in entry_items + switch_items:
             # Пропускаем служебные ключи, которые не должны отображаться в настройках чата
             if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name'):
                 continue
@@ -1386,7 +1432,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self._create_model_ui(main_frame)
         def setup_chat_settings_tab(self, parent):
             parent.grid_columnconfigure(0, weight=1)
-            parent.grid_rowconfigure(0, weight=0)
+            parent.grid_rowconfigure(0, weight=1)
             scrollable_frame = create_scrollable_frame(parent, fg_color="transparent")
             scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             scrollable_frame.grid_columnconfigure(0, weight=1)
@@ -1474,7 +1520,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             from cross_gpt import initialize_work
         @staticmethod
         def add_label_context_menu(master, widget):
-            menu = tk.Menu(master, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, relief="flat", borderwidth=0, font=FONT_REGULAR)
+            menu = tk.Menu(master, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, relief="flat", borderwidth=0, font=(FONT_FAMILY, 8))
             def copy_action():
                 try:
                     copy_text = widget.cget("text")
@@ -1683,7 +1729,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.input_text.grid(row=0, column=1, sticky="nsew")
             self.input_text.bind("<Return>", self.on_enter_pressed)
             self.input_text.bind("<KeyRelease>", self.adjust_input_height, add=True)
-            enhance_text_widget(self.input_text)
+            enhance_text_widget(self.input_text, on_change=self.adjust_input_height)
             self.adjust_input_height()
             self.right_controls_frame = create_styled_frame(self.input_outer_frame)
             self.right_controls_frame.grid(row=0, column=2, padx=(0,0), sticky="se")
@@ -1895,7 +1941,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def add_message_to_ui(self, text, is_my, is_question=False, attachments=None):
             bubble, msg_text_widget = create_chat_message_bubble(self.messages_frame, text, is_my, attachments, is_question)
             def create_context_menu(event):
-                menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=FONT_REGULAR)
+                menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=(FONT_FAMILY, 8))
                 menu.add_command(label=Lang.get("copy"), command=lambda: self.copy_text_to_clipboard(text))
                 menu.tk_popup(event.x_root, event.y_root)
             msg_text_widget.bind("<Button-3>", create_context_menu)
@@ -2453,7 +2499,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     def copy_text():
                         self.master.clipboard_clear()
                         self.master.clipboard_append(text)
-                    menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=FONT_REGULAR)
+                    menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=(FONT_FAMILY, 8))
                     menu.add_command(label=Lang.get("copy"), command=copy_text)
                     msg_text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
                     if sys.platform == "darwin":
@@ -2466,7 +2512,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     def copy_text():
                         self.master.clipboard_clear()
                         self.master.clipboard_append(text)
-                    menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=FONT_REGULAR)
+                    menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=(FONT_FAMILY, 8))
                     menu.add_command(label=Lang.get("copy"), command=copy_text)
                     msg_text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
                     if sys.platform == "darwin":

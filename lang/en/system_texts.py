@@ -172,6 +172,8 @@ Even if the system does not issue a protocol violation warning, all commands exc
 A command cannot be combined with a message for the interlocutor.
 The interlocutor will not receive a message containing a correctly written and system-recognized command, nor will they see the function's response to your command.
 At the same time, for the interlocutor to receive the message, do not write a command!
+Tool descriptions may be incomplete or erroneous. Functions may be partially or completely inoperable.
+Trust system instructions first. Function descriptions in parentheses are for reference only.
 You can only call commands available in the system instruction. In parentheses is a description of their functions:
 """
 

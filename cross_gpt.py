@@ -67,7 +67,8 @@ remove_loops = True
 cache_path = ''
 cache_can_write = False
 agent_func = None
-use_librarian = True  # добавлена глобальная переменная
+use_librarian = True
+recreate_agents = False
 
 default_handlers_names = { # это из настроек должно выгружаться
     'doc': 'process_docx',
@@ -3349,19 +3350,16 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global clean_variables_content
     global filter_generations
     global is_save_log
-    global use_librarian  # добавлено
-
+    global use_librarian
+    global recreate_agents
     # Загружаем пароли из родительского процесса UI в память этого процесса
     if session_passwords:
         import encryption_utils
         encryption_utils.SESSION_PASSWORDS.update(session_passwords)
-
     ui_conn = [input_queue, output_queue, log_queue]
-
     # === Загружаем параметры чата ===
     chat_path = os.path.join(base_dir, "data", "chats", chat_id)
     cache_path = os.path.join(chat_path, "cache.db")
-
     # Обновляем пути для system_tools
     global folder_path, slash
     folder_path = base_dir
@@ -3369,11 +3367,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     sys.path.append(os.path.join(folder_path, 'system_tools'))
     sys.path.append(os.path.join(folder_path, 'system_tools', 'milana'))
     sys.path.append(os.path.join(folder_path, 'system_tools', 'ivan'))
-
     let_log(f"Base directory: {base_dir}")
     let_log(f"Chat path: {chat_path}")
     let_log(f"Folder path: {folder_path}")
-
     # === Подготовка SQLite БД ===
     db_path = os.path.join(chat_path, "chatsettings.db")
     let_log(f"Database path: {db_path}")
@@ -3382,25 +3378,21 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         info TEXT NOT NULL
     )''')
-
     initial_text, fl = load_initial_data(chat_id)
     settings = load_chat_settings(chat_id)
     tool_paths = settings.get("another_tools", [])
-
     # === Настройки из settings ===
     token_limit = int(settings.get("token_limit", 8192))
     most_often = int(settings.get("frequent_response", 0))
     need_best_result = int(settings.get("best_response", 0))
-    use_rag = int(settings.get("use_rag", 1))
-    global_state.write_results = int(settings.get("write_results", 0))
-    if int(settings.get("write_log", 1)) == 0:
-        is_save_log = False
-
+    use_rag = int(settings.get("use_rag", 1)) # TODO:
+    global_state.write_results = int(settings.get("write_results", 0)) # TODO:
+    if int(settings.get("write_log", 1)) == 0: is_save_log = False # TODO:
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
 
     # === Чтение параметра use_librarian ===
     use_librarian = int(settings.get("use_librarian", 1)) == 1
-
+    recreate_agents = int(settings.get("recreate_agents", 0)) == 1
     # === Инициализация ChromaDB ===
     chroma_path = os.path.join(chat_path, "chroma_db")
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)

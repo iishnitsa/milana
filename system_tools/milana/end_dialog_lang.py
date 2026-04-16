@@ -6,5 +6,6 @@ locales = {
         ],
 
         'main.end_dialog_return': 'Ответ сохранён.',
+        'main.got_client_answer': 'Получен ответ клиента:',
     }
 }
