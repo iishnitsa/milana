@@ -3,7 +3,6 @@ from PIL import Image, ImageTk
 import multiprocessing
 import sys
 import os
-import queue                     # нужно для send_log_to_ui (глобально, т.к. используется из cross_gpt)
 
 # ====== БАЗОВЫЕ ПУТИ (остаются глобальными для заставки и других вызовов) ======
 def get_base_dir():
@@ -14,14 +13,6 @@ def get_base_dir():
 
 def resource_path(relative_path):
     return os.path.join(get_base_dir(), relative_path)
-
-# ====== ФУНКЦИЯ ДЛЯ ЛОГИРОВАНИЯ (используется из cross_gpt, остаётся глобальной) ======
-def send_log_to_ui(log_queue, message: str):
-    if log_queue:
-        try:
-            log_queue.put(message)
-        except Exception as e:
-            print(f"Failed to send log to UI: {e}")
 
 # ====== ЗАСТАВКА (использует только лёгкие модули) ======
 def show_splash(app_ready_event: multiprocessing.Event):
@@ -119,6 +110,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     import random
     import string
     import ast
+    import queue
     import importlib.util
     import shutil
     import subprocess
