@@ -174,7 +174,7 @@ def _ollama_embeddings(text: str) -> List[float]:
 
 # === Основные функции провайдера ===
 def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = None) -> Tuple[bool, int, Dict[str, Optional[str]]]:
-    global hf_client, hf_emb_client, chat_model, emb_model, timeout
+    global hf_client, hf_emb_client, chat_model, emb_model
     global use_ollama, ollama_session, ollama_url, ollama_emb_model
     global token_limit, emb_token_limit, tags
     params = {
@@ -197,6 +197,7 @@ def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = N
     api_token = _decrypted_token if _decrypted_token is not None else params['token']
     if not api_token: return False, token_limit, tags, "No API token provided"
     timeout = int(params['timeout'])
+    globals()['timeout'] = timeout
     # Настройка тегов на основе имени модели (если указана)
     if params['chat']:
         model_lower = params['chat'].lower()

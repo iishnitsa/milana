@@ -167,7 +167,7 @@ def _make_request(payload):
     raise RuntimeError("Max retries exceeded")
 
 def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = None) -> Tuple[bool, int, Dict[str, Optional[str]]]:
-    global session, api_key, chat_model, token_limit, emb_token_limit, tags, timeout
+    global session, api_key, chat_model, token_limit, emb_token_limit, tags
     global ollama_base_url, ollama_emb_model, ollama_session
     params = {
         'chat': 'claude-3-haiku-20240307',
@@ -182,6 +182,7 @@ def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = N
             value = value.strip()
             if key in params: params[key] = value
     timeout = timeout if timeout > 0 else 30
+    globals()['timeout'] = timeout
     ollama_base_url = _normalize_url(params['ollama_url'], default_port=11434)
     ollama_emb_model = _normalize_model(params['ollama_emb_model'])
     if _decrypted_token is not None: api_key = _decrypted_token; let_log("Anthropic: using decrypted token from _decrypted_token")
