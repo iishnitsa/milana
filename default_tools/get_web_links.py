@@ -17,8 +17,7 @@ def main(text):
             'no_description',
             'title_text',
             'description_text',
-            'search_error_general'
-        )
+            'search_error_general')
         main.search_error_msg = 'Search error: '
         main.no_title = 'No title'
         main.no_description = 'No description'
@@ -28,7 +27,6 @@ def main(text):
         return
     let_log('WEB SEARCH LINKS CALLED')
     let_log(f'Search query: {text}')
-
     try:
         results = []
         with DDGS(timeout=60) as ddgs:
@@ -37,13 +35,8 @@ def main(text):
                 body = r.get('body', main.no_description)
                 href = r.get('href', '')
                 results.append((title, body, href))
-        if not results:
-            return found_info_1
+        if not results: return found_info_1
         output = []
-        for title, body, href in results:
-            output.append(f"\n{main.title_text}{title}{main.description_text}{body}\nURL: {href}\n")
+        for title, body, href in results: output.append(f"\n{main.title_text}{title}{main.description_text}{body}\nURL: {href}\n")
         return '\n'.join(output)
-    except Exception as e:
-        let_log(f'Error in web_search_links: {str(e)}')
-        # Возвращаем короткое сообщение без деталей ошибки
-        return main.search_error_general
+    except Exception as e: let_log(f'Error in web_search_links: {str(e)}'); return main.search_error_general

@@ -34,17 +34,14 @@ from cross_gpt import (
     excel_cheet_data_text,
     excel_cheet_error_text,
     excel_empty_text,
-    excel_error_text,
-)
+    excel_error_text)
 
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'): return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
-def get_external_path(relative_path):
-    """Получает путь к файлу/папке рядом с .exe или скриптом"""
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(os.path.dirname(sys.executable), relative_path)
+def get_external_path(relative_path): # Получает путь к файлу/папке рядом с .exe или скриптом
+    if hasattr(sys, '_MEIPASS'): return os.path.join(os.path.dirname(sys.executable), relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
 # --- ДОБАВЛЕНО ---
@@ -53,8 +50,7 @@ def is_image_too_small(image_bytes, min_size=150):
         img = Image.open(BytesIO(image_bytes))
         w, h = img.size
         return min(w, h) < min_size
-    except:
-        return True
+    except: return True
 # ------------------
 
 # Глобальные переменные для ленивой загрузки моделей
@@ -90,16 +86,9 @@ def _load_image_models():
             _BLIP_MODEL = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
         try:
             os.makedirs(easyocr_path, exist_ok=True)
-            _OCR_INSTANCE = easyocr.Reader(
-                ['en', 'ru'], 
-                gpu=False,
-                model_storage_directory=easyocr_path,
-                download_enabled=False
-            )
+            _OCR_INSTANCE = easyocr.Reader(['en', 'ru'], gpu=False, model_storage_directory=easyocr_path, download_enabled=False)
             let_log("EasyOCR загружен локально")
-        except Exception as ocr_error:
-            let_log(f"Ошибка загрузки EasyOCR из {easyocr_path}: {ocr_error}")
-            _OCR_INSTANCE = None
+        except Exception as ocr_error: let_log(f"Ошибка загрузки EasyOCR из {easyocr_path}: {ocr_error}"); _OCR_INSTANCE = None
         _IMAGE_MODELS_LOADED = True
         _IMAGE_MODELS_LOAD_FAILED = False
         return True
@@ -118,8 +107,7 @@ def is_binary_text(text, threshold=0.5, max_chars=1024):
         if char == '\n' or char == '\r' or char == '\t': printable_count += 1
         elif category in ('Cc', 'Cs'): continue
         elif char == '\ufffd': continue
-        else:
-            printable_count += 1
+        else: printable_count += 1
     ratio = printable_count / len(check_text)
     return ratio < threshold
 
@@ -135,10 +123,7 @@ def is_reasonable_text(text, min_ratio=0.3):
     good_ratio = good_chars / total_chars if total_chars > 0 else 0
     bad_chars = replacement_chars + control_chars
     bad_ratio = bad_chars / total_chars if total_chars > 0 else 1
-    return (good_ratio >= min_ratio and 
-            bad_ratio < 0.1 and 
-            letters > 10 and 
-            letters > total_chars * 0.1)
+    return (good_ratio >= min_ratio and bad_ratio < 0.1 and letters > 10 and letters > total_chars * 0.1)
 
 def decode_with_fallback(content):
     strategies = [
@@ -148,8 +133,7 @@ def decode_with_fallback(content):
         lambda: content.decode('cp1251', errors='strict'),
         lambda: content.decode('koi8-r', errors='strict'),
         lambda: content.decode('iso-8859-1', errors='strict'),
-        lambda: content.decode('cp1252', errors='strict'),
-    ]
+        lambda: content.decode('cp1252', errors='strict'),]
     for strategy in strategies:
         try:
             result = strategy()
@@ -162,27 +146,21 @@ def process_image(file_path_or_data, input_file_handlers):
     try: _load_image_models()
     except Exception as e: return f"Ошибка загрузки моделей: {e}"
     try:
-        if isinstance(file_path_or_data, bytes):
-            image = Image.open(BytesIO(file_path_or_data)).convert('RGB')
-        else:
-            image = Image.open(file_path_or_data).convert('RGB')
+        if isinstance(file_path_or_data, bytes): image = Image.open(BytesIO(file_path_or_data)).convert('RGB')
+        else: image = Image.open(file_path_or_data).convert('RGB')
     except Exception as e: return f"{err_image_process_text_infoloaders}{e}"
     try:
         inputs = _BLIP_PROCESSOR(image, return_tensors="pt")
         output_ids = _BLIP_MODEL.generate(**inputs, max_length=50, num_beams=4)
         caption = _BLIP_PROCESSOR.decode(output_ids[0], skip_special_tokens=True)
-    except Exception as e:
-        let_log(f"BLIP ошибка: {e}")
-        caption = "Не удалось создать описание"
+    except Exception as e: let_log(f"BLIP ошибка: {e}"); caption = "Не удалось создать описание"
     extracted_text = ""
     if _OCR_INSTANCE is not None:
         try:
             img_np = np.array(image)
             results = _OCR_INSTANCE.readtext(img_np)
             extracted_text = "\n".join([res[1] for res in results])
-        except Exception as ocr_error:
-            let_log(f"EasyOCR не удался: {ocr_error}")
-            extracted_text = ""
+        except Exception as ocr_error: let_log(f"EasyOCR не удался: {ocr_error}"); extracted_text = ""
     if extracted_text: return f"{caption}\n{text_on_image_prompt_infoloaders}\n{extracted_text}"
     else: return f"{caption}"
 
@@ -204,20 +182,14 @@ def cleanup_image_models():
 def process_pdf(file_path_or_data, input_file_handlers):
     let_log('пдф')
     try:
-        if isinstance(file_path_or_data, bytes):
-            pdf = pymupdf.open(stream=BytesIO(file_path_or_data), filetype="pdf")
-        else:
-            pdf = pymupdf.open(file_path_or_data)
-    except Exception as ex:
-        let_log(ex)
-        return f"{err_image_process_pdf_infoloaders}{ex}"
+        if isinstance(file_path_or_data, bytes): pdf = pymupdf.open(stream=BytesIO(file_path_or_data), filetype="pdf")
+        else: pdf = pymupdf.open(file_path_or_data)
+    except Exception as ex: let_log(ex); return f"{err_image_process_pdf_infoloaders}{ex}"
     full_text = []
     attachment_count = 0
     for page_num, page in enumerate(pdf, start=1):
         text = page.get_text()
-        if text.strip():
-            full_text.append(f"--- {page_pdf_prompt_infoloaders} {page_num} ---")
-            full_text.append(text.strip())
+        if text.strip(): full_text.append(f"--- {page_pdf_prompt_infoloaders} {page_num} ---"); full_text.append(text.strip())
         for image_index, img in enumerate(page.get_images(full=True), start=1):
             xref = img[0]
             base_image = pdf.extract_image(xref)
@@ -226,40 +198,28 @@ def process_pdf(file_path_or_data, input_file_handlers):
             attachment_count += 1
             file_name = f"{attachment_prompt_infoloaders}{attachment_count}"
             if not is_image_too_small(image_bytes):
-                try:
-                    result = input_file_handlers.get(extension, lambda x: unprocessable_file_infoloaders)(image_bytes, input_file_handlers)
-                    full_text.append(f"[{file_name}: {result}]")
-                except Exception as ex:
-                    let_log(ex)
-                    # full_text.append(f"[{file_name}: {image_processing_error_infoloaders} ({ex})]")
+                try: result = input_file_handlers.get(extension, lambda x: unprocessable_file_infoloaders)(image_bytes, input_file_handlers); full_text.append(f"[{file_name}: {result}]")
+                except Exception as ex: let_log(ex) # full_text.append(f"[{file_name}: {image_processing_error_infoloaders} ({ex})]")
     pdf.close()
     return "\n".join(full_text)
 
 def process_docx(file_path_or_data, input_file_handlers):
     let_log('док икс')
-    try:
-        # Определяем тип входных данных
-        if isinstance(file_path_or_data, bytes):
-            # Если переданы байты, используем BytesIO
-            let_log('  Обработка DOCX из байтов (из архива)')
-            doc = Document(BytesIO(file_path_or_data))
-        else:
-            # Иначе считаем, что это путь к файлу
+    try: # Определяем тип входных данных
+        if isinstance(file_path_or_data, bytes): let_log('  Обработка DOCX из байтов (из архива)'); doc = Document(BytesIO(file_path_or_data))
+        else: # Иначе считаем, что это путь к файлу
             let_log(f'  Обработка DOCX из файла: {file_path_or_data}')
             doc = Document(file_path_or_data)
     except Exception as e: return f"{file_open_error_infoloaders}{e}"
     full_text = []
     attachment_count = 0
-    # Проход по всем элементам документа
-    for paragraph in doc.paragraphs:
+    for paragraph in doc.paragraphs: # Проход по всем элементам документа
         # Добавляем текст из параграфа
         if paragraph.text.strip(): full_text.append(paragraph.text.strip())
         # Проверяем наличие изображений в параграфе
-        for run in paragraph.runs:
-            # Ищем встроенные изображения
+        for run in paragraph.runs: # Ищем встроенные изображения
             if hasattr(run, 'element') and hasattr(run.element, 'xpath'):
-                try:
-                    # Ищем теги blip (встроенные изображения)
+                try: # Ищем теги blip (встроенные изображения)
                     embed_elements = run.element.xpath('.//a:blip/@r:embed')
                     if embed_elements:
                         for embed_id in embed_elements:
@@ -278,18 +238,12 @@ def process_docx(file_path_or_data, input_file_handlers):
                                         # Определяем расширение для обработчика
                                         ext_for_handler = extension[1:] if extension.startswith('.') else extension
                                         # Проверяем, есть ли обработчик для этого расширения
-                                        if ext_for_handler in input_file_handlers:
-                                            # Передаём содержимое изображения в обработчик
-                                            result = input_file_handlers[ext_for_handler](image_content, input_file_handlers)
-                                            full_text.append(f"[{file_name_with_ext}: {result}]")
+                                        if ext_for_handler in input_file_handlers: result = input_file_handlers[ext_for_handler](image_content, input_file_handlers); full_text.append(f"[{file_name_with_ext}: {result}]")
                                         else: full_text.append(f"[{file_name_with_ext}: {unsupported_format_infoloaders}]")
                                     else: full_text.append(f"[{file_name_with_ext}: Нет данных изображения]")
                                 else: full_text.append(f"[Изображение {attachment_count}: Не найдено в документе]")
                             except Exception as e: full_text.append(f"[Изображение {attachment_count}: {file_processing_error_infoloaders} ({e})]")
-                except Exception as e:
-                    # Игнорируем ошибки при поиске изображений
-                    let_log(f"  Ошибка при поиске изображений в DOCX: {e}")
-                    continue
+                except Exception as e: let_log(f"  Ошибка при поиске изображений в DOCX: {e}"); continue
     return "\n".join(full_text)
 
 def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0, max_depth=5):
@@ -304,11 +258,7 @@ def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0
     """
     if depth >= max_depth:
         let_log(f"⚠ Достигнута максимальная глубина рекурсии ({max_depth}) для архивов")
-        return [{
-            'filename': zip_archive_name_infoloaders,
-            'content': f"Достигнута максимальная глубина вложенности архивов ({max_depth})",
-            'type': 'error'
-        }]
+        return [{'filename': zip_archive_name_infoloaders, 'content': f"Достигнута максимальная глубина вложенности архивов ({max_depth})", 'type': 'error'}]
     let_log('ZIP-архив' + (' (вложенный)' if is_nested else ''))
     results = []
     try:
@@ -323,61 +273,28 @@ def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0
                 file_path = file_info.filename
                 # Получаем расширение файла
                 _, ext = os.path.splitext(file_info.filename)
-                ext = ext[1:].lower()  # Убираем точку и приводим к нижнему регистру
+                ext = ext[1:].lower() # Убираем точку и приводим к нижнему регистру
                 # Читаем содержимое файла
                 try: file_content = zip_file.read(file_info)
-                except Exception as read_error:
-                    results.append({
-                        'filename': file_path,
-                        'content': f"Ошибка чтения файла из архива: {read_error}",
-                        'type': 'error'
-                    })
-                    continue
+                except Exception as read_error: results.append({'filename': file_path, 'content': f"Ошибка чтения файла из архива: {read_error}", 'type': 'error'}); continue
                 # Проверяем, является ли файл ZIP-архивом (рекурсивная обработка)
                 if ext == 'zip':
                     let_log(f"  Обнаружен вложенный архив: {file_path}")
-                    try:
-                        # Рекурсивная обработка вложенного архива
-                        nested_results = process_zip(
-                            file_content, 
-                            input_file_handlers, 
-                            is_nested=True,
-                            depth=depth + 1,
-                            max_depth=max_depth
-                        )
+                    try: # Рекурсивная обработка вложенного архива
+                        nested_results = process_zip(file_content, input_file_handlers, is_nested=True, depth=depth + 1, max_depth=max_depth)
                         for nested_result in nested_results:
                             # Добавляем путь родительского архива к имени файла
                             nested_result['filename'] = f"{file_path}/{nested_result['filename']}"
                             results.append(nested_result)
-                    except Exception as e:
-                        results.append({
-                            'filename': file_path,
-                            'content': f"Ошибка обработки вложенного архива: {e}",
-                            'type': 'error'
-                        })
+                    except Exception as e: results.append({'filename': file_path, 'content': f"Ошибка обработки вложенного архива: {e}", 'type': 'error'})
                     continue
                 # Обрабатываем обычные файлы соответствующим обработчиком
                 if ext in input_file_handlers:
                     try:
                         result = input_file_handlers[ext](file_content, input_file_handlers)
-                        results.append({
-                            'filename': file_path,
-                            'content': result,
-                            'type': 'file'
-                        })
-                    except Exception as e:
-                        results.append({
-                            'filename': file_path,
-                            'content': f"{file_processing_error_infoloaders}{e}",
-                            'type': 'error'
-                        })
-                else:
-                    # Если формат не поддерживается, просто добавляем информацию о файле
-                    results.append({
-                        'filename': file_path,
-                        'content': unsupported_format_infoloaders,
-                        'type': 'unsupported'
-                    })
+                        results.append({'filename': file_path, 'content': result, 'type': 'file'})
+                    except Exception as e: results.append({'filename': file_path, 'content': f"{file_processing_error_infoloaders}{e}", 'type': 'error'})
+                else: results.append({'filename': file_path, 'content': unsupported_format_infoloaders, 'type': 'unsupported'})
     except zipfile.BadZipFile:
         error_msg = corrupted_zip_infoloaders
         if is_nested: error_msg = f"Вложенный архив поврежден: {error_msg}"
@@ -398,16 +315,14 @@ def process_text(file_path_or_data, input_file_handlers):
             let_log(f'  Обработка текста из файла: {file_path_or_data}')
             try:
                 with open(file_path_or_data, 'rb') as file: raw_data = file.read()
-            except (FileNotFoundError, IOError):
-                # Если файл не найден, считаем что это сам текст
-                return file_path_or_data
+            except (FileNotFoundError, IOError): return file_path_or_data
         # Определяем кодировку
         result = chardet.detect(raw_data)
         encoding = result['encoding'] or 'utf-8'  # Защита от None
         # Декодируем с обработкой ошибок
         return raw_data.decode(encoding, errors='replace')
     except Exception as e:
-        let_log(f"  Ошибка обработки текста: {e}")
+        let_log(f"Ошибка обработки текста: {e}")
         # Пытаемся вернуть как есть
         if isinstance(file_path_or_data, bytes): return file_path_or_data.decode('utf-8', errors='ignore')
         else: return file_path_or_data
@@ -421,13 +336,11 @@ def process_excel(file_path_or_data, input_file_handlers):
     try:
         # Определяем тип входных данных
         if isinstance(file_path_or_data, bytes):
-            let_log('  Обработка Excel из байтов (из архива)')
+            let_log('Обработка Excel из байтов (из архива)')
             # Используем BytesIO для чтения из памяти
             import io
             excel_file = pd.ExcelFile(io.BytesIO(file_path_or_data))
-        else:
-            let_log(f'  Обработка Excel из файла: {file_path_or_data}')
-            excel_file = pd.ExcelFile(file_path_or_data)
+        else: let_log(f'  Обработка Excel из файла: {file_path_or_data}'); excel_file = pd.ExcelFile(file_path_or_data)
         results = []
         # Проходим по всем листам
         for sheet_name in excel_file.sheet_names:
@@ -440,10 +353,8 @@ def process_excel(file_path_or_data, input_file_handlers):
                 results.append(f"{excel_cheet_size_text}{df.shape[0]} {excel_cheet_strings_text} {df.shape[1]} {excel_cheet_columns_text}")
                 results.append(excel_cheet_data_text)
                 results.append(df_text)
-                results.append("")  # Пустая строка для разделения
-            except Exception as e:
-                results.append(f"{excel_cheet_error_text} '{sheet_name}' {e}")
-                continue
+                results.append("") # Пустая строка для разделения
+            except Exception as e: results.append(f"{excel_cheet_error_text} '{sheet_name}' {e}"); continue
         excel_file.close()
         if results: return "\n".join(results)
         else: return excel_empty_text
@@ -459,26 +370,15 @@ def process_unknown(file_path_or_data, input_file_handlers):
     Если файл не открывается или не является текстовым, выбрасывает исключение.
     """
     let_log('Попытка обработки неизвестного файла как текстового с определением кодировки')
-    try:
-        # Получаем байты
-        if isinstance(file_path_or_data, bytes):
-            raw_data = file_path_or_data
+    try: # Получаем байты
+        if isinstance(file_path_or_data, bytes): raw_data = file_path_or_data
         else:
             try:
-                with open(file_path_or_data, 'rb') as f:
-                    raw_data = f.read()
-            except (FileNotFoundError, IOError) as e:
-                raise ValueError(f"Не удалось открыть файл: {e}")
-
-        # Пытаемся декодировать с помощью эвристик
-        text = decode_with_fallback(raw_data)
-
+                with open(file_path_or_data, 'rb') as f: raw_data = f.read()
+            except (FileNotFoundError, IOError) as e: raise ValueError(f"Не удалось открыть файл: {e}")
+        text = decode_with_fallback(raw_data) # Пытаемся декодировать с помощью эвристик
         # Проверка на бинарность
-        if is_binary_text(text):
-            raise ValueError("Файл не является текстовым или имеет неизвестную кодировку.")
-
+        if is_binary_text(text): raise ValueError("Файл не является текстовым или имеет неизвестную кодировку.")
         let_log('Файл обработан как текстовый')
         return text
-    except Exception as e:
-        let_log(f"Ошибка обработки неизвестного файла: {e}")
-        raise
+    except Exception as e: let_log(f"Ошибка обработки неизвестного файла: {e}"); raise

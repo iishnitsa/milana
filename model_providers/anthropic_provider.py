@@ -3,350 +3,373 @@ import requests
 import json
 import traceback
 import time
-import tiktoken
+import random
+import re
 from typing import Optional, Dict, Any, List, Tuple
-from sentence_transformers import SentenceTransformer
-from cross_gpt import let_log  # добавлен импорт для логирования
+from cross_gpt import let_log
 
 # Глобальные переменные состояния
-client = None
-token_limit = 200000  # Значение по умолчанию для Anthropic
-emb_token_limit = 4096  # Значение по умолчанию для модели эмбеддингов
-emb_model = None  # Модель для эмбеддингов
+session = None
+api_key = None
+base_url = "https://api.anthropic.com/v1"
+chat_model = "claude-3-haiku-20240307"
+timeout = 30
+token_limit = 200000
+
 tags = {
     "system": None,
     "user": "Human:",
     "assistant": "Assistant:",
-    "end": None
-}
+    "end": None}
 
-class AnthropicError(Exception): pass
-class ConnectionError(AnthropicError): pass
-class APIError(AnthropicError): pass
+# Константы для повторных попыток Anthropic
+MAX_RETRIES = 12
+BASE_BACKOFF = 2.0
+MAX_WAIT_TOTAL = 300
+MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
 
-def connect(connection_string: str, timeout: int = 30) -> Tuple[bool, int, Dict[str, Optional[str]]]:
-    global client, token_limit, emb_token_limit, emb_model, tags
+# Константы для Ollama (эмбеддинги)
+OLLAMA_MAX_RETRIES = 20
+OLLAMA_MAX_WAIT_TOTAL = 420
+OLLAMA_BASE_BACKOFF = 2.0
 
+# Ollama настройки (обязательны для эмбеддингов)
+ollama_session = None
+ollama_base_url = "http://localhost:11434"
+ollama_emb_model = "all-minilm:latest"
+emb_token_limit = 4095
+
+MODEL_LIMITS = {
+    "claude-3-opus-20240229": 200000,
+    "claude-3-sonnet-20240229": 200000,
+    "claude-3-haiku-20240307": 200000,
+    "claude-2.1": 200000,
+    "claude-2.0": 100000,
+    "claude-instant-1.2": 100000,}
+
+def _normalize_url(url, default_port=None, default_scheme="https"):
+    """Добавляет схему по умолчанию, если отсутствует."""
+    if not url: return url
+    if "://" not in url: url = default_scheme + "://" + url
+    return url
+
+def _normalize_model(model):
+    """Добавляет :latest, если в имени модели нет двоеточия."""
+    if model and ":" not in model: return model + ":latest"
+    return model
+
+def _find_ollama_context_size(model_data, model_name="unknown"):
+    """Определяет лимит контекста для Ollama модели"""
+    let_log(f"Определение контекста для Ollama модели '{model_name}'")
+    model_info = model_data.get('model_info', {})
+    direct_keys = [
+        'context_length',
+        'max_position_embeddings',
+        'max_seq_len',
+        'n_ctx',
+        'llama.context_length',
+        'gemma2.context_length',
+        'gemma3.context_length',
+        'mistral.context_length',
+        'qwen2.context_length',
+        'phi3.context_length',]
+    for key in direct_keys:
+        if key in model_info:
+            try:
+                val = int(model_info[key])
+                if val > 0: return val
+            except (ValueError, TypeError): continue
+    for key, value in model_info.items():
+        if 'context_length' in key.lower() and isinstance(value, (int, float)): return int(value)
+    parameters = model_data.get('parameters', '')
+    if parameters:
+        match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', parameters, re.IGNORECASE)
+        if match: return int(match.group(1))
+    model_file = model_data.get('model_file', '')
+    if model_file:
+        match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', model_file, re.IGNORECASE)
+        if match: return int(match.group(1))
+    context_sizes = [2048, 4096, 8192, 16384, 32768, 65536, 128000, 200000, 262144]
+    model_text = json.dumps(model_data)
+    found_sizes = sorted([int(num) for num in re.findall(r'\b\d{4,7}\b', model_text)
+                          if int(num) in context_sizes], reverse=True)
+    if found_sizes: return found_sizes[0]
+    return 4095
+
+def _handle_http_error(resp, attempt):
+    """Обработка HTTP ошибок Anthropic."""
+    if resp.status_code == 429:
+        retry_after = resp.headers.get('retry-after') or resp.headers.get('Retry-After')
+        wait_time = None
+        if retry_after and retry_after.isdigit():
+            wait_time = int(retry_after)
+            if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+            let_log(f"Anthropic 429 with Retry-After={wait_time}s. Waiting...")
+            time.sleep(wait_time)
+            return True
+        try:
+            err_data = resp.json()
+            err_msg = str(err_data).lower()
+            if 'insufficient_quota' in err_msg or 'balance' in err_msg: raise RuntimeError("balance end")
+            if 'session limit' in err_msg: wait_time = 5 * 60 * 60
+            elif 'weekly limit' in err_msg: wait_time = 7 * 24 * 60 * 60
+            if wait_time is not None:
+                if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                let_log(f"Anthropic квотная ошибка: ожидание {wait_time}с...")
+                time.sleep(wait_time)
+                return True
+        except: pass
+        if attempt < MAX_RETRIES:
+            wait_time = min(60, BASE_BACKOFF ** attempt + random.random())
+            let_log(f"Anthropic 429 (Rate Limit). Waiting {wait_time:.2f}s...")
+            time.sleep(wait_time)
+            return True
+        else: resp.raise_for_status()
+    elif resp.status_code == 402: raise RuntimeError("balance end")
+    elif resp.status_code == 400:
+        try:
+            err_data = resp.json()
+            err_msg = str(err_data).lower()
+            if 'context' in err_msg or 'token' in err_msg or 'length' in err_msg: raise RuntimeError("ContextOverflowError")
+        except: pass
+        resp.raise_for_status()
+    elif 500 <= resp.status_code < 600:
+        if attempt < MAX_RETRIES:
+            wait_time = min(60, BASE_BACKOFF ** attempt + random.random())
+            let_log(f"Anthropic {resp.status_code} Server Error. Waiting {wait_time:.2f}s...")
+            time.sleep(wait_time)
+            return True
+        else: resp.raise_for_status()
+    return False
+
+def _make_request(payload):
+    """Универсальный метод для запросов к Anthropic API."""
+    global session, timeout
+    if not session: raise RuntimeError("Anthropic client not connected")
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = session.post(f"{base_url}/messages", json=payload, timeout=timeout)
+            if _handle_http_error(resp, attempt): continue
+            resp.raise_for_status()
+            return resp.json()
+        except RuntimeError as e:
+            if "balance end" in str(e) or "ContextOverflowError" in str(e): raise
+            if attempt == MAX_RETRIES: raise
+            time.sleep(BASE_BACKOFF ** attempt)
+        except requests.RequestException as e:
+            msg = str(e).lower()
+            if "context" in msg or "token" in msg or "limit" in msg: raise RuntimeError("ContextOverflowError")
+            if attempt == MAX_RETRIES: raise ConnectionError(f"Ошибка генерации: {str(e)}")
+            time.sleep(BASE_BACKOFF ** attempt)
+        except Exception as e:
+            if attempt == MAX_RETRIES: raise RuntimeError(f"Ошибка обработки ответа: {str(e)}")
+            time.sleep(BASE_BACKOFF ** attempt)
+    raise RuntimeError("Max retries exceeded")
+
+def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = None) -> Tuple[bool, int, Dict[str, Optional[str]]]:
+    global session, api_key, chat_model, token_limit, emb_token_limit, tags, timeout
+    global ollama_base_url, ollama_emb_model, ollama_session
     params = {
         'chat': 'claude-3-haiku-20240307',
-        'emb': 'sentence-transformers/all-MiniLM-L6-v2',
-        'token': None
-    }
-    
+        'token': '',
+        'password': '',
+        'ollama_url': 'http://localhost:11434',
+        'ollama_emb_model': 'all-minilm:latest'}
     for part in connection_string.split(';'):
         if '=' in part:
             key, value = part.split('=', 1)
             key = key.strip().lower()
             value = value.strip()
-            if key in params:
-                params[key] = value
-
-    # Проверка: модель должна быть известна
-    if params['chat'] not in AnthropicClient.MODEL_LIMITS:
-        return False, token_limit, tags, f"Неподдерживаемая модель: {params['chat']}. Доступные: {list(AnthropicClient.MODEL_LIMITS.keys())}"
-
-    client = AnthropicClient(
-        api_key=params['token'],
-        timeout=timeout,
-        chat_model=params['chat']
-    )
-
-    emb_model = params['emb']
-
+            if key in params: params[key] = value
+    timeout = timeout if timeout > 0 else 30
+    ollama_base_url = _normalize_url(params['ollama_url'], default_port=11434)
+    ollama_emb_model = _normalize_model(params['ollama_emb_model'])
+    if _decrypted_token is not None: api_key = _decrypted_token; let_log("Anthropic: using decrypted token from _decrypted_token")
+    else:
+        api_key = params['token']
+        if api_key and params.get('password') == 'set': let_log("Anthropic: password=set but no _decrypted_token provided, will try to use token as is")
+    if not api_key: return False, token_limit, tags, "No API key provided"
+    if params['chat'] not in MODEL_LIMITS: return False, token_limit, tags, f"Неподдерживаемая модель: {params['chat']}. Доступные: {list(MODEL_LIMITS.keys())}"
+    chat_model = params['chat']
+    token_limit = MODEL_LIMITS[chat_model]
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": api_key})
+    # Обязательная настройка Ollama для эмбеддингов
     try:
-        connected, max_tokens, model_tags = client.connect()
-        if not connected:
-            return False, token_limit, tags
-        
-        token_limit = max_tokens
-        tags = model_tags
-        
+        ollama_session = requests.Session()
+        ollama_session.headers.update({"Content-Type": "application/json"})
+        tags_url = f"{ollama_base_url}/api/tags"
+        resp = ollama_session.get(tags_url, timeout=timeout)
+        resp.raise_for_status()
+        models_data = resp.json()
+        available_models = [model['name'] for model in models_data.get('models', [])]
+        let_log(f"Доступные модели Ollama: {available_models}")
+        if ollama_emb_model not in available_models:
+            let_log(f"Ollama модель '{ollama_emb_model}' не найдена. Ищем альтернативу...")
+            embed_models = [m for m in available_models if 'embed' in m.lower()]
+            if embed_models: ollama_emb_model = embed_models[0]; let_log(f"Выбрана модель для эмбеддингов: {ollama_emb_model}")
+            else:
+                if available_models: ollama_emb_model = available_models[0]; let_log(f"Модель для эмбеддингов не найдена. Используем первую: {ollama_emb_model}")
+                else: raise RuntimeError("Нет доступных моделей в Ollama")
+        show_url = f"{ollama_base_url}/api/show"
+        show_payload = {"name": ollama_emb_model}
+        show_resp = ollama_session.post(show_url, json=show_payload, timeout=timeout)
+        if show_resp.status_code == 200:
+            model_details = show_resp.json()
+            emb_token_limit = _find_ollama_context_size(model_details, ollama_emb_model)
+        else: emb_token_limit = 4095
+        let_log(f"Ollama для эмбеддингов успешно настроен. Модель: {ollama_emb_model}, лимит контекста: {emb_token_limit}")
+    except Exception as e:
+        session = None
+        ollama_session = None
+        return False, token_limit, tags, f"Ollama connection failed (required for embeddings): {e}"
+    # Проверка Anthropic
+    try:
+        test_payload = {"model": chat_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}
+        r = session.post(f"{base_url}/messages", json=test_payload, timeout=timeout)
+        if r.status_code >= 400:
+            session = None
+            ollama_session = None
+            return False, token_limit, tags, f"Ошибка при проверке модели Anthropic: {r.status_code}"
         return True, token_limit, tags
-
     except Exception as e:
         traceback.print_exc()
+        session = None
+        ollama_session = None
         return False, token_limit, tags, str(e)
 
 def disconnect() -> bool:
-    global client, emb_model
-    if client is not None:
-        client = None
-        emb_model = None
-        return True
-    return False
+    global session, ollama_session
+    if session is not None: session.close(); session = None
+    if ollama_session is not None: ollama_session.close(); ollama_session = None
+    return True
 
 def ask_model(generation_params: Dict[str, Any]) -> str:
-    global client, token_limit
-    if client is None:
-        raise RuntimeError("Клиент Anthropic не инициализирован")
+    global session, chat_model, timeout
+    if session is None: raise RuntimeError("Клиент Anthropic не инициализирован")
     try:
         prompt = generation_params["prompt"]
-        if not client.is_within_token_limit(prompt, token_limit):
-            raise RuntimeError("ContextOverflowError")
-        return client.generate(generation_params)
-    except RuntimeError as e:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        raise RuntimeError(f"Ошибка генерации: {str(e)}")
-
-def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
-    global client, token_limit
-    if client is None:
-        raise RuntimeError("Клиент Anthropic не инициализирован")
-    try:
-        messages = generation_params.get("messages", [])
-        if not messages:
-            raise ValueError("Нет сообщений для чата")
-        
-        total_tokens = 0
-        for msg in messages:
-            total_tokens += client.count_tokens(msg.get("content", ""))
-        if total_tokens >= token_limit:
-            raise RuntimeError("ContextOverflowError")
-        
-        response_text = client.chat(messages, generation_params)
-        
-        return {
-            "id": f"chatcmpl-{client.chat_model}",
-            "choices": [{"message": {"role": "assistant", "content": response_text}, "finish_reason": "stop", "index": 0}],
-            "usage": {
-                "prompt_tokens": total_tokens,
-                "completion_tokens": client.count_tokens(response_text),
-                "total_tokens": total_tokens + client.count_tokens(response_text)
-            },
-            "model": client.chat_model
-        }
-    except RuntimeError as e:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        raise RuntimeError(f"Ошибка чата: {str(e)}")
-
-def create_embeddings(text: str) -> List[float]:
-    global emb_model, emb_token_limit
-    if emb_model is None:
-        raise RuntimeError("Модель для эмбеддингов не указана")
-    
-    try:
-        model = SentenceTransformer(emb_model)
-        if len(text.split()) * 1.4 > emb_token_limit:
-            raise RuntimeError("ContextOverflowError")
-        return model.encode(text, convert_to_numpy=True).tolist()
-    except Exception as e:
-        traceback.print_exc()
-        raise RuntimeError(f"Ошибка создания эмбеддингов: {str(e)}")
-
-class AnthropicClient:
-    MODEL_LIMITS = {
-        "claude-3-opus-20240229": 200000,
-        "claude-3-sonnet-20240229": 200000,
-        "claude-3-haiku-20240307": 200000,
-        "claude-2.1": 200000,
-        "claude-2.0": 100000,
-        "claude-instant-1.2": 100000,
-    }
-
-    DEFAULT_TAGS = {
-        "system": None,
-        "user": "Human:",
-        "assistant": "Assistant:",
-        "end": None
-    }
-
-    def __init__(self, api_key: Optional[str], timeout: int = 30, chat_model: str = "claude-3-haiku-20240307"):
-        self.base_url = "https://api.anthropic.com/v1"
-        self.headers = {
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01"
-        }
-        if api_key:
-            self.headers["x-api-key"] = api_key
-        self.timeout = timeout
-        self.chat_model = chat_model
-        self.tags = self.DEFAULT_TAGS.copy()
-        self.encoding_cache: Dict[str, Any] = {}
-
-    def get_encoding(self) -> Any:
-        if self.chat_model not in self.encoding_cache:
-            try:
-                self.encoding_cache[self.chat_model] = tiktoken.encoding_for_model(self.chat_model)
-            except KeyError:
-                self.encoding_cache[self.chat_model] = tiktoken.get_encoding("cl100k_base")
-        return self.encoding_cache[self.chat_model]
-
-    def count_tokens(self, text: str) -> int:
-        return len(self.get_encoding().encode(text))
-
-    def is_within_token_limit(self, text: str, token_limit: int) -> bool:
-        return self.count_tokens(text) < token_limit
-
-    def connect(self) -> Tuple[bool, int, Dict[str, Optional[str]]]:
-        if self.chat_model not in self.MODEL_LIMITS:
-            print(f"Предупреждение: модель '{self.chat_model}' не известна")
-        max_tokens = self.MODEL_LIMITS.get(self.chat_model, 100000)
-
-        try:
-            test_payload = {
-                "model": self.chat_model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 5
-            }
-            r = requests.post(
-                f"{self.base_url}/messages",
-                json=test_payload,
-                headers=self.headers,
-                timeout=self.timeout
-            )
-            if r.status_code >= 400:
-                raise ConnectionError(f"Ошибка при проверке модели: {r.status_code}")
-            return True, max_tokens, self.tags
-        except requests.RequestException as e:
-            raise ConnectionError(f"Ошибка подключения: {str(e)}")
-        except Exception as e:
-            raise APIError(f"Ошибка API: {str(e)}")
-
-    def _handle_http_error(self, resp, attempt, max_retries):
-        """Обработка HTTP ошибок Anthropic."""
-        MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
-
-        if resp.status_code == 429:
-            retry_after = resp.headers.get('retry-after') or resp.headers.get('Retry-After')
-            wait_time = None
-            if retry_after and retry_after.isdigit():
-                wait_time = int(retry_after)
-                # Если время ожидания больше 5 часов – исключение
-                if wait_time > MAX_QUOTA_WAIT:
-                    raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
-                let_log(f"Anthropic 429 with Retry-After={wait_time}s. Waiting...")
-                time.sleep(wait_time)
-                return True
-            try:
-                err_data = resp.json()
-                err_msg = str(err_data).lower()
-                if 'insufficient_quota' in err_msg or 'balance' in err_msg:
-                    raise RuntimeError("balance end")
-                # Некоторые квотные ошибки могут не иметь Retry-After, но содержать текст о лимите сессии/недели
-                if 'session limit' in err_msg:
-                    wait_time = 5 * 60 * 60  # 5 часов
-                elif 'weekly limit' in err_msg:
-                    wait_time = 7 * 24 * 60 * 60  # 7 дней
-                if wait_time is not None:
-                    if wait_time > MAX_QUOTA_WAIT:
-                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
-                    let_log(f"Anthropic квотная ошибка: ожидание {wait_time}с...")
-                    time.sleep(wait_time)
-                    return True
-            except:
-                pass
-            # Обычный rate limit
-            if attempt < max_retries:
-                wait_time = min(60, 2 ** attempt)
-                let_log(f"Anthropic 429 (Rate Limit). Waiting {wait_time:.2f}s...")
-                time.sleep(wait_time)
-                return True
-            else:
-                resp.raise_for_status()
-        elif resp.status_code == 402:
-            raise RuntimeError("balance end")
-        elif resp.status_code == 400:
-            try:
-                err_data = resp.json()
-                err_msg = str(err_data).lower()
-                if 'context' in err_msg or 'token' in err_msg or 'length' in err_msg:
-                    raise RuntimeError("ContextOverflowError")
-            except:
-                pass
-            resp.raise_for_status()
-        elif 500 <= resp.status_code < 600:
-            if attempt < max_retries:
-                wait_time = min(60, 2 ** attempt)
-                let_log(f"Anthropic {resp.status_code} Server Error. Waiting {wait_time:.2f}s...")
-                time.sleep(wait_time)
-                return True
-            else:
-                resp.raise_for_status()
-        return False
-
-    def generate(self, generation_params: Dict[str, Any]) -> str:
-        if "prompt" not in generation_params:
-            raise ValueError("'prompt' обязателен")
-            
-        messages = [{"role": "user", "content": generation_params["prompt"]}]
+        messages = [{"role": "user", "content": prompt}]
         payload = {
-            "model": self.chat_model,
+            "model": chat_model,
             "messages": messages,
             "max_tokens": generation_params.get("max_tokens", 1024),
             "temperature": generation_params.get("temperature", 1.0),
             "top_p": generation_params.get("top_p", None),
-            "stream": False
-        }
-        if payload["top_p"] is None:
-            del payload["top_p"]
+            "stream": False}
+        if payload["top_p"] is None: del payload["top_p"]
+        data = _make_request(payload)
+        return data["content"][0]["text"]
+    except RuntimeError as e: raise
+    except Exception as e: traceback.print_exc(); raise RuntimeError(f"Ошибка генерации: {str(e)}")
 
-        max_retries = 10
-        for attempt in range(1, max_retries + 1):
-            try:
-                r = requests.post(
-                    f"{self.base_url}/messages",
-                    json=payload,
-                    headers=self.headers,
-                    timeout=self.timeout
-                )
-                if self._handle_http_error(r, attempt, max_retries):
-                    continue
-                r.raise_for_status()
-                return r.json()["content"][0]["text"]
-            except RuntimeError as e:
-                raise
-            except requests.RequestException as e:
-                msg = str(e).lower()
-                if "context" in msg or "token" in msg or "limit" in msg:
-                    raise RuntimeError("ContextOverflowError")
-                if attempt == max_retries:
-                    raise ConnectionError(f"Ошибка генерации: {str(e)}")
-                time.sleep(2 ** attempt)
-            except Exception as e:
-                raise APIError(f"Ошибка обработки ответа: {str(e)}")
-
-    def chat(self, messages: List[Dict[str, str]], generation_params: Dict[str, Any]) -> str:
+def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
+    global session, chat_model, timeout
+    if session is None: raise RuntimeError("Клиент Anthropic не инициализирован")
+    try:
+        messages = generation_params.get("messages", [])
+        if not messages: raise ValueError("Нет сообщений для чата")
         system_messages = [m["content"] for m in messages if m["role"] == "system"]
         dialog_messages = [m for m in messages if m["role"] != "system"]
-
         payload = {
-            "model": self.chat_model,
+            "model": chat_model,
             "messages": dialog_messages,
             "max_tokens": generation_params.get("max_tokens", 1024),
             "temperature": generation_params.get("temperature", 1.0),
             "top_p": generation_params.get("top_p", None),
-            "stream": False
-        }
-        if system_messages:
-            payload["system"] = "\n".join(system_messages)
-        if payload["top_p"] is None:
-            del payload["top_p"]
+            "stream": False}
+        if system_messages: payload["system"] = "\n".join(system_messages)
+        if payload["top_p"] is None: del payload["top_p"]
+        data = _make_request(payload)
+        response_text = data["content"][0]["text"]
+        return {
+            "id": f"chatcmpl-{chat_model}",
+            "choices": [{"message": {"role": "assistant", "content": response_text}, "finish_reason": "stop", "index": 0}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "model": chat_model}
+    except RuntimeError as e: raise
+    except Exception as e: traceback.print_exc(); raise RuntimeError(f"Ошибка чата: {str(e)}")
 
-        max_retries = 10
-        for attempt in range(1, max_retries + 1):
-            try:
-                r = requests.post(
-                    f"{self.base_url}/messages",
-                    json=payload,
-                    headers=self.headers,
-                    timeout=self.timeout
-                )
-                if self._handle_http_error(r, attempt, max_retries):
+def create_embeddings(text: str) -> List[float]:
+    """Создание эмбеддингов через Ollama (без отдельной вспомогательной функции)"""
+    global ollama_session, ollama_base_url, ollama_emb_model
+    if ollama_session is None: raise RuntimeError("Ollama для эмбеддингов не инициализирован. Проверьте подключение.")
+    url = f"{ollama_base_url}/api/embeddings"
+    payload = {"model": ollama_emb_model, "prompt": text.strip()}
+    start_time = time.time()
+    attempt = 1
+    while True:
+        try:
+            elapsed = time.time() - start_time
+            if elapsed > OLLAMA_MAX_WAIT_TOTAL: raise RuntimeError(f"Превышено общее время ожидания ({OLLAMA_MAX_WAIT_TOTAL} с) для эмбеддингов")
+            response = ollama_session.post(url, json=payload, timeout=30)
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After')
+                wait_time = None
+                if retry_after and retry_after.isdigit(): wait_time = int(retry_after)
+                else:
+                    try:
+                        err_data = response.json()
+                        err_msg = err_data.get('error', '').lower()
+                        if 'session limit' in err_msg: wait_time = 5 * 60 * 60
+                        elif 'weekly limit' in err_msg: wait_time = 7 * 24 * 60 * 60
+                        elif 'insufficient_quota' in err_msg: raise RuntimeError("balance end")
+                    except: pass
+                if wait_time is not None:
+                    if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                    if wait_time > OLLAMA_MAX_WAIT_TOTAL: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {OLLAMA_MAX_WAIT_TOTAL}с")
+                    let_log(f"Ollama эмбеддинги: квотная 429, ожидание {wait_time} с")
+                    time.sleep(wait_time)
+                    attempt += 1
                     continue
-                r.raise_for_status()
-                return r.json()["content"][0]["text"]
-            except RuntimeError as e:
-                raise
-            except requests.RequestException as e:
-                msg = str(e).lower()
-                if "context" in msg or "token" in msg or "limit" in msg:
-                    raise RuntimeError("ContextOverflowError")
-                if attempt == max_retries:
-                    raise ConnectionError(f"Ошибка чата: {str(e)}")
-                time.sleep(2 ** attempt)
-            except Exception as e:
-                raise APIError(f"Ошибка обработки ответа: {str(e)}")
+                if attempt < OLLAMA_MAX_RETRIES:
+                    wait_time = OLLAMA_BASE_BACKOFF ** attempt
+                    remaining = OLLAMA_MAX_WAIT_TOTAL - (time.time() - start_time)
+                    if wait_time > remaining: wait_time = remaining
+                    if wait_time < 0.1: wait_time = 0.1
+                    let_log(f"Ollama эмбеддинги: 429 rate limit, повтор через {wait_time:.2f} с")
+                    time.sleep(wait_time)
+                    attempt += 1
+                    continue
+            if response.status_code == 500:
+                error_text = response.text.lower()
+                if any(keyword in error_text for keyword in ['context length', 'exceeds context', 'token limit']): raise RuntimeError('ContextOverflowError')
+            response.raise_for_status()
+            data = response.json()
+            embedding = data.get('embedding', [])
+            if not embedding: raise ValueError("Пустой вектор эмбеддингов в ответе от Ollama")
+            return embedding
+        except requests.exceptions.ConnectionError as e:
+            if attempt < OLLAMA_MAX_RETRIES:
+                wait_time = OLLAMA_BASE_BACKOFF ** attempt
+                remaining = OLLAMA_MAX_WAIT_TOTAL - (time.time() - start_time)
+                if wait_time > remaining: wait_time = remaining
+                if wait_time < 0.1: wait_time = 0.1
+                let_log(f"Ollama эмбеддинги: Ошибка соединения, повтор через {wait_time:.2f} с")
+                time.sleep(wait_time)
+                attempt += 1
+                continue
+            else: raise RuntimeError(f"Ошибка соединения после {OLLAMA_MAX_RETRIES} попыток: {e}")
+        except requests.exceptions.Timeout as e:
+            if attempt < OLLAMA_MAX_RETRIES:
+                wait_time = OLLAMA_BASE_BACKOFF ** attempt
+                remaining = OLLAMA_MAX_WAIT_TOTAL - (time.time() - start_time)
+                if wait_time > remaining: wait_time = remaining
+                if wait_time < 0.1: wait_time = 0.1
+                let_log(f"Ollama эмбеддинги: Таймаут, повтор через {wait_time:.2f} с")
+                time.sleep(wait_time)
+                attempt += 1
+                continue
+            else: raise RuntimeError(f"Таймаут запроса после {OLLAMA_MAX_RETRIES} попыток: {e}")
+        except RuntimeError as e:
+            if "balance end" in str(e) or "ContextOverflowError" in str(e): raise
+            if attempt < OLLAMA_MAX_RETRIES:
+                time.sleep(OLLAMA_BASE_BACKOFF ** attempt)
+                attempt += 1
+                continue
+            raise
+        except Exception as e:
+            if attempt < OLLAMA_MAX_RETRIES:
+                time.sleep(OLLAMA_BASE_BACKOFF ** attempt)
+                attempt += 1
+                continue
+            raise RuntimeError(f"Ошибка API эмбеддингов Ollama: {str(e)}")

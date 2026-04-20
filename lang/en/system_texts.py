@@ -206,9 +206,9 @@ warn_command_text_4 = "Command is inside a Markdown block. Call commands outside
 
 warn_command_text_5 = "Command is inside a JSON structure. Use pure !!!command!!! format."
 
-warn_command_text_6 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
+warn_command_text_6 = "Command is inside markdown formatting (bold, italic, code, etc.)."
 
-warn_command_text_7 = "Command is inside markdown formatting (bold, italic, code, etc.)."
+warn_command_text_7 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
 
 no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
 

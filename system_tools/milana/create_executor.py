@@ -27,8 +27,7 @@ from cross_gpt import (
     get_level,
     prompt_evaluation_2,
     no_markdown_instruction,
-    write_shortly_prompt,
-)
+    write_shortly_prompt)
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -50,8 +49,7 @@ def main(text):
             'delegate_unavailable_for_executor',
             'need_info_example',
             'tasks_identical_text',
-            'exec_anti_loop_text',
-        )
+            'exec_anti_loop_text')
         main.create_executor_param_1 = 'Are the tasks the same?'
         main.create_executor_param_2 = 'Task'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
@@ -134,18 +132,13 @@ Check whether the result matches the request.
 If a function returns incorrect, incomplete, disjointed, or meaningless output — do not repeat the same call unchanged.
 Try changing the request, using another function, or doing without. Do not get stuck on one function'''
         return
-    # Determine whether this is recreation or first creation
-    if global_state.conversations % 2 == 0: # RECREATE executor
+    if global_state.conversations % 2 == 0:
         return_text = main.create_executor_return_text_2
         let_log('ПЕРЕСОЗДАНИЕ ИСПОЛНИТЕЛЯ')
         lt = global_state.last_task_for_executor.get(global_state.conversations, '')
-        # Check for exact task match
-        if text == lt:
-            return main.tasks_identical_text
-        if text != '' and text is not None:
-            param = parse_prompt_response(main.create_executor_param_1, main.create_executor_param_2 + ' 1:\n' + text + '\n' + main.create_executor_param_2 + ' 2:\n' + lt, 0)
-        else:
-            param = 0
+        if text == lt: return main.tasks_identical_text
+        if text != '' and text is not None: param = parse_prompt_response(main.create_executor_param_1, main.create_executor_param_2 + ' 1:\n' + text + '\n' + main.create_executor_param_2 + ' 2:\n' + lt, 0)
+        else: param = 0
         if param == 1: tag = 'correct'
         else: tag = 'incorrect'
         let_log(f"Пересоздание исполнителя, тег='{tag}' (param={param}, задача {'та же' if param == 0 else 'разная'})")
@@ -153,99 +146,52 @@ Try changing the request, using another function, or doing without. Do not get s
         let_log(f"Сохранили старого исполнителя с тегом '{tag}'")
         delete_chat(global_state.conversations)
         let_log("Удалили старый чат исполнителя")
-    else: # FIRST CREATION of executor at this level
-        return_text = main.create_executor_return_text_1
-        global_state.conversations += 1
-        let_log('создание нового специалиста')
+    else: return_text = main.create_executor_return_text_1; global_state.conversations += 1; let_log('создание нового специалиста')
     global_state.last_task_for_executor[global_state.conversations] = text
     next_executor()
-    # Get additional information through the librarian
     questions_raw = ask_model(text, system_prompt=gigo_questions)
     additional_info = librarian(questions_raw)
-    if additional_info != found_info_1:
-        additional_info = main.additional_info_text + additional_info
-    else:
-        additional_info = ''
-        let_log("Библиотекарь не нашел дополнительной информации")
+    if additional_info != found_info_1: additional_info = main.additional_info_text + additional_info
+    else: additional_info = ''; let_log("Библиотекарь не нашел дополнительной информации")
     ivan_tools = global_state.ivan_module_tools.copy()
-    
-    # Determine whether this executor can delegate
     current_level = get_level()
-    if global_state.hierarchy_limit == 0:
-        delegation_allowed = True
-    else:
-        delegation_allowed = current_level < global_state.hierarchy_limit
-    # Remove delegation command if not available
-    if global_state.hierarchy_limit == 1 and global_state.start_dialog_command_name in ivan_tools:
-        del ivan_tools[global_state.start_dialog_command_name]
-        let_log("Удалена команда делегирования из инструментов исполнителя")
-    
-    # Tool selection for the executor
+    if global_state.hierarchy_limit == 0: delegation_allowed = True
+    else: delegation_allowed = current_level < global_state.hierarchy_limit
+    if global_state.hierarchy_limit == 1 and global_state.start_dialog_command_name in ivan_tools: del ivan_tools[global_state.start_dialog_command_name]; let_log("Удалена команда делегирования из инструментов исполнителя")
     if global_state.module_tools_keys:
-        let_log('есть модуль тулз киз')
-        need_tools_raw = ask_model(
-            text,
-            system_prompt=main.create_executor_select_tools_1 +
-                          global_state.tools_str +
-                          main.create_executor_select_tools_2
-        )
+        need_tools_raw = ask_model(text, system_prompt=main.create_executor_select_tools_1 + global_state.tools_str + main.create_executor_select_tools_2)
         let_log('Результат выбора инструментов:')
         let_log(need_tools_raw)
         tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
         let_log(f"Найдены инструменты: {tools_names}")
         for name in tools_names:
             for tool_tokens, tool_desc, tool_func in global_state.another_tools:
-                if name == tool_tokens:
-                    ivan_tools[tool_tokens] = (tool_desc, tool_func)
-                    let_log(f"Добавлен инструмент: {tool_tokens}")
-                    break
-    # Build string with tool descriptions for the prompt, excluding skip commands
+                if name == tool_tokens: ivan_tools[tool_tokens] = (tool_desc, tool_func); let_log(f"Добавлен инструмент: {tool_tokens}"); break
     selected_ivan_tools = ''
     for tool in ivan_tools:
-        if tool not in global_state.skip_tools_keys:
-            selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')\n'
-    # Determine which prompt to use (with or without tools)
+        if tool not in global_state.skip_tools_keys: selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')\n'
     if selected_ivan_tools:
         system_prompt_for_instructions = main.create_executor_write_prompt_1
         user_content = text + additional_info + f"\n\n{main.avaiable_tools_text}\n" + selected_ivan_tools
-    else:
-        system_prompt_for_instructions = main.create_executor_write_prompt_2
-        user_content = text + additional_info
-    # Generate instructions for the executor based on the task
+    else: system_prompt_for_instructions = main.create_executor_write_prompt_2; user_content = text + additional_info
     let_log(system_prompt_for_instructions)
     let_log("Генерация инструкций для исполнителя...")
-    instructions = ask_model(
-        user_content,
-        system_prompt=system_prompt_for_instructions
-    )
-    # Build final prompt for the executor
+    instructions = ask_model(user_content, system_prompt=system_prompt_for_instructions)
     prompt = main.worker_base + no_markdown_instruction + write_shortly_prompt + '\n' + prompt_evaluation_2 + ' ' + text
-    if global_state.hierarchy_limit != 1:
-        prompt += main.worker_delegation_part
-
-    # Add hierarchy information if limit is greater than 1
+    if global_state.hierarchy_limit != 1: prompt += main.worker_delegation_part
     hierarchy_note = ""
     if global_state.hierarchy_limit > 1:
         limit = global_state.hierarchy_limit
         hierarchy_note = f"\n{main.hierarchy_limit_info} {current_level}/{limit}.\n"
-        if not delegation_allowed:
-            hierarchy_note += f"\n{main.delegate_unavailable_for_executor}\n"
+        if not delegation_allowed: hierarchy_note += f"\n{main.delegate_unavailable_for_executor}\n"
     prompt += hierarchy_note
-
     prompt += instructions + only_one_func_text
-    if ivan_tools:
-        prompt += selected_ivan_tools
-
-    # Add example command for requesting information (always if not native call)
-    if not native_func_call:
-        prompt += what_is_func_text + main.need_info_example
+    if ivan_tools: prompt += selected_ivan_tools
+    if not native_func_call: prompt += what_is_func_text + main.need_info_example
     prompt += main.exec_anti_loop_text
-    # Save tools for this chat
     global_state.tools_commands_dict[global_state.conversations] = ivan_tools
     let_log('ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ ИСПОЛНИТЕЛЯ:')
     for tool, (desc, _) in ivan_tools.items(): let_log(f"  {tool}: {desc}")
-    # Create chat for the executor via manager
     system_prompt = system_role_text + prompt
     create_chat(global_state.conversations, system_prompt)
-    # Return only the creation fact, without greeting hint
     return return_text

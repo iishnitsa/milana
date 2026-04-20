@@ -8,10 +8,7 @@ Milana will wait until she receives your response.
 from cross_gpt import get_input_message, send_output_message, let_log
 
 def main(text):
-    if not hasattr(main, 'attr_names'):
-        main.attr_names = ()
-        let_log('ИНИЦИАЛИЗАЦИЯ')
-        return
+    if not hasattr(main, 'attr_names'): main.attr_names = (); return
     let_log('ВОПРОС')
     send_output_message(text=text, command='ask_user')
     return get_input_message(command='answer_user')['text']

@@ -80,8 +80,7 @@ default_handlers_names = { # это из настроек должно выгр�
     'jpeg': 'process_image',
     'zip': 'process_zip',
     'xlsx': 'process_excel',
-    'xls': 'process_excel',
-}
+    'xls': 'process_excel',}
 # Список важных функций и модулей
 important_functions = [
     'cacher',
@@ -98,8 +97,7 @@ important_functions = [
     'send_output_message',
     'librarian',
     'send_log_to_ui',
-    'gigo'
-]
+    'gigo']
 # Список модулей, импорт которых считается важным
 important_modules = ['chat_manager']
 actual_handlers_names = {}
@@ -120,8 +118,7 @@ unified_tags = {
     "tool_call_start": "",
     "tool_call_end": "",
     "tool_result_start": "",
-    "tool_result_end": "",
-}
+    "tool_result_end": "",}
 use_user = False
 chunk_size = 1000 # TODO:
 get_provider_embs = None
@@ -137,18 +134,11 @@ language = ''
 is_print_log = True
 is_save_log = True
 
-def cacher(func):
-    """Декоратор для функций с кэшированием (ask_model, get_embs, coll_exec, sql_exec)"""
+def cacher(func): # Декоратор для функций с кэшированием (ask_model, get_embs, coll_exec, sql_exec)
     def wrapper(*args, **kwargs):
         cached = read_cache()
         if cached != [False]:
-            if isinstance(cached[1], dict) and '__exception__' in cached[1]:
-                # Восстанавливаем исключение из кэша
-                exc_data = cached[1]['__exception__']
-                # Создаем новое исключение с сообщением
-                exc = RuntimeError(exc_data['message'])
-                # Traceback не восстанавливаем - он не сериализуем
-                raise exc
+            if isinstance(cached[1], dict) and '__exception__' in cached[1]: exc_data = cached[1]['__exception__']; exc = RuntimeError(exc_data['message']); raise exc
             let_log(f"[Используется кэшированный результат для {func.__name__}]")
             return cached[1]
         try:
@@ -156,29 +146,12 @@ def cacher(func):
             write_cache(result)
             return result
         except Exception as e: # Сохраняем исключение в кэше без traceback
-            exc_data = {
-                '__exception__': {
-                    'type': type(e).__name__,
-                    'message': str(e),
-                    'traceback_str': traceback.format_exc() # Traceback сохраняем как строку, а не как объект
-                }
-            }
+            exc_data = {'__exception__': {'type': type(e).__name__, 'message': str(e), 'traceback_str': traceback.format_exc()}}
             write_cache(exc_data)
             raise
     return wrapper
 
-def ask_with_fallback(prompt, **kwargs):
-    """Вызывает ask_model с автоматическим fallback через text_cutter при ошибке переполнения"""
-    try: return ask_model(prompt, **kwargs)
-    except RuntimeError as e:
-        if 'ContextOverflowError' in str(e):
-            cut_prompt = text_cutter(prompt)
-            if 'attachments' in kwargs: kwargs['attachments'] = text_cutter(kwargs['attachments'])
-            return ask_model(cut_prompt, **kwargs)
-        else: raise
-
-def load_locale(module_file, current_lang='en'):
-    """Загружает локализацию для модуля из соответствующего файла"""
+def load_locale(module_file, current_lang='en'): # Загружает локализацию для модуля из соответствующего файла
     locale_data = {}
     lang_file = module_file.replace('.py', '_lang.py')
     if os.path.isfile(lang_file):
@@ -192,39 +165,6 @@ def load_locale(module_file, current_lang='en'):
             if current_lang != 'en': let_log(f"⚠ Ошибка загрузки локализации {lang_file}: {e}")
     elif current_lang != 'en': let_log(f"Файл локализации {lang_file} не найден")
     return locale_data
-
-def update_task(original_task, dialog_result, user_feedback, critic_feedback=None, is_critic=False):
-    if is_critic and critic_feedback: return original_task + user_review_text2 + dialog_result + user_review_text4 + critic_feedback
-    else: return original_task + user_review_text2 + dialog_result + user_review_text3 + user_feedback
-
-def load_special_mod(file_path, mod_type):
-    """Загружает специальный модуль (web_search, ask_user)"""
-    try:
-        module_name = os.path.splitext(os.path.basename(file_path))[0]
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        if hasattr(module, 'main'):
-            # Загружаем локализацию для специального модуля
-            current_lang = globals().get('language', 'en')
-            locale_data = load_locale(file_path, current_lang)
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', content)
-                if match:
-                    cmd_name = match.group(1).strip()
-                    desc = match.group(2).strip()
-                    # Применяем локализацию, если она есть
-                    if locale_data and 'module_doc' in locale_data:
-                        if len(locale_data['module_doc']) >= 2:
-                            cmd_name = locale_data['module_doc'][0] or cmd_name
-                            desc = locale_data['module_doc'][1] or desc
-                    if mod_type == 'web_search': globals()['web_search'] = module.main
-                    elif mod_type == 'ask_user': globals()['ask_user'] = module.main
-                    return (cmd_name, desc, module.main)
-                else: let_log(f"⚠ Не удалось извлечь command_name из {file_path}"); return None
-        else: let_log(f"⚠ Файл {mod_type} не содержит функцию main"); return None
-    except Exception as e: let_log(f"⚠ Ошибка загрузки {mod_type}: {e}"); return None
 
 def find_work_folder(file_name):
     real_path = os.path.realpath(file_name)
@@ -251,57 +191,12 @@ def let_log(t):
         funcname = caller.name
         caller_info = f"[{filename}:{lineno} {funcname}]"
     else: caller_info = "[unknown]"
-    
     full_message = f"{caller_info} {t}"
-    
-    if is_print_log:
-        print(full_message)
+    if is_print_log: print(full_message)
     if is_save_log:
         conn = connect(cache_path)
         cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cache (
-                id INTEGER PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        conn.commit()
-        cursor.execute('SELECT MAX(id) FROM cache')
-        row = cursor.fetchone()
-        max_id = row[0] if row and row[0] is not None else -1
-        conn.close()
-        if max_id <= cache_counter: lname = 'log.txt'
-        else: lname = 'log_cache.txt'; return
-        log_file = os.path.join(chat_path, lname)
-        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
-
-def let_log1(t):
-    t = str(t)
-    # Получаем информацию о вызывающем коде
-    stack = traceback.extract_stack()
-    # stack[-1] - текущая функция let_log, stack[-2] - место вызова let_log
-    # нам нужен стек на один уровень выше (кто вызвал let_log)
-    if len(stack) >= 2:
-        caller = stack[-2]
-        filename = caller.filename.split('/')[-1]  # только имя файла
-        lineno = caller.lineno
-        funcname = caller.name
-        caller_info = f"[{filename}:{lineno} {funcname}]"
-    else: caller_info = "[unknown]"
-    
-    full_message = f"{caller_info} {t}"
-    
-    if is_print_log:
-        print(full_message)
-    if is_save_log:
-        conn = connect(cache_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cache (
-                id INTEGER PRIMARY KEY,
-                value TEXT
-            )
-        ''')
+        cursor.execute('CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, value TEXT)')
         conn.commit()
         cursor.execute('SELECT MAX(id) FROM cache')
         row = cursor.fetchone()
@@ -355,12 +250,7 @@ def read_cache():
             let_log(f"Таблица кэша не найдена, выполняется инициализация: {e}")
             if cache_conn:
                 cache_cursor.execute("PRAGMA max_page_count = 2147483647;")
-                cache_cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS cache (
-                        id INTEGER PRIMARY KEY,
-                        value BLOB
-                    )
-                ''')
+                cache_cursor.execute('CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, value BLOB)')
                 cache_conn.commit()
                 cache_conn.close()
                 cache_conn = None
@@ -427,11 +317,7 @@ def rollback_cache(num_records):
         raise SystemExit(e)
 
 def send_ui_no_cache(t, attach=None, comm=''):
-    message_data = {
-        'text': t,
-        'attachments': attach,
-        'command': comm
-    }
+    message_data = {'text': t, 'attachments': attach, 'command': comm}
     try: ui_conn[1].put(message_data)
     except: pass
 
@@ -442,8 +328,7 @@ def send_log_to_ui(message: str):
 @cacher
 def get_input_message(command=None, timeout=None, wait=False):
     answer = None
-    if command:
-        # Получаем сообщение из очереди
+    if command: # Получаем сообщение из очереди
         while True:
             try:
                 msg = ui_conn[0].get(block=(timeout is not None), timeout=timeout)
@@ -463,10 +348,7 @@ def get_input_message(command=None, timeout=None, wait=False):
 
 @cacher
 def send_output_message(text=None, attachments=None, command=None):
-    message_data = {
-        'text': text or '',
-        'attachments': attachments or None,
-        'command': command}
+    message_data = {'text': text or '', 'attachments': attachments or None, 'command': command}
     try: ui_conn[1].put(message_data)
     except Exception as e: let_log(f"Ошибка при отправке сообщения: {e}"); return
     return True
@@ -475,7 +357,6 @@ def send_output_message(text=None, attachments=None, command=None):
 def sql_exec(query, params=(), fetchone=False, fetchall=False):
     let_log('ОЧЕРЕДЬ')
     let_log(query)
-    """Выполняет SQL-запрос с поддержкой кэширования"""
     try:
         cursor = memory_sql.cursor()
         cursor.execute(query, params)
@@ -488,9 +369,7 @@ def sql_exec(query, params=(), fetchone=False, fetchall=False):
         let_log('РЕЗУЛЬТАТ')
         let_log(result)
         return result
-    except Exception as e:
-        let_log(f"Ошибка SQL-запроса: {query} с {params} — {e}")
-        return None
+    except Exception as e: let_log(f"Ошибка SQL-запроса: {query} с {params} — {e}"); raise; return None
 
 @cacher
 def coll_exec(action, coll_name, *,
@@ -516,134 +395,75 @@ def coll_exec(action, coll_name, *,
     Универсальная обёртка для работы с коллекциями ChromaDB.
     Все вспомогательные функции вложены внутрь.
     """
-
-    # ---- Глобальные настройки (с подстановкой значений по умолчанию) ----
-    global_vars = globals()
-    text_tokens_coefficient = global_vars.get('text_tokens_coefficient', 0.5)
-    chunk_size = global_vars.get('chunk_size', 1000)
-    emb_token_limit = global_vars.get('emb_token_limit', 8192)
+    global_vars = globals() # ---- Глобальные настройки (с подстановкой значений по умолчанию) ----
     enable_compression = global_vars.get('enable_compression', True)
     compression_threshold = global_vars.get('compression_threshold', 1.0)
-
     # ---- Вспомогательные функции сжатия ----
-    def _compress_doc_always(doc):
-        """Всегда пытается сжать документ. Возвращает 'L' + base64(lzma(...)) или 'n' + оригинал."""
-        if doc is None:
-            return None
-        if isinstance(doc, (bytes, bytearray)):
-            raw_bytes = bytes(doc)
-            original_str = doc.decode("utf-8") if hasattr(doc, 'decode') else str(doc)
-        else:
-            original_str = str(doc)
-            raw_bytes = original_str.encode("utf-8")
-
+    def _compress_doc_always(doc): # Всегда пытается сжать документ. Возвращает 'L' + base64(lzma(...)) или 'n' + оригинал
+        if doc is None: return None
+        if isinstance(doc, (bytes, bytearray)): raw_bytes = bytes(doc); original_str = doc.decode("utf-8") if hasattr(doc, 'decode') else str(doc)
+        else: original_str = str(doc); raw_bytes = original_str.encode("utf-8")
         uncompressed_str = "n" + original_str
         uncompressed_size = len(uncompressed_str.encode("utf-8"))
-
         try:
             compressed_bytes = lzma.compress(raw_bytes, preset=9)
             compressed_b64 = base64.b64encode(compressed_bytes).decode("ascii")
             compressed_str = "L" + compressed_b64
             compressed_size = len(compressed_str.encode("utf-8"))
-            if compressed_size < uncompressed_size:
-                return compressed_str
-            else:
-                return uncompressed_str
-        except Exception:
-            return uncompressed_str
-
-    def _decompress_doc_always(comp):
-        """Распаковывает документ: 'L' -> lzma, 'z' -> gzip (старый формат), 'n' -> вернуть как есть."""
-        if comp is None:
-            return None
-        if not comp:
-            return comp
+            if compressed_size < uncompressed_size: return compressed_str
+            else: return uncompressed_str
+        except Exception: return uncompressed_str
+    def _decompress_doc_always(comp): # Распаковывает документ: 'L' -> lzma, 'z' -> gzip (старый формат), 'n' -> вернуть как есть
+        if comp is None: return None
+        if not comp: return comp
         first_char = comp[0]
         content = comp[1:]
         if first_char == 'L':
             decoded_bytes = base64.b64decode(content)
             decompressed_bytes = lzma.decompress(decoded_bytes)
             return decompressed_bytes.decode("utf-8")
-        elif first_char == 'z':
-            # старый формат gzip
-            decoded_bytes = base64.b64decode(content)
-            buf = io.BytesIO(decoded_bytes)
-            with gzip.GzipFile(fileobj=buf, mode='rb') as gz:
-                decompressed_bytes = gz.read()
-            return decompressed_bytes.decode("utf-8")
-        elif first_char == 'n':
-            return content
-        else:
-            return comp
-
-    def _compress_documents_always(coll_name, documents_list):
-        """Сжимает список документов для коллекций, для которых включено сжатие."""
-        if documents_list is None:
-            return None
-        if not enable_compression or coll_name not in ("milana_collection", "user_collection"):
-            return documents_list
+        elif first_char == 'n': return content
+        else: return comp
+    def _compress_documents_always(coll_name, documents_list): # Сжимает список документов для коллекций, для которых включено сжатие.
+        if documents_list is None: return None
+        if not enable_compression or coll_name not in ("milana_collection", "user_collection"): return documents_list
         out = []
         for d in documents_list:
-            if d is None:
-                out.append(None)
-                continue
+            if d is None: out.append(None); continue
             out.append(_compress_doc_always(d))
         return out
-
-    def _decompress_documents_always(coll_name, documents_list):
-        """Распаковывает список документов."""
-        if documents_list is None:
-            return None
-        if not enable_compression or coll_name not in ("milana_collection", "user_collection"):
-            return documents_list
+    def _decompress_documents_always(coll_name, documents_list): # Распаковывает список документов
+        if documents_list is None: return None
+        if not enable_compression or coll_name not in ("milana_collection", "user_collection"): return documents_list
         out = []
         for d in documents_list:
-            if d is None:
-                out.append(None)
-                continue
+            if d is None: out.append(None); continue
             out.append(_decompress_doc_always(d))
         return out
-
     # ---- Остальные вспомогательные функции ----
-    def _make_where(d):
-        """Преобразует словарь фильтров в формат ChromaDB where."""
-        if not d:
-            return None
+    def _make_where(d): # Преобразует словарь фильтров в формат ChromaDB where.
+        if not d: return None
         clauses = []
         for k, v in d.items():
-            if isinstance(v, list):
-                clauses.append({k: {"$in": v}})
-            elif isinstance(v, dict) and any(op in v for op in ["$gt", "$gte", "$lt", "$lte", "$ne", "$eq", "$in", "$nin"]):
-                clauses.append({k: v})
-            else:
-                clauses.append({k: v})
-        if len(clauses) == 1:
-            return clauses[0]
-        else:
-            return {"$and": clauses}
-
-    def _filter_relevance(resp, coeff=0.9):
-        """Фильтрует результаты по расстоянию: оставляет только те, чьё расстояние <= best * (1 + (1-coeff))."""
-        if "distances" not in resp or resp["distances"] is None or not resp["distances"]:
-            return resp
+            if isinstance(v, list): clauses.append({k: {"$in": v}})
+            elif isinstance(v, dict) and any(op in v for op in ["$gt", "$gte", "$lt", "$lte", "$ne", "$eq", "$in", "$nin"]): clauses.append({k: v})
+            else: clauses.append({k: v})
+        if len(clauses) == 1: return clauses[0]
+        else: return {"$and": clauses}
+    def _filter_relevance(resp, coeff=0.9): # Фильтрует результаты по расстоянию: оставляет только те, чьё расстояние <= best * (1 + (1-coeff))
+        if "distances" not in resp or resp["distances"] is None or not resp["distances"]: return resp
         dists = resp["distances"][0] if isinstance(resp["distances"][0], list) else resp["distances"]
-        if not dists:
-            return resp
+        if not dists: return resp
         best = min(dists)
         threshold = best * (1.0 + (1.0 - coeff))
         keep_idx = [i for i, d in enumerate(dists) if d <= threshold]
-        if not keep_idx:
-            return {k: [] for k in resp}
+        if not keep_idx: return {k: [] for k in resp}
         out = {}
         for k, v in resp.items():
-            if isinstance(v, list) and v and isinstance(v[0], list):
-                out[k] = [[row[i] for i in keep_idx] for row in v]
-            elif isinstance(v, list):
-                out[k] = [v[i] for i in keep_idx]
-            else:
-                out[k] = v
+            if isinstance(v, list) and v and isinstance(v[0], list): out[k] = [[row[i] for i in keep_idx] for row in v]
+            elif isinstance(v, list): out[k] = [v[i] for i in keep_idx]
+            else: out[k] = v
         return out
-
     def _process_in_nin_operators(coll, filters, coll_name, get_results=True):
         """
         Обрабатывает фильтры $in и $nin для поля vector_id.
@@ -654,65 +474,42 @@ def coll_exec(action, coll_name, *,
         in_ids = set(filters.get('$in', {}).get('vector_id', []))
         base_where_filter = {
             k: v for k, v in filters.items()
-            if k not in ('$in', '$nin', 'vector_id')
-        }
+            if k not in ('$in', '$nin', 'vector_id')}
         all_ids = set()
         offset = 0
         batch_size = 1000
         where_for_get = _make_where(base_where_filter)
         while True:
-            r = coll.get(
-                where=where_for_get,
-                limit=batch_size,
-                offset=offset,
-                include=[]
-            )
+            r = coll.get(where=where_for_get, limit=batch_size, offset=offset, include=[])
             current_ids = r.get('ids', [])
-            if not current_ids:
-                break
+            if not current_ids: break
             all_ids.update(current_ids)
             offset += batch_size
-            if len(current_ids) < batch_size:
-                break
+            if len(current_ids) < batch_size: break
         print(f"[{coll_name}] Найдено {len(all_ids)} ID до фильтрации $in/$nin.")
         final_ids = all_ids
-        if nin_ids:
-            final_ids = final_ids - nin_ids
-        if in_ids:
-            final_ids = final_ids.intersection(in_ids)
+        if nin_ids: final_ids = final_ids - nin_ids
+        if in_ids: final_ids = final_ids.intersection(in_ids)
         final_ids_list = list(final_ids)
         print(f"[{coll_name}] Осталось {len(final_ids_list)} ID после фильтрации $in/$nin.")
-        if not get_results:
-            return final_ids_list
-        if final_ids_list:
-            return coll.get(
-                ids=final_ids_list,
-                include=['metadatas', 'documents', 'embeddings']
-            )
+        if not get_results: return final_ids_list
+        if final_ids_list: return coll.get(ids=final_ids_list, include=['metadatas', 'documents', 'embeddings'])
         return {'ids': [], 'metadatas': [], 'documents': [], 'embeddings': []}
-
     # ---- Получение коллекции ----
     coll = globals().get(coll_name)
     if coll is None and client_override:
-        try:
-            coll = client_override.get_collection(coll_name)
-        except Exception:
-            pass
+        try: coll = client_override.get_collection(coll_name)
+        except Exception: pass
     if coll is None and client:
-        try:
-            coll = client.get_collection(coll_name)
-        except Exception:
-            pass
-    if coll is None:
-        raise NameError(f"Collection '{coll_name}' not found")
-
+        try: coll = client.get_collection(coll_name)
+        except Exception: pass
+    if coll is None: raise NameError(f"Collection '{coll_name}' not found")
     # ---- Вспомогательная для пустого результата ----
     def _empty_result(fetch):
         include = fetch if isinstance(fetch, list) else [fetch]
         if len(include) > 1:
             out = {}
-            for key in include:
-                out[key] = [] if key != "distances" else [[]]
+            for key in include: out[key] = [] if key != "distances" else [[]]
             return out
         else:
             key = include[0]
@@ -722,7 +519,6 @@ def coll_exec(action, coll_name, *,
             elif key == "embeddings": return []
             elif key == "distances": return [[]]
             else: return None
-
     # ---- Внутренняя _extract (исправленная) ----
     def _extract(resp, include):
         if len(include) > 1:
@@ -730,133 +526,74 @@ def coll_exec(action, coll_name, *,
             for key in include:
                 data = resp.get(key, []) or []
                 if key == "documents":
-                    if isinstance(data, list) and data and isinstance(data[0], list):
-                        data = [_decompress_documents_always(coll_name, sub) for sub in data]
-                    else:
-                        data = _decompress_documents_always(coll_name, data)
-                if flatten and isinstance(data, list) and data and isinstance(data[0], list):
-                    data = [i for sub in data for i in sub]
+                    if isinstance(data, list) and data and isinstance(data[0], list): data = [_decompress_documents_always(coll_name, sub) for sub in data]
+                    else: data = _decompress_documents_always(coll_name, data)
+                if flatten and isinstance(data, list) and data and isinstance(data[0], list): data = [i for sub in data for i in sub]
                 out[key] = data
             return out
         else:
             key = include[0]
             data = resp.get(key, []) or []
             if key == "documents":
-                if isinstance(data, list) and data and isinstance(data[0], list):
-                    data = [_decompress_documents_always(coll_name, sub) for sub in data]
-                else:
-                    data = _decompress_documents_always(coll_name, data)
+                if isinstance(data, list) and data and isinstance(data[0], list): data = [_decompress_documents_always(coll_name, sub) for sub in data]
+                else: data = _decompress_documents_always(coll_name, data)
             if first:
-                if isinstance(data, list) and data and isinstance(data[0], list):
-                    return data[0][0] if data[0] else None
-                else:
-                    return data[0] if data else None
+                if isinstance(data, list) and data and isinstance(data[0], list): return data[0][0] if data[0] else None
+                else: return data[0] if data else None
             else:
-                if isinstance(data, list) and data and isinstance(data[0], list):
-                    return [i for sub in data for i in sub]
-                else:
-                    return data
-
+                if isinstance(data, list) and data and isinstance(data[0], list): return [i for sub in data for i in sub]
+                else: return data
     # ---- Проверка пустых эмбеддингов для записи ----
     if action in ("add", "update") and embeddings is not None:
         for i, emb in enumerate(embeddings):
-            if emb is None or (isinstance(emb, list) and len(emb) == 0):
-                print(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}")
-                return None
+            if emb is None or (isinstance(emb, list) and len(emb) == 0): print(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}"); return None
     if action == "query":
-        if query_embeddings is None:
-            return _empty_result(fetch)
+        if query_embeddings is None: return _empty_result(fetch)
         all_empty = True
         for qe in query_embeddings:
-            if qe and isinstance(qe, list) and len(qe) > 0:
-                all_empty = False
-                break
-        if all_empty:
-            return _empty_result(fetch)
-
+            if qe and isinstance(qe, list) and len(qe) > 0: all_empty = False; break
+        if all_empty: return _empty_result(fetch)
     # ---- Проверка на специальные фильтры $in/$nin для vector_id ----
-    id_filters_present = (
-        filters and
-        (
-            (filters.get('$nin') and isinstance(filters.get('$nin'), dict) and 'vector_id' in filters['$nin']) or
-            (filters.get('$in') and isinstance(filters.get('$in'), dict) and 'vector_id' in filters['$in'])
-        )
-    )
+    id_filters_present = (filters and ((filters.get('$nin') and isinstance(filters.get('$nin'), dict) and 'vector_id' in filters['$nin']) or (filters.get('$in') and isinstance(filters.get('$in'), dict) and 'vector_id' in filters['$in'])))
     if action in ("query", "get") and id_filters_present:
         processed = _process_in_nin_operators(coll, filters, coll_name, get_results=True)
         if isinstance(processed, dict) and 'ids' in processed:
             resp = processed
             include = fetch if isinstance(fetch, list) else [fetch]
-            if include == ["all"]:
-                include = ["ids", "documents", "metadatas", "embeddings", "distances"]
-            if action == "query":
-                resp = _filter_relevance(resp, relevance_coeff)
-            out = _extract(resp, include)
-            return out
-
+            if include == ["all"]: include = ["ids", "documents", "metadatas", "embeddings", "distances"]
+            if action == "query": resp = _filter_relevance(resp, relevance_coeff)
+            return _extract(resp, include)
     # ---- Основные действия ----
     try:
-        if action == "add":
-            docs_to_send = _compress_documents_always(coll_name, documents)
-            out = coll.add(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
-            return out
-        if action == "update":
-            docs_to_send = _compress_documents_always(coll_name, documents)
-            out = coll.update(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
-            return out
-        if action == "delete":
-            out = coll.delete(ids=ids, where=_make_where(filters), **kwargs)
-            return out
-        if action == "count":
-            out = coll.count()
-            return out
-        if action == "modify":
-            out = coll.modify(name=new_name, metadata=new_meta)
-            return out
+        if action == "add": docs_to_send = _compress_documents_always(coll_name, documents); return coll.add(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
+        if action == "update": docs_to_send = _compress_documents_always(coll_name, documents); return coll.update(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
+        if action == "delete": return coll.delete(ids=ids, where=_make_where(filters), **kwargs)
+        if action == "count": return coll.count()
+        if action == "modify": return coll.modify(name=new_name, metadata=new_meta)
         if action == "delete_collection":
-            if client is None and client_override is None:
-                raise ValueError("client required for delete_collection")
+            if client is None and client_override is None: raise ValueError("client required for delete_collection")
             cl = client_override or client
-            out = cl.delete_collection(coll_name)
-            return out
+            return cl.delete_collection(coll_name)
         if action in ("query", "get"):
             include = fetch if isinstance(fetch, list) else [fetch]
-            if include == ["all"]:
-                include = ["ids", "documents", "metadatas", "embeddings", "distances"]
+            if include == ["all"]: include = ["ids", "documents", "metadatas", "embeddings", "distances"]
             params = {}
             if action == "query":
-                params.update({
-                    "query_embeddings": query_embeddings or [],
-                    "where": _make_where(filters),
-                    "n_results": n_results
-                })
-                if doc_contains:
-                    params["where_document"] = {"$contains": doc_contains}
-            else:  # get
-                params.update({
-                    "where": _make_where(filters),
-                    "limit": limit,
-                    "offset": offset
-                })
-                if doc_contains:
-                    params["where_document"] = {"$contains": doc_contains}
+                params.update({"query_embeddings": query_embeddings or [], "where": _make_where(filters), "n_results": n_results})
+                if doc_contains: params["where_document"] = {"$contains": doc_contains}
+            else: # get
+                params.update({"where": _make_where(filters), "limit": limit, "offset": offset})
+                if doc_contains: params["where_document"] = {"$contains": doc_contains}
             params["include"] = include
             params.update(kwargs)
             resp = (coll.query if action == "query" else coll.get)(**params)
-            if not resp.get("ids") or not any(resp["ids"]):
-                out = _extract(resp, include)
-                return out
-            if action == "query":
-                resp = _filter_relevance(resp, relevance_coeff)
-            out = _extract(resp, include)
-            return out
+            if not resp.get("ids") or not any(resp["ids"]): return _extract(resp, include)
+            if action == "query": resp = _filter_relevance(resp, relevance_coeff)
+            return _extract(resp, include)
         raise ValueError(f"Unsupported action: {action}")
-    except Exception as e:
-        print(f"[coll_exec] Ошибка ({action}): {e}")
-        return None
+    except Exception as e: print(f"[coll_exec] Ошибка ({action}): {e}"); return None
 
-def load_chat_settings(chat_id):
-    """Загрузка настроек чата из SQLite БД"""
+def load_chat_settings(chat_id): # Загрузка настроек чата из SQLite БД
     settings = {}
     settings_rows = sql_exec("SELECT key, value FROM settings", fetchall=True)
     if settings_rows:
@@ -871,8 +608,7 @@ def load_chat_settings(chat_id):
     settings["another_tools"] = another_tools_files
     return settings
 
-def load_initial_data(chat_id):
-    """Загрузка начальных данных: задачи и вложений"""
+def load_initial_data(chat_id): # Загрузка начальных данных: задачи и вложений
     # Загрузка задачи (первого сообщения)
     task = sql_exec("SELECT text FROM messages WHERE id=?", (1,), fetchone=True)
     task = task if task else ""
@@ -885,28 +621,20 @@ def load_initial_data(chat_id):
 
 def globalize_language_packet(language):
     global container
-    try:
-        # Динамическая загрузка языкового модуля
+    try: # Динамическая загрузка языкового модуля
         lang_module = __import__(f'lang.{language}.system_texts', fromlist=['system_text_container'])
         container = lang_module.system_text_container()
     except ImportError as e:
         let_log(f"Ошибка загрузки языкового модуля '{language}': {str(e)}")
         # Запасной вариант: попробовать загрузить стандартный модуль
-        try:
-            from texts import system_text_container
-            container = system_text_container()
-            let_log(f"Используются тексты по умолчанию")
-        except ImportError:
-            let_log("Критическая ошибка: не найден модуль с текстами!")
-            return
+        try: from lang.en.system_texts import system_text_container; container = system_text_container(); let_log(f"Используются тексты по умолчанию")
+        except ImportError: let_log("Критическая ошибка: не найден модуль с текстами!"); return
     for attr in dir(container):
         if attr.startswith('__'): continue
         value = getattr(container, attr)
         if isinstance(value, str):
             try: setattr(container, attr, value)
-            except Exception as e:
-                let_log(f"Ошибка '{attr}': {e}")
-                pass
+            except Exception as e: let_log(f"Ошибка '{attr}': {e}"); pass
     # Экспортируем атрибуты контейнера в глобальную область видимости
     for attr in dir(container):
         if attr.startswith('__'): continue
@@ -920,7 +648,6 @@ def _check_module_uses_cross_gpt(file_contents):
     lines = file_contents.split('\n')
     clean_lines = []
     for line in lines:
-        # Удаляем комментарии (все, что после #)
         if '#' in line: line = line[:line.index('#')]
         clean_lines.append(line)
     clean_content = '\n'.join(clean_lines)
@@ -936,8 +663,7 @@ def _check_module_uses_cross_gpt(file_contents):
         # Разбиваем импортируемые имена по запятым
         imports = [imp.strip().split()[0] for imp in match.split(',') if imp.strip()]
         # Проверяем, есть ли среди них важные функции
-        for imp in imports:
-            # Убираем возможные as-алиасы
+        for imp in imports: # Убираем возможные as-алиасы
             if ' as ' in imp: imp = imp.split(' as ')[0].strip()
             if imp in important_functions: return True
     # 3. Проверяем однострочные импорты из cross_gpt
@@ -950,19 +676,16 @@ def _check_module_uses_cross_gpt(file_contents):
         # Разбиваем импортируемые имена по запятым
         imports = [imp.strip().split()[0] for imp in match.split(',') if imp.strip()]
         # Проверяем, есть ли среди них важные функции
-        for imp in imports:
-            # Убираем возможные as-алиасы
+        for imp in imports: # Убираем возможные as-алиасы
             if ' as ' in imp: imp = imp.split(' as ')[0].strip()
             if imp in important_functions: return True
     # 4. Проверяем импорты внутри функций (могут быть многострочными)
     # Ищем все вхождения from cross_gpt import независимо от позиции
     all_imports = re.findall(r'from\s+cross_gpt\s+import\s+.*?(?=\n|$)', clean_content, re.DOTALL | re.IGNORECASE)
-    for import_stmt in all_imports:
-        # Извлекаем часть после import
+    for import_stmt in all_imports: # Извлекаем часть после import
         import_part = import_stmt.split('import', 1)[1].strip()
         # Проверяем многострочный ли это импорт
-        if '(' in import_part and ')' in import_part:
-            # Многострочный импорт в одной строке
+        if '(' in import_part and ')' in import_part: # Многострочный импорт в одной строке
             start = import_part.find('(') + 1
             end = import_part.rfind(')')
             import_list = import_part[start:end]
@@ -970,8 +693,7 @@ def _check_module_uses_cross_gpt(file_contents):
         # Разбиваем по запятым
         imports = [imp.strip().split()[0] for imp in import_list.split(',') if imp.strip()]
         # Проверяем, есть ли среди них важные функции
-        for imp in imports:
-            # Убираем возможные as-алиасы
+        for imp in imports: # Убираем возможные as-алиасы
             if ' as ' in imp: imp = imp.split(' as ')[0].strip()
             if imp == '*': return True
             if imp in important_functions: return True
@@ -981,8 +703,7 @@ def _check_module_uses_cross_gpt(file_contents):
     # 6. Проверяем импорт из chat_manager
     # Ищем from chat_manager import что-угодно
     if re.search(r'from\s+chat_manager\s+import', clean_content, re.IGNORECASE): return True
-    # 7. Проверяем использование chat_manager.что-угодно
-    if 'chat_manager.' in clean_content: return True
+    if 'chat_manager.' in clean_content: return True # 7. Проверяем использование chat_manager.что-угодно
     return False
 
 def mod_loader(adrs):
@@ -990,9 +711,7 @@ def mod_loader(adrs):
     for mod_file in adrs:
         try:
             let_log(f"Processing: {mod_file}")
-            if not os.path.isfile(mod_file):
-                let_log(f"Файл {mod_file} не найден")
-                continue
+            if not os.path.isfile(mod_file): let_log(f"Файл {mod_file} не найден"); continue
             # Получаем текущий язык
             current_lang = globals().get('language', 'en')
             locale_data = load_locale(mod_file, current_lang)
@@ -1004,70 +723,44 @@ def mod_loader(adrs):
             # Новый улучшенный regex для обработки разных форматов многострочных комментариев
             doc_match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', file_contents)
             if not doc_match: doc_match = re.match(r'^\s*[\'"]{3}\s*([^\n]+)\n\s*([^\n]+)', file_contents)
-            if doc_match:
-                command_name = doc_match.group(1).strip()
-                description = doc_match.group(2).strip()
+            if doc_match: command_name = doc_match.group(1).strip(); description = doc_match.group(2).strip()
             # Если есть локализация, берем оттуда (теперь для любого языка)
             if locale_data:
-                if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 2:
-                    command_name = locale_data['module_doc'][0] or command_name
-                    description = locale_data['module_doc'][1] or description
+                if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 2: command_name = locale_data['module_doc'][0] or command_name; description = locale_data['module_doc'][1] or description
             # Проверяем, что получили command_name и description
-            if not command_name or not description:
-                let_log(f"Модуль {mod_file} должен содержать command_name и description (первые 2 строки файла или локализацию)")
-                continue
+            if not command_name or not description: let_log(f"Модуль {mod_file} должен содержать command_name и description (первые 2 строки файла или локализацию)"); continue
             # Загружаем основной модуль
             module_name = os.path.splitext(mod_file)[0]
             spec = importlib.util.spec_from_file_location(module_name, mod_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            # Проверка функции main
-            if not hasattr(module, 'main'):
-                let_log(f"Модуль {mod_file} должен содержать функцию main.")
-                continue
+            if not hasattr(module, 'main'): let_log(f"Модуль {mod_file} должен содержать функцию main."); continue
             main_func = module.main
-            if not callable(main_func):
-                let_log(f"main в модуле {mod_file} должна быть функцией.")
-                continue
-            if main_func.__code__.co_argcount != 1:
-                let_log(f"Функция main в модуле {mod_file} должна принимать ровно 1 аргумент.")
-                continue
+            if not callable(main_func): let_log(f"main в модуле {mod_file} должна быть функцией."); continue
+            if main_func.__code__.co_argcount != 1: let_log(f"Функция main в модуле {mod_file} должна принимать ровно 1 аргумент."); continue
             # Инициализация атрибутов
             should_initialize = re.search(r"if\s+not\s+hasattr\s*\(\s*main\s*,\s*['\"]attr_names['\"]\s*\)", file_contents)
             if should_initialize:
                 try:
-                    main_func(None)  # Инициализация атрибутов по умолчанию
-                    attr_list = getattr(main_func, 'attr_names', [])
-                    # Применяем локализацию для любого языка, если есть данные
+                    main_func(None) # Инициализация атрибутов по умолчанию
+                    attr_list = getattr(main_func, 'attr_names', []) # Применяем локализацию для любого языка, если есть данные
                     if locale_data:
                         for attr in attr_list:
                             localized_key = f'main.{attr}'
                             if localized_key in locale_data:
-                                setattr(main_func, attr, locale_data[localized_key])
-                                # Только для не-английских языков пишем лог о применении локализации
+                                setattr(main_func, attr, locale_data[localized_key]) # Только для не-английских языков пишем лог о применении локализации
                                 if current_lang != 'en': let_log(f"✓ Локализация: {attr} в {mod_file}")
-                except Exception as e:
-                    let_log(f"⚠ Ошибка при инициализации {mod_file}: {e}")
-                    continue
+                except Exception as e: let_log(f"⚠ Ошибка при инициализации {mod_file}: {e}"); continue
             else: let_log('НЕ ДОЛЖЕН')
-
-            if os.path.basename(mod_file) == 'skip.py':
-                global_state.skip_tools_keys.append(command_name)
-                let_log(f"⚠ Модуль {mod_file} помечен как SKIP – команда '{command_name}' будет скрыта из описаний")
+            if os.path.basename(mod_file) == 'skip.py': global_state.skip_tools_keys.append(command_name); let_log(f"⚠ Модуль {mod_file} помечен как SKIP – команда '{command_name}' будет скрыта из описаний")
             # --- ДОБАВЛЕНО: Проверка на librarian и обновление описания, если доступен web_search ---
             if os.path.basename(mod_file) == 'librarian.py':
                 if 'web_search' in globals() and callable(globals()['web_search']):
                     note = getattr(main_func, 'web_search_available', '')
-                    if note:
-                        description = description + note
-                        let_log(f"✓ Добавлено примечание о веб-поиске к описанию librarian")
-
+                    if note: description = description + note; let_log(f"✓ Добавлено примечание о веб-поиске к описанию librarian")
             if _check_module_uses_cross_gpt(file_contents): global_state.system_tools_keys.append(command_name)
-            # Добавляем модуль в список
             loaded_modules.append((command_name, description, main_func))
-        except Exception as e:
-            let_log(f"⚠ Ошибка при обработке {mod_file}: {e}")
-            continue
+        except Exception as e: let_log(f"⚠ Ошибка при обработке {mod_file}: {e}"); continue
     return loaded_modules
 
 def system_tools_loader():
@@ -1114,15 +807,12 @@ def system_tools_loader():
     if found_start_dialog_index != -1: global_state.start_dialog_command_name = found_start_dialog_command
     # Формируем словари с ключом — кортеж токенов имени команды
     def to_dict(modules, files):
-        d = {}
-        # Используем глобальную переменную use_librarian
+        d = {} # Используем глобальную переменную use_librarian
         global use_librarian
         for i, (cmd_t, desc_tokens, func) in enumerate(modules):
             filename = os.path.basename(files[i])
             # Если use_librarian == False и это librarian.py - пропускаем добавление в словарь
-            if not use_librarian and filename == 'librarian.py':
-                let_log(f"librarian.py загружен глобально, но НЕ добавлен в словарь команд (use_librarian=False)")
-                continue
+            if not use_librarian and filename == 'librarian.py': let_log(f"librarian.py загружен глобально, но НЕ добавлен в словарь команд (use_librarian=False)"); continue
             d[cmd_t] = (desc_tokens, func)
         return d
     common_dict = to_dict(common_modules, common_files)
@@ -1131,10 +821,7 @@ def system_tools_loader():
     # Выводим отладочную информацию
     let_log("\nЗагруженные системные команды:")
     for cmd in global_state.system_tools_keys: let_log(cmd)
-    return (
-        {**common_dict, **ivan_dict},   # common + ivan
-        {**common_dict, **milana_dict}  # common + milana
-    )
+    return ({**common_dict, **ivan_dict}, {**common_dict, **milana_dict})
 
 @cacher
 def get_embs(text):
@@ -1144,53 +831,35 @@ def get_embs(text):
     пока не останется 1 символ. Если после этого ошибка переполнения повторяется,
     исключение пробрасывается выше.
     """
-    if not text or not text.strip():
-        return []
-    
+    if not text or not text.strip(): return []
     current_text = text
-    while True:
-        # Оценка количества токенов
+    while True: # Оценка количества токенов
         estimated_tokens = len(current_text) * text_tokens_coefficient
         if estimated_tokens <= emb_token_limit:
-            try:
-                return get_provider_embs(current_text)
+            try: return get_provider_embs(current_text)
             except Exception as e:
-                # Если ошибка связана с переполнением контекста
                 if 'ContextOverflowError' in str(e):
                     half_len = len(current_text) // 2
-                    if half_len == 0:
-                        # Уже остался 1 символ — пробрасываем ошибку
-                        raise
+                    if half_len == 0: raise
                     current_text = current_text[:half_len]
                     continue
-                else:
-                    # Другие ошибки — логируем и возвращаем пустой список
-                    print(f"[get_embs] Ошибка: {e}")
-                    return []
-        else:
-            # Не помещается — уменьшаем пополам
+                else: print(f"[get_embs] Ошибка: {e}"); return []
+        else: # Не помещается — уменьшаем пополам
             half_len = len(current_text) // 2
             if half_len == 0:
                 # Уже остался 1 символ, но оценка всё ещё превышает лимит? 
                 # Это маловероятно, но на всякий случай пробуем отправить 1 символ
-                try:
-                    return get_provider_embs(current_text)
+                try: return get_provider_embs(current_text)
                 except Exception as e:
-                    if 'ContextOverflowError' in str(e):
-                        raise
-                    else:
-                        print(f"[get_embs] Ошибка: {e}")
-                        return []
+                    if 'ContextOverflowError' in str(e): raise
+                    else: print(f"[get_embs] Ошибка: {e}"); return []
             current_text = current_text[:half_len]
 
 def get_token_limit(): return token_limit
 
 def get_text_tokens_coefficient(): return text_tokens_coefficient
 
-def _execute_with_cache_and_error_handling(generation_func):
-    """
-    Вспомогательная функция для обработки кэширования и ошибок при генерации.
-    """
+def _execute_with_cache_and_error_handling(generation_func): # Вспомогательная функция для обработки кэширования и ошибок при генерации
     start = time.time()
     try: generated = generation_func()
     except Exception as e:
@@ -1215,18 +884,12 @@ def _execute_with_cache_and_error_handling(generation_func):
     return generated
 
 @cacher
-def ask_model(prompt_text, 
-              system_prompt: str = None,
-              all_user: bool = False,
-              limit: int = None,
-              temperature: float = 0.6,
-              **extra_params) -> str:
+def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, **extra_params) -> str:
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
     # Проверка длины контекста
     if len(prompt_text) * text_tokens_coefficient > token_limit - 1000: raise RuntimeError("ContextOverflowError")
-    # --- Обработка пользовательского ввода ---
-    if use_user:
+    if use_user: # --- Обработка пользовательского ввода ---
         import tkinter as tk
         from tkinter import simpledialog
         root = tk.Tk()
@@ -1241,50 +904,31 @@ def ask_model(prompt_text,
     # Особый случай 1: system_prompt
     if system_prompt:
         let_log("Режим (Особый случай): system_prompt -> chat/completions")
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt_text}]
-        generation_params = {
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": limit or token_limit}
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt_text}]
+        generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
-    # Особый случай 2: all_user
-    if all_user:
+    if all_user: # Особый случай 2: all_user
         let_log("Режим (Особый случай): all_user=True -> chat/completions")
         messages = [{"role": "user", "content": prompt_text}]
-        generation_params = {
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": limit or token_limit}
+        generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
-    # Режим 1: Подача строки (completions)
-    if not do_chat_construct:
+    if not do_chat_construct: # Режим 1: Подача строки (completions)
         let_log("Режим 1 (do_chat_construct=1): Подача строки -> completions")
         if not native_func_call: parsed_msgs = _parse_roles_to_messages_no_functions(prompt_text)
         else: parsed_msgs = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
-        generation_params = {
-            "prompt": _serialize_messages_to_prompt(parsed_msgs),
-            "temperature": temperature,
-            "max_tokens": limit or token_limit,
-            "echo": False}
+        generation_params = {"prompt": _serialize_messages_to_prompt(parsed_msgs), "temperature": temperature, "max_tokens": limit or token_limit, "echo": False}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: ask_provider_model(generation_params))
-    # Режим 2: Парсинг чата БЕЗ function call
-    elif do_chat_construct and not native_func_call:
+    elif do_chat_construct and not native_func_call: # Режим 2: Парсинг чата БЕЗ function call
         let_log("Режим 2 (do_chat_construct=2): Парсинг (без функций) -> chat/completions")
         messages = _parse_roles_to_messages_no_functions(prompt_text) # Используем старый парсер
-        generation_params = {
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": limit or token_limit}
+        generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         for name, val in extra_params.items(): generation_params[name] = val
         return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
-    # Режим 3: Парсинг чата С function call
-    elif do_chat_construct and native_func_call:
+    elif do_chat_construct and native_func_call: # Режим 3: Парсинг чата С function call
         let_log("Режим 3 (do_chat_construct=3): Парсинг (С функциями) -> chat/completions")
         let_log(global_state.now_agent_id)
         # 1. Парсим историю (как и раньше)
@@ -1293,10 +937,7 @@ def ask_model(prompt_text,
         now_commands = global_state.tools_commands_dict.get(global_state.now_agent_id, {})
         let_log(now_commands)
         formatted_tools = _format_tools_for_api(now_commands)
-        generation_params = {
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": limit or token_limit}
+        generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         # 3. Добавляем инструменты в запрос, если они есть
         let_log(formatted_tools)
         if formatted_tools:
@@ -1305,8 +946,7 @@ def ask_model(prompt_text,
             generation_params["tool_choice"] = "auto" # Позволяем модели решать, когда вызывать
         for name, val in extra_params.items(): generation_params[name] = val
         let_log(generation_params)
-        # 4. Вызываем модель и получаем полный ответ
-        try: openai_response = ask_provider_model_chat(generation_params)
+        try: openai_response = ask_provider_model_chat(generation_params) # 4. Вызываем модель и получаем полный ответ
         except Exception as e:
             if 'ContextOverflowError' in str(e): raise RuntimeError("ContextOverflowError")
             let_log(e)
@@ -1322,9 +962,7 @@ def ask_model(prompt_text,
         # 5. Обрабатываем ответ как словарь
         let_log(openai_response)
         # Извлекаем данные из ответа API
-        if "choices" not in openai_response or not openai_response["choices"]:
-            let_log("ask_model: Некорректный формат ответа - нет choices")
-            raise RuntimeError("Некорректный формат ответа - нет choices")
+        if "choices" not in openai_response or not openai_response["choices"]: let_log("ask_model: Некорректный формат ответа - нет choices"); raise RuntimeError("Некорректный формат ответа - нет choices")
         choice = openai_response["choices"][0]
         message = choice.get("message", {})
         response_content = message.get("content", "") or ""
@@ -1350,15 +988,13 @@ def _process_chat_response(api_response):
     Обрабатывает ответ от ask_provider_model_chat (словарь) и извлекает текстовый контент
     Теперь поддерживает как OpenAI-совместимый формат, так и формат Ollama
     """
-    # Проверяем наличие поля choices (OpenAI-совместимый формат)
-    if "choices" in api_response and api_response["choices"]:
+    if "choices" in api_response and api_response["choices"]: # Проверяем наличие поля choices (OpenAI-совместимый формат)
         choice = api_response["choices"][0]
         if "message" in choice and "content" in choice["message"]:
             result = choice["message"]["content"].strip()
             let_log(f"_process_chat_response: Результат: '{result}'")
             return result
-    # Если нет choices, проверяем прямой формат Ollama
-    elif "message" in api_response:
+    elif "message" in api_response: # Если нет choices, проверяем прямой формат Ollama
         message = api_response["message"]
         if isinstance(message, dict) and "content" in message:
             result = message["content"].strip()
@@ -1368,12 +1004,10 @@ def _process_chat_response(api_response):
             result = message.strip()
             let_log(f"_process_chat_response (Ollama формат строка): Результат: '{result}'")
             return result
-    # Проверяем поле response (для обратной совместимости)
-    elif "response" in api_response:
+    elif "response" in api_response: # Проверяем поле response (для обратной совместимости)
         result = api_response["response"].strip()
         let_log(f"_process_chat_response (response поле): Результат: '{result}'")
         return result
-    # Если ничего не найдено
     let_log(f"_process_chat_response: Некорректный формат ответа: {api_response}")
     raise RuntimeError("Некорректный формат ответа - невозможно извлечь содержимое")
 
@@ -1385,32 +1019,25 @@ def _parse_roles_to_messages_no_functions(prompt):
     messages = []
     remaining_prompt = prompt
     # 1. Проверяем наличие метки "## Последние сообщения:"
-    if last_messages_marker in remaining_prompt:
-        # Разделяем на часть до метки (system) и после (диалог)
+    if last_messages_marker in remaining_prompt: # Разделяем на часть до метки (system) и после (диалог)
         system_part, dialog_part = remaining_prompt.split(last_messages_marker, 1)
         # Часть до метки - это системный промпт
         if system_part.strip(): messages.append({"role": "system", "content": system_part.strip()})
         remaining_prompt = dialog_part
     else:
-        # Новая логика: ищем первую роль в промпте
         roles_to_find = [operator_role_text, worker_role_text, func_role_text]
         first_role_pos = -1
         first_role = None
         for role in roles_to_find:
             pos = remaining_prompt.find(role)
-            if pos != -1 and (first_role_pos == -1 or pos < first_role_pos):
-                first_role_pos = pos
-                first_role = role
+            if pos != -1 and (first_role_pos == -1 or pos < first_role_pos): first_role_pos = pos; first_role = role
         # Если найдена роль, разделяем на system и остальное
         if first_role_pos != -1:
             system_content = remaining_prompt[:first_role_pos].strip()
             if system_content: messages.append({"role": "system", "content": system_content})
             remaining_prompt = remaining_prompt[first_role_pos:]
-        else:
-            # Если ролей нет, но текст начинается не с роли - считаем системным промптом
-            if remaining_prompt.strip() and not any(remaining_prompt.strip().startswith(role) for role in roles_to_find):
-                messages.append({"role": "system", "content": remaining_prompt.strip()})
-                remaining_prompt = ""
+        else: # Если ролей нет, но текст начинается не с роли - считаем системным промптом
+            if remaining_prompt.strip() and not any(remaining_prompt.strip().startswith(role) for role in roles_to_find): messages.append({"role": "system", "content": remaining_prompt.strip()}); remaining_prompt = ""
     # 2. Определяем роли на основе фактического содержимого и чередования
     # Ищем все вхождения ролей в оставшемся промпте
     roles_to_find = [operator_role_text, worker_role_text, func_role_text]
@@ -1421,26 +1048,18 @@ def _parse_roles_to_messages_no_functions(prompt):
         while True:
             pos = remaining_prompt.find(role, start_idx)
             if pos == -1: break
-            found_roles.append({
-                'pos': pos, 
-                'role': role,
-                'type': 'operator' if role == operator_role_text else 
-                       'worker' if role == worker_role_text else 
-                       'function'
-            })
+            found_roles.append({'pos': pos, 'role': role, 'type': 'operator' if role == operator_role_text else 'worker' if role == worker_role_text else 'function'})
             start_idx = pos + len(role)
-    # Сортируем по позиции
-    found_roles.sort(key=lambda x: x['pos'])
+    found_roles.sort(key=lambda x: x['pos']) # Сортируем по позиции
     # Если не найдены роли, но текст есть - считаем все пользовательским сообщением
-    if not found_roles and remaining_prompt.strip():
-        # Удаляем только operator и worker маркеры, func_role_text оставляем как есть
+    if not found_roles and remaining_prompt.strip(): # Удаляем только operator и worker маркеры, func_role_text оставляем как есть
         clean_content = remaining_prompt.strip()
         for role in [operator_role_text, worker_role_text]: clean_content = clean_content.replace(role, '').strip()
         messages.append({"role": "user", "content": clean_content})
         return messages
     # Обрабатываем найденные роли с учетом чередования
     # Теперь просто чередуем user/assistant после system
-    current_role = "user"  # Начинаем с пользователя
+    current_role = "user" # Начинаем с пользователя
     for i, role_info in enumerate(found_roles):
         role_text = role_info['role']
         role_type = role_info['type']
@@ -1451,38 +1070,29 @@ def _parse_roles_to_messages_no_functions(prompt):
         if i + 1 < len(found_roles): content_end = found_roles[i + 1]['pos']
         content = remaining_prompt[content_start:content_end].strip()
         # Очистка содержимого в зависимости от типа роли
-        if role_type == 'function':
-            # Для function роли: убираем только начальный \n если есть, но оставляем сам маркер
+        if role_type == 'function': # Для function роли: убираем только начальный \n если есть, но оставляем сам маркер
             clean_content = content
             # Убираем начальный перевод строки если он есть
             if clean_content.startswith('\n'): clean_content = clean_content[1:].strip()
             # Добавляем func_role_text в начало содержимого
             clean_content = func_role_text.replace('\n', '') + clean_content
-        else:
-            # Для operator и worker ролей: полностью удаляем маркеры
+        else: # Для operator и worker ролей: полностью удаляем маркеры
             clean_content = content
             for role in [operator_role_text, worker_role_text]: clean_content = clean_content.replace(role, '').strip()
         if not clean_content: continue
         # Определяем роль для API на основе простого чередования
         # Первое сообщение после system - user, следующее - assistant, и т.д.
-        api_role = current_role
-        # Переключаем роль для следующего сообщения
+        api_role = current_role # Переключаем роль для следующего сообщения
         current_role = "assistant" if current_role == "user" else "user"
-        messages.append({
-            "role": api_role, 
-            "content": clean_content
-        })
-    # Если вообще нет сообщений, но промпт не пустой
-    if not messages and prompt.strip():
+        messages.append({"role": api_role, "content": clean_content})
+    if not messages and prompt.strip(): # Если вообще нет сообщений, но промпт не пустой
         clean_content = prompt.strip()
         # Удаляем только operator и worker маркеры
         for role in [operator_role_text, worker_role_text]: clean_content = clean_content.replace(role, '').strip()
         messages.append({"role": "user", "content": clean_content})
     # Проверка на четность количества сообщений (включая системное)
     # Если нечетное - удаляем последнее сообщение
-    if len(messages) % 2 != 0:
-        removed_message = messages.pop()
-        let_log(f"Удалено последнее сообщение (нечетное количество): {removed_message['role']} - {removed_message['content'][:100]}...")
+    if len(messages) % 2 != 0: removed_message = messages.pop(); let_log(f"Удалено последнее сообщение (нечетное количество): {removed_message['role']} - {removed_message['content'][:100]}...")
     let_log(f"Спарсено сообщений (Режим 2): {len(messages)}")
     for i, msg in enumerate(messages): let_log(f"Сообщение {i}: {msg['role']} - {msg['content'][:100]}...")
     return messages
@@ -1497,32 +1107,21 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
     # Используем базовый парсер, который теперь понимает RAG структуру
     base_messages = _parse_roles_to_messages_no_functions(prompt_text)
     if not base_messages: return base_messages
-    # [НОВАЯ ЛОГИКА] Проверяем количество не-системных сообщений
+    # Проверяем количество не-системных сообщений
     non_system_messages = [msg for msg in base_messages if msg.get("role") != "system"]
-    if len(non_system_messages) == 1:
-        # Если только одно не-системное сообщение
+    if len(non_system_messages) == 1: # Если только одно не-системное сообщение
         single_message = non_system_messages[0]
         content = single_message.get("content", "")
         # Проверяем, является ли это сообщение ответом функции (содержит func_text_for_parse)
-        if (global_state.start_dialog_command_name != '' and 
-            global_state.now_agent_id % 2 != 0 and  # Проверяем чётность now_agent_id вместо conversations
-            func_text_for_parse in content):
+        if global_state.start_dialog_command_name != '' and global_state.now_agent_id % 2 != 0 and func_text_for_parse in content:
             let_log("Обнаружено одно сообщение с ответом функции - выполняем замену")
             # Вырезаем func_text_for_parse из начала контента (как при множественных сообщениях)
             cleaned_content = content
             if content.startswith(func_text_for_parse): cleaned_content = content[len(func_text_for_parse):].strip()
             elif func_text_for_parse in content: cleaned_content = content.replace(func_text_for_parse, '', 1).strip()
-            # Создаем сообщение с ответом функции
-            function_response_message = {
-                "role": "function",
-                "name": global_state.start_dialog_command_name,
-                "content": cleaned_content
-            }
-            # Заменяем исходное сообщение на ответ функции в base_messages
-            for i, msg in enumerate(base_messages):
-                if msg.get("role") != "system" and msg.get("content") == content:
-                    base_messages[i] = function_response_message
-                    break
+            function_response_message = {"role": "function", "name": global_state.start_dialog_command_name, "content": cleaned_content} # Создаем сообщение с ответом функции
+            for i, msg in enumerate(base_messages): # Заменяем исходное сообщение на ответ функции в base_messages
+                if msg.get("role") != "system" and msg.get("content") == content: base_messages[i] = function_response_message; break
     # словарь команд для сессии (формат {'name':('desc', func)})
     try: now_commands = global_state.tools_commands_dict.get(sid, {})
     except Exception: now_commands = {}
@@ -1531,11 +1130,11 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
     for m in base_messages:
         txt = m.get("content", "") if isinstance(m, dict) else ""
         matched = find_and_match_command(txt, now_commands)
-        markers_for_msg.append(matched)  # либо (found_key, content) либо None
+        markers_for_msg.append(matched) # либо (found_key, content) либо None
     result = []
     i = 0
     while i < len(base_messages):
-        msg = dict(base_messages[i])  # shallow copy
+        msg = dict(base_messages[i]) # shallow copy
         role = (msg.get("role") or "").lower()
         content = msg.get("content", "")
         # проверяем, похоже ли текущее сообщение на ответ функции
@@ -1543,30 +1142,24 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
         is_function_like = (role == "function") or content_l.startswith(func_text_for_parse)
         if is_function_like:
             prev_index = i - 1
-            if prev_index >= 0:
-                # берем маркер, найденный в предыдущем сообщении
+            if prev_index >= 0: # берем маркер, найденный в предыдущем сообщении
                 prev_marker = markers_for_msg[prev_index]
                 if prev_marker:
                     found_key, args_str = prev_marker
-                    # проверяем, что такой ключ есть в now_commands
-                    try:
-                        if found_key in now_commands:
-                            # удаляем маркер из текста предыдущего сообщения
+                    try: # проверяем, что такой ключ есть в now_commands
+                        if found_key in now_commands: # удаляем маркер из текста предыдущего сообщения
                             prev_msg_target = result[-1] if result else base_messages[prev_index]
                             prev_txt = prev_msg_target.get("content", "")
                             markers = _find_command_markers(prev_txt, now_commands, return_all=True, start_limit=None)
-                            if markers:
-                                # Находим маркер с нужным ключом
+                            if markers: # Находим маркер с нужным ключом
                                 for marker in markers:
-                                    if marker['key'] == found_key:
-                                        # Удаляем этот маркер
+                                    if marker['key'] == found_key: # Удаляем этот маркер
                                         new_prev_txt = prev_txt[:marker['start']] + prev_txt[marker['end']:]
                                         new_prev_txt = new_prev_txt.strip()
                                         if result: result[-1]["content"] = new_prev_txt
                                         else: base_messages[prev_index]["content"] = new_prev_txt
                                         break
-                            else:
-                                # Fallback: если не нашли маркер
+                            else: # Fallback: если не нашли маркер
                                 marker_token = "!!!" + found_key + "!!!"
                                 if marker_token in prev_txt:
                                     new_prev_txt = prev_txt.replace(marker_token, "", 1).strip()
@@ -1577,11 +1170,7 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                             cleaned_content = content
                             if content_l.startswith(func_text_for_parse): cleaned_content = content[len(func_text_for_parse):].strip()
                             elif func_text_for_parse in content: cleaned_content = content.replace(func_text_for_parse, '', 1).strip()
-                            function_message = {
-                                "role": "function",
-                                "name": found_key,
-                                "content": cleaned_content
-                            }
+                            function_message = {"role": "function", "name": found_key, "content": cleaned_content}
                             result.append(function_message)
                             i += 1
                             continue
@@ -1593,17 +1182,9 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
         current_marker = markers_for_msg[i]
         if current_marker and role in ("assistant", ""):
             found_key, args_str = current_marker
-            if found_key in now_commands:
-                # создаем сообщение с tool_calls вместо обычного assistant
+            if found_key in now_commands: # создаем сообщение с tool_calls вместо обычного assistant
                 tool_call_id = f"call_{i}_{len(result)}"
-                tool_call = {
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": found_key,
-                        "arguments": args_str
-                    }
-                }
+                tool_call = {"id": tool_call_id, "type": "function", "function": {"name": found_key, "arguments": args_str}}
                 # удаляем маркер из текста
                 cleaned_content = content
                 markers = _find_command_markers(content, now_commands, return_all=True, start_limit=None)
@@ -1613,16 +1194,11 @@ def _parse_roles_to_messages_functions(prompt_text, sid):
                             cleaned_content = content[:marker['start']] + content[marker['end']:]
                             cleaned_content = cleaned_content.strip()
                             break
-                else:
-                    # Fallback
+                else: # Fallback
                     marker_token = "!!!" + found_key + "!!!"
                     if marker_token in content: cleaned_content = content.replace(marker_token, "", 1).strip()
                 # создаем сообщение с tool_calls
-                tool_message = {
-                    "role": "assistant",
-                    "content": cleaned_content,
-                    "tool_calls": [tool_call]
-                }
+                tool_message = {"role": "assistant", "content": cleaned_content, "tool_calls": [tool_call]}
                 result.append(tool_message)
                 i += 1
                 continue
@@ -1659,48 +1235,11 @@ def _format_tools_for_api(commands_dict):
         # Так как вся система ожидает ОДНУ строку аргументов 
         # (всё, что после !!!command!!!), мы определяем один
         # строковый параметр с именем "arguments".
-        tool_definition = {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "arguments": {
-                            "type": "string",
-                            "description": "Аргументы для команды в виде единой строки (весь текст, который должен идти после !!!)."
-                        }
-                    },
-                    "required": ["arguments"]
-                }
-            }
-        }
+        tool_definition = {"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "properties": {"arguments": {"type": "string", "description": "Аргументы для команды в виде единой строки (весь текст, который должен идти после !!!)."}}, "required": ["arguments"]}}}
         tools_list.append(tool_definition)
     return tools_list
 
-def remove_role_markers_from_content(messages):
-    """
-    Удаляет маркеры ролей из содержимого сообщений.
-    (Вызывается из _parse_roles_to_messages_no_functions)
-    """
-    cleaned_messages = []
-    for msg in messages:
-        content = msg["content"]
-        if content.startswith(operator_role_text): content = content[len(operator_role_text):].strip()
-        elif content.startswith(worker_role_text): content = content[len(worker_role_text):].strip()
-        elif content.startswith(func_role_text):
-            role_with_space = func_role_text.replace('\n', ' ')
-            content = content.replace(func_role_text, role_with_space, 1).strip()
-        content = content.replace(operator_role_text, '').replace(worker_role_text, '').strip()
-        cleaned_messages.append({
-            "role": msg["role"],
-            "content": content
-        })
-    return cleaned_messages
-
 def parse_prompt_response(add_prompt, info, default_value=0):
-    # Базовая инструкция из системных текстов
     system_prompt = add_prompt + yes_no_instruction
     try: response = ask_model(info, system_prompt=system_prompt)
     except RuntimeError as e:
@@ -1708,27 +1247,15 @@ def parse_prompt_response(add_prompt, info, default_value=0):
             try: response = ask_model(text_cutter(info), system_prompt=system_prompt)
             except Exception: return default_value
         else: raise
-    if not response or not response.strip():
-        return default_value
-    # Подготовка к сравнению: приводим к нижнему регистру, убираем лишние пробелы
+    if not response or not response.strip(): return default_value
     response_clean = response.strip().lower()
-    # Варианты для сравнения (с точкой и без)
-    candidates = [
-        yes_word.lower(),
-        no_word.lower(),
-        yes_word.lower().rstrip('.'),
-        no_word.lower().rstrip('.')
-    ]
+    candidates = [yes_word.lower(), no_word.lower(), yes_word.lower().rstrip('.'), no_word.lower().rstrip('.')] # Варианты для сравнения (с точкой и без)
     best_match = None
     best_ratio = 0.0
     for cand in candidates:
         ratio = difflib.SequenceMatcher(None, response_clean, cand).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_match = cand
-    # Порог схожести (можно подобрать эмпирически)
+        if ratio > best_ratio: best_ratio = ratio; best_match = cand
     if best_ratio < 0.7: return default_value
-    # Определяем, какой это ответ (сравниваем с эталонами без учёта точки)
     if best_match in (yes_word.lower(), yes_word.lower().rstrip('.')): return 1
     else: return 0
 
@@ -1742,11 +1269,9 @@ def _serialize_messages_to_prompt(messages):
     # 1. Извлечение служебных ролей (system, tools), которые стоят вне основного цикла
     system_prompt = next((m['content'] for m in messages if m['role'] == 'system'), None)
     tools_definition = next((m['content'] for m in messages if m['role'] == 'tools'), None)
-    # Отфильтровываем служебные роли для итерации по основному диалогу
-    dialog_messages = [m for m in messages if m['role'] not in ('system', 'tools')]
+    dialog_messages = [m for m in messages if m['role'] not in ('system', 'tools')] # Отфильтровываем служебные роли для итерации по основному диалогу
     if not dialog_messages: return ""
-    # 2. Добавление описания инструментов (TOOLS) - в начале промпта
-    if tools_definition and unified_tags.get('tool_def_start'):
+    if tools_definition and unified_tags.get('tool_def_start'): # 2. Добавление описания инструментов (TOOLS) - в начале промпта
         serialized_prompt.append(unified_tags['tool_def_start'])
         serialized_prompt.append(tools_definition) 
         serialized_prompt.append(unified_tags['tool_def_end'])
@@ -1760,8 +1285,7 @@ def _serialize_messages_to_prompt(messages):
         # 3.1. Обработка первого USER-сообщения (включая SYSTEM)
         if role == 'user' and not first_user_processed:
             serialized_prompt.append(unified_tags['user_start'])
-            # Вставка системного промпта
-            if system_prompt and unified_tags.get('sys_start'):
+            if system_prompt and unified_tags.get('sys_start'): # Вставка системного промпта
                 serialized_prompt.append(unified_tags['sys_start'])
                 serialized_prompt.append(system_prompt)
                 serialized_prompt.append(unified_tags['sys_end'])
@@ -1769,26 +1293,22 @@ def _serialize_messages_to_prompt(messages):
             serialized_prompt.append(unified_tags['user_end'])
             first_user_processed = True
         # 3.2. Обработка остальных витков
-        elif role == 'assistant' and first_user_processed:
-            # Ответ ассистента
+        elif role == 'assistant' and first_user_processed: # Ответ ассистента
             serialized_prompt.append(unified_tags.get('assist_start', ''))
             serialized_prompt.append(content)
             serialized_prompt.append(unified_tags.get('assist_end', ''))
             serialized_prompt.append(unified_tags.get('eos', '')) # Закрывает виток
-        elif role == 'user' and first_user_processed:
-            # Новый виток пользователя
+        elif role == 'user' and first_user_processed: # Новый виток пользователя
             serialized_prompt.append(unified_tags.get('bos', ''))
             serialized_prompt.append(unified_tags['user_start'])
             serialized_prompt.append(content)
             serialized_prompt.append(unified_tags['user_end'])
-        elif role == 'tool_call' and unified_tags.get('tool_call_start'):
-            # Вызов функции, сгенерированный моделью
+        elif role == 'tool_call' and unified_tags.get('tool_call_start'): # Вызов функции, сгенерированный моделью
             serialized_prompt.append(unified_tags['tool_call_start'])
             serialized_prompt.append(content)
             serialized_prompt.append(unified_tags['tool_call_end'])
             serialized_prompt.append(unified_tags.get('eos', ''))
-        elif (role == 'tool' or role == 'function') and unified_tags.get('tool_result_start'):
-            # Результат выполнения функции
+        elif (role == 'tool' or role == 'function') and unified_tags.get('tool_result_start'): # Результат выполнения функции
             serialized_prompt.append(unified_tags['tool_result_start'])
             serialized_prompt.append(content)
             serialized_prompt.append(unified_tags['tool_result_end'])
@@ -1821,21 +1341,12 @@ def detect_and_remove_loops(text, min_len=2, max_len=50, min_repeats=3, min_frac
 
 def remove_commands_roles(cleaned_text): # TODO: перепроверь работоспособность, учти отступы и что-то напоминающее команды
     if not filter_generations: return cleaned_text
-    # Проверяем все переменные по порядку
     for var_content in clean_variables_content:
         if var_content:
-            # Ищем начало содержимого переменной в тексте
             start_pos = cleaned_text.find(var_content)
-            if start_pos != -1:
-                # Нашли содержимое - удаляем всё начиная с этой позиции
-                cleaned_text = cleaned_text[:start_pos]
-                break # Прерываем после первого найденного
-    # Теперь ищем маркеры команд
+            if start_pos != -1: cleaned_text = cleaned_text[:start_pos]; break
     markers = _find_command_markers(cleaned_text, global_state.tools_commands_dict.get(sid, {}), return_all=True, start_limit=None)
-    # Если найдено более одного маркера, обрезаем текст перед вторым маркером
-    if len(markers) >= 2:
-        second_marker_start = markers[1]['start']
-        cleaned_text = cleaned_text[:second_marker_start]
+    if len(markers) >= 2: second_marker_start = markers[1]['start']; cleaned_text = cleaned_text[:second_marker_start]
     if remove_loops: cleaned_text = detect_and_remove_loops(cleaned_text)
     return cleaned_text
 
@@ -1856,9 +1367,7 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
             candidate_pos = text.rfind(delimiter, current_pos, end_pos)
             if candidate_pos != -1:
                 current_chunk_size = candidate_pos + len(delimiter) - current_pos
-                if current_chunk_size >= chunk_size * min_chunk_percentage:
-                    split_pos = candidate_pos + len(delimiter)
-                    break
+                if current_chunk_size >= chunk_size * min_chunk_percentage: split_pos = candidate_pos + len(delimiter); break
         if split_pos is None: split_pos = end_pos
         chunk = text[current_pos:split_pos]
         if chunk.strip(): chunks.append(chunk)
@@ -1866,22 +1375,13 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
     return chunks if chunks else None
 
 def text_cutter(text, cut_message=False):
-    """
-    Обрабатывает текст, разбивая его на части и суммируя их итеративно,
-    чтобы избежать переполнения контекста модели.
-    """
     let_log('ИТЕРАТИВНЫЙ КАТТЕР ВЫЗВАН')
     let_log(text)
-    # Список для хранения частей, ожидающих обработки
     chunks_to_process = [text]
-    # Список для хранения уже обработанных, суммированных частей
     summarized_chunks = []
-    # Цикл работает, пока есть части для обработки
     while chunks_to_process:
-        # Берем первый кусок из "очереди"
         current_chunk = chunks_to_process.pop(0)
         try:
-            # Пытаемся суммировать текущий кусок
             if cut_message: summarized_part = ask_model(current_chunk, system_prompt=cut_message_prompt)
             else: summarized_part = ask_model(current_chunk, system_prompt=summarize_prompt + '\n' + no_markdown_instruction)
             summarized_chunks.append(summarized_part)
@@ -1890,24 +1390,20 @@ def text_cutter(text, cut_message=False):
             if 'ContextOverflowError' in str(e):
                 let_log(f'ошибка каттера (переполнение), делим кусок: {len(current_chunk)=}')
                 let_log(e)
-                # Логика разделения текста, как в оригинальной функции
                 text2 = current_chunk[len(current_chunk) // 2:]
                 try:
-                    # Ищем "чистую" точку для разделения
                     split_pos = min(text2.find('\n'), text2.find('. '))
                     if split_pos == -1: split_pos = text2.find(' ')
-                    if split_pos != -1: text2 = text2[split_pos + 2:] # +2 для \n или ". "
-                except Exception as split_e: # Используем более общий Exception для отлова ошибок find
+                    if split_pos != -1: text2 = text2[split_pos + 2:]
+                except Exception as split_e:
                     traceprint()
                     let_log(f"Ошибка при поиске точки разделения: {split_e}")
-                    # В случае ошибки просто продолжаем с половиной текста
                     pass
                 text1 = current_chunk[:current_chunk.find(text2)]
                 if text2: chunks_to_process.insert(0, text2)
                 if text1: chunks_to_process.insert(0, text1)
             else: sys.exit(1)
         except Exception as e:
-            # Любая другая непредвиденная ошибка, останавливаемся
             traceprint()
             print(e)
             sys.exit(1)
@@ -1922,29 +1418,16 @@ def load_info_loaders(info_loaders_names):
     Если имя другое, то функция ищется в модуле info_loaders, А ДОЖНА НЕ ТАМ.
     """
     global input_info_loaders
-    input_info_loaders = {}
-    # Пытаемся импортировать модуль info_loaders
+    input_info_loaders = {}# Пытаемся импортировать модуль info_loaders
     global info_loaders
-    try:
-        import info_loaders
-        let_log("✅ Модуль info_loaders успешно импортирован")
-    except Exception as e:
-        let_log(f"❌ ФАТАЛЬНО: Не удалось импортировать модуль info_loaders: {e}")
-        return input_info_loaders
-    # Загружаем только рабочие обработчики
-    for ext, func_name in info_loaders_names.items():
-        try:
-            # Получаем обработчик из модуля
+    try: import info_loaders; let_log("✅ Модуль info_loaders успешно импортирован")
+    except Exception as e: let_log(f"❌ ФАТАЛЬНО: Не удалось импортировать модуль info_loaders: {e}"); return input_info_loaders
+    for ext, func_name in info_loaders_names.items(): # Загружаем только рабочие обработчики
+        try: # Получаем обработчик из модуля
             handler = getattr(info_loaders, func_name)
-            # Проверяем что это функция/метод
-            if not callable(handler):
-                let_log(f"⚠ '{func_name}' для .{ext} не является вызываемым объектом. Пропускаем.")
-                continue
-            # Проверяем сигнатуру (должен принимать хотя бы 1 аргумент)
-            sig_params = list(inspect.signature(handler).parameters.values())
-            if len(sig_params) < 1:
-                let_log(f"⚠ '{func_name}' имеет неверную сигнатуру для .{ext}. Пропускаем.")
-                continue
+            if not callable(handler): let_log(f"⚠ '{func_name}' для .{ext} не является вызываемым объектом. Пропускаем."); continue # Проверяем что это функция/метод
+            sig_params = list(inspect.signature(handler).parameters.values()) # Проверяем сигнатуру (должен принимать хотя бы 1 аргумент)
+            if len(sig_params) < 1: let_log(f"⚠ '{func_name}' имеет неверную сигнатуру для .{ext}. Пропускаем."); continue
             input_info_loaders[ext] = handler
             let_log(f"✅ Загружен обработчик для .{ext}: {func_name}")
         except AttributeError: let_log(f"✗ Обработчик '{func_name}' не найден в модуле info_loaders. Пропускаем .{ext}")
@@ -1958,50 +1441,38 @@ def upload_user_data(files_list):
     Обрабатывает файлы, пропуская те, для которых нет обработчика или возникла ошибка.
     Возвращает только успешно обработанные результаты.
     """
-    # Проверяем, загружены ли обработчики
-    if not input_info_loaders:
+    if not input_info_loaders: # Проверяем, загружены ли обработчики
         let_log("⚠ Обработчики файлов не загружены. Загружаем...")
         try: load_info_loaders(default_handlers_names)
         except Exception as e:
             let_log(f"❌ Ошибка загрузки обработчиков файлов: {e}")
             send_output_message(text="Система обработки файлов недоступна", command='warning')
             return []
-    all_results = []  # Только успешные результаты
-    processed_chunks = []  # Собираем все чанки из всех файлов
-    if not files_list:
-        let_log("Список файлов для загрузки пуст")
-        return all_results
+    all_results = [] # Только успешные результаты
+    processed_chunks = [] # Собираем все чанки из всех файлов
+    if not files_list: let_log("Список файлов для загрузки пуст"); return all_results
     for filename in files_list:
         file_basename = os.path.basename(filename)
         let_log(f"Обработка файла: {file_basename}")
-        try:
-            # 1. Проверка существования файла
+        try: # 1. Проверка существования файла
             if not os.path.exists(filename): raise FileNotFoundError(f"Файл не существует: {filename}")
-            # 2. Получение расширения
-            _, file_extension = os.path.splitext(filename)
+            _, file_extension = os.path.splitext(filename) # 2. Получение расширения
             extension = file_extension[1:].lower() if file_extension else ''
             if not extension: raise ValueError(f"Файл не имеет расширения: {filename}")
             # 3. Проверка наличия обработчика
-            if extension not in input_info_loaders:
-                # Пытаемся обработать как текстовый файл
+            if extension not in input_info_loaders: # Пытаемся обработать как текстовый файл
                 handler = info_loaders.process_unknown
                 let_log(f"  Для расширения .{extension} нет обработчика, попытка открыть как текст")
             else: handler = input_info_loaders[extension]
-            # 4. Получаем размер файла
-            file_size = os.path.getsize(filename)
-            # 5. Использование кэша (если включено)
-            result = read_cache()
-            if result == [False]:
-                # Вызов обработчика
+            file_size = os.path.getsize(filename) # 4. Получаем размер файла
+            result = read_cache() # 5. Использование кэша (если включено)
+            if result == [False]: # Вызов обработчика
                 let_log(f"  Вызов обработчика {handler.__name__}...")
                 result_content = handler(filename, input_info_loaders)
                 write_cache(result_content)
-            else:
-                let_log(f"  Используется кэшированный результат")
-                result_content = result[1]
+            else: let_log(f"  Используется кэшированный результат"); result_content = result[1]
             # 6. Обработка результата (разбиение на чанки и сбор для последующего сохранения)
-            if file_extension[1:].lower() == 'zip' and isinstance(result_content, list):
-                # Обработка ZIP-архива (включая вложенные)
+            if file_extension[1:].lower() == 'zip' and isinstance(result_content, list): # Обработка ZIP-архива (включая вложенные)
                 for file_data in result_content:
                     if file_data['type'] in ['file', 'unsupported']:
                         content = file_data['content']
@@ -2009,87 +1480,48 @@ def upload_user_data(files_list):
                             let_log(f"  Разбиение файла из ZIP: {file_data['filename']}")
                             chunks = split_text_with_cutting(content)
                             if chunks:
-                                for t, chunk in enumerate(chunks):
-                                    processed_chunks.append({
-                                        'chunk': chunk,
-                                        'metadata': {
-                                            'name': f"{filename}/{file_data['filename']}",
-                                            'part': t + 1,
-                                            'source': 'zip'}})
-            else:
-                # Обработка обычного файла
+                                for t, chunk in enumerate(chunks): processed_chunks.append({'chunk': chunk, 'metadata': {'name': f"{filename}/{file_data['filename']}", 'part': t + 1, 'source': 'zip'}})
+            else: # Обработка обычного файла
                 if isinstance(result_content, str):
                     let_log(f"  Разбиение файла на чанки...")
                     chunks = split_text_with_cutting(result_content)
                     if chunks:
-                        for t, chunk in enumerate(chunks):
-                            processed_chunks.append({
-                                'chunk': chunk,
-                                'metadata': {
-                                    'name': filename,
-                                    'part': t + 1,
-                                    'source': 'file'}})
+                        for t, chunk in enumerate(chunks): processed_chunks.append({'chunk': chunk, 'metadata': {'name': filename, 'part': t + 1, 'source': 'file'}})
             # Добавляем в список успешных
-            all_results.append({
-                'filename': filename,
-                'content': result_content,
-                'extension': extension,
-                'size': file_size})
+            all_results.append({'filename': filename, 'content': result_content, 'extension': extension, 'size': file_size})
             let_log(f"✅ Файл {file_basename} успешно обработан")
-        except (FileNotFoundError, ValueError, KeyError) as e:
-            # Ожидаемые ошибки - пропускаем файл
+        except (FileNotFoundError, ValueError, KeyError) as e: # Ожидаемые ошибки - пропускаем файл
             let_log(f"⏭ Пропускаем {file_basename}: {e}")
             send_output_message(text=f"Пропущен файл {file_basename}: {e}", command='info')
-        except Exception as e:
-            # Неожиданные ошибки - пропускаем с логированием
+        except Exception as e: # Неожиданные ошибки - пропускаем с логированием
             error_msg = f"Ошибка обработки {file_basename}: {type(e).__name__}"
             let_log(f"⏭ Пропускаем {file_basename} из-за ошибки: {error_msg}")
             let_log(f"  Детали: {str(e)[:200]}")
             send_output_message(text=f"Ошибка при обработке {file_basename}", command='warning')
-    # 7. Сохраняем ВСЕ чанки из ВСЕХ успешно обработанных файлов в базу
-    if processed_chunks:
+    if processed_chunks: # 7. Сохраняем ВСЕ чанки из ВСЕХ успешно обработанных файлов в базу
         let_log(f"Сохраняем {len(processed_chunks)} чанков в базу...")
         for chunk_info in processed_chunks:
             set_common_save_id()
-            coll_exec(
-                action="add",
-                coll_name="user_collection",
-                ids=[get_common_save_id()],
-                embeddings=[get_embs(chunk_info['chunk'])],
-                metadatas=[chunk_info['metadata']],
-                documents=[chunk_info['chunk']])
+            coll_exec(action="add", coll_name="user_collection", ids=[get_common_save_id()], embeddings=[get_embs(chunk_info['chunk'])], metadatas=[chunk_info['metadata']], documents=[chunk_info['chunk']])
         let_log(f"✅ Все чанки сохранены в базу")
     else: let_log("⚠ Нет чанков для сохранения в базу")
-    # 8. Аннотация только успешно обработанных файлов
-    if all_results:
+    if all_results: # 8. Аннотация только успешно обработанных файлов
         try:
             annotation_text = ""
             for result in all_results:
-                if isinstance(result['content'], str):
-                    annotation_text += f"\n\n--- {os.path.basename(result['filename'])} ---\n{result['content'][:5000]}"
+                if isinstance(result['content'], str): annotation_text += f"\n\n--- {os.path.basename(result['filename'])} ---\n{result['content'][:5000]}"
                 elif isinstance(result['content'], list):
                     for file_data in result['content']:
                         if isinstance(file_data.get('content'), str): annotation_text += f"\n\n--- {os.path.basename(result['filename'])}/{file_data['filename']} ---\n{file_data['content'][:5000]}"
             if annotation_text.strip():
-                try:
-                    global_state.summ_attach = annotation_available_prompt + ask_model(
-                        annotation_text, 
-                        system_prompt=summarize_text_some_phrases)
+                try: global_state.summ_attach = annotation_available_prompt + ask_model(annotation_text, system_prompt=summarize_text_some_phrases)
                 except:
-                    try:
-                        global_state.summ_attach = annotation_available_prompt + ask_model(
-                            text_cutter(annotation_text), 
-                            system_prompt=summarize_text_some_phrases)
+                    try: global_state.summ_attach = annotation_available_prompt + ask_model(text_cutter(annotation_text), system_prompt=summarize_text_some_phrases)
                     except: global_state.summ_attach = annotation_failed_text
             else: global_state.summ_attach = annotation_failed_text
-        except Exception as e:
-            let_log(f"Ошибка при создании аннотации: {e}")
-            global_state.summ_attach = annotation_failed_text
-    else:
-        let_log("Нет успешно обработанных файлов для аннотации")
-        global_state.summ_attach = annotation_failed_text
-    # 9. Очистка ресурсов - выгружаем модель обработки изображений из ОЗУ
-    try:
+        except Exception as e: let_log(f"Ошибка при создании аннотации: {e}"); global_state.summ_attach = annotation_failed_text
+    else: let_log("Нет успешно обработанных файлов для аннотации"); global_state.summ_attach = annotation_failed_text
+    try: # 9. Очистка ресурсов - выгружаем модель обработки изображений из ОЗУ
         if hasattr(info_loaders, 'cleanup_image_models'): info_loaders.cleanup_image_models()
     except Exception as e: let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
     return all_results
@@ -2100,46 +1532,37 @@ def get_common_save_id(): return str(global_state.common_save_id)
 
 def reset_common_save_id(): global_state.common_save_id = 1
 
-def down_hierarchy():
-    """Добавить новый уровень иерархии (делегирование)"""
+def down_hierarchy(): # Добавить новый уровень иерархии (делегирование)
     parts = global_state.now_try.strip('/').split('/')
-    # Определяем номер нового уровня
-    if not parts or parts[0] == '': new_level = 1
-    else:
-        # Находим последнюю пару и увеличиваем уровень
+    if not parts or parts[0] == '': new_level = 1 # Определяем номер нового уровня
+    else: # Находим последнюю пару и увеличиваем уровень
         last_part = parts[-1]
-        if ':' in last_part:
-            # Получаем часть до двоеточия
+        if ':' in last_part: # Получаем часть до двоеточия
             level_part = last_part.split(':')[0]
-            # Если часть перед двоеточием пустая, уровень = 0
-            if level_part == '': last_level = 0
+            if level_part == '': last_level = 0 # Если часть перед двоеточием пустая, уровень = 0
             else:
                 try: last_level = int(level_part)
                 except ValueError: last_level = 0
-        else:
-            # Если двоеточия нет, пробуем преобразовать всю часть в число
+        else: # Если двоеточия нет, пробуем преобразовать всю часть в число
             try: last_level = int(last_part) if last_part.isdigit() else 0
             except ValueError: last_level = 0
         new_level = last_level + 1
-    # Добавляем новый уровень с исполнителем=0
+    # Добавляем новый уровень с исполнителем = 0
     if global_state.now_try == '/' or global_state.now_try == '': global_state.now_try = f"/{new_level}:0"
     else: global_state.now_try += f"/{new_level}:0"
     let_log(f"[HIERARCHY] Down: {global_state.now_try}")
 
-def up_hierarchy():
-    """Подняться на уровень выше"""
+def up_hierarchy(): # Подняться на уровень выше
     if global_state.now_try == '/' or global_state.now_try == '': return  # Уже на корневом уровне
     parts = global_state.now_try.strip('/').split('/')
-    if len(parts) > 1:
-        # Удаляем последнюю пару
+    if len(parts) > 1: # Удаляем последнюю пару
         parts = parts[:-1]
         if parts: global_state.now_try = '/' + '/'.join(parts)
         else: global_state.now_try = '/'
     else: global_state.now_try = '/'
     let_log(f"[HIERARCHY] Up: {global_state.now_try}")
 
-def next_executor():
-    """Создать/пересоздать исполнителя на текущем уровне"""
+def next_executor(): # Создать/пересоздать исполнителя на текущем уровне
     if global_state.now_try == '/' or global_state.now_try == '': global_state.now_try = f"/1:1"
     else:
         parts = global_state.now_try.strip('/').split('/')
@@ -2148,16 +1571,14 @@ def next_executor():
             level, executor = last_part.split(':')
             new_executor = int(executor) + 1
             parts[-1] = f"{level}:{new_executor}"
-        else:
-            # Формат без : (старый формат)
+        else: # Формат без : (старый формат)
             level = int(last_part) if last_part.isdigit() else 1
             parts[-1] = f"{level}:1"
         global_state.now_try = '/' + '/'.join(parts)
     let_log(f"[HIERARCHY] Next executor: {global_state.now_try}")
     return get_executor_number()
 
-def get_executor_number():
-    """Получить номер текущего исполнителя"""
+def get_executor_number(): # Получить номер текущего исполнителя
     if global_state.now_try == '/' or global_state.now_try == '': return 0
     parts = global_state.now_try.strip('/').split('/')
     last_part = parts[-1]
@@ -2167,8 +1588,7 @@ def get_executor_number():
         except ValueError: return 0
     return 0
 
-def get_level():
-    """Получить номер текущего уровня"""
+def get_level(): # Получить номер текущего уровня
     if global_state.now_try == '/' or global_state.now_try == '': return 1
     parts = global_state.now_try.strip('/').split('/')
     last_part = parts[-1]
@@ -2181,25 +1601,18 @@ def get_level():
         except ValueError: return 1
     return 1
 
-def get_operator_id():
-    """ID оператора (без номера исполнителя)"""
+def get_operator_id(): # ID оператора (без номера исполнителя)
     if global_state.now_try == '/' or global_state.now_try == '': return '/'
     parts = global_state.now_try.strip('/').split('/')
-    # Преобразуем каждый уровень в формат без исполнителя
-    clean_parts = []
+    clean_parts = [] # Преобразуем каждый уровень в формат без исполнителя
     for part in parts:
-        if ':' in part:
-            level, _ = part.split(':')
-            clean_parts.append(level)
+        if ':' in part: level, _ = part.split(':'); clean_parts.append(level)
         else: clean_parts.append(part)
     return '/' + '/'.join(clean_parts)
 
 def get_executor_id():
-    """Полный ID исполнителя"""
-    if get_executor_number() == 0: return None  # Исполнитель не создан
+    if get_executor_number() == 0: return None
     return global_state.now_try
-
-# cross_gpt.py (фрагмент функции save_emb_dialog с изменениями)
 
 def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     """
@@ -2208,17 +1621,10 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     overwrite: True - перезаписать существующие записи, False - добавить новые
     """
     let_log(f"\n{'='*60}")
-    
     let_log(f"Current ID: {global_state.now_try}")
-    def _parse_dialog_to_messages(t):
-        """Парсит текст диалога на отдельные сообщения."""
+    def _parse_dialog_to_messages(t): # Парсит текст диалога на отдельные сообщения
         messages_list = []
-        # Используем глобальные переменные из cross_gpt.py
-        roles_to_find = [
-            ('operator', operator_role_text),
-            ('worker', worker_role_text),
-            ('function', func_role_text)
-        ]
+        roles_to_find = [('operator', operator_role_text), ('worker', worker_role_text), ('function', func_role_text)]
         positions = []
         for role_type, role_marker in roles_to_find:
             start_idx = 0
@@ -2234,9 +1640,7 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
             end_pos = len(t)
             for j in range(i + 1, len(positions)):
                 next_pos, _, _ = positions[j]
-                if next_pos > start_pos:
-                    end_pos = next_pos
-                    break
+                if next_pos > start_pos: end_pos = next_pos; break
             message_full_text = t[start_pos:end_pos]
             messages_list.append({'role': role_type, 'content': message_full_text})
         let_log(f"Распарсено {len(messages_list)} сообщений")
@@ -2244,12 +1648,9 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     def _get_content_without_role(message_full_text):
         """Извлекает контент, удаляя маркер роли."""
         for role_marker in [operator_role_text, worker_role_text, func_role_text]:
-            if message_full_text.startswith(role_marker):
-                content = message_full_text.replace(role_marker, '', 1)
-                return content 
+            if message_full_text.startswith(role_marker): content = message_full_text.replace(role_marker, '', 1); return content 
         return message_full_text 
-    def _create_numbered_messages_text(msgs):
-        """Создает нумерованный текст БЕЗ ролей для LLM."""
+    def _create_numbered_messages_text(msgs): # Создает нумерованный текст БЕЗ ролей для LLM
         numbered_text = ""
         for i, msg in enumerate(msgs, 1):
             content_only = _get_content_without_role(msg['content'])
@@ -2257,11 +1658,7 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
             else: message_preview = content_only
             numbered_text += f"\n{i}. {message_preview}"
         return numbered_text
-    def _create_grouping_prompt(numbered_messages_text, total_messages): 
-        # больше не используется напрямую, оставлено для совместимости, если где-то ещё вызывается
-        return grouping_prompt_1 + numbered_messages_text + grouping_prompt_2
-    def _parse_ranges_from_response(response):
-        """Парсит ответ модели в список диапазонов."""
+    def _parse_ranges_from_response(response): # Парсит ответ модели в список диапазонов.
         cleaned = re.sub(r'[^\d,\-]', '', response)
         ranges = []
         for part in cleaned.split(','):
@@ -2284,22 +1681,12 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
         for start, end in ranges:
             if start < 1 or end > len(msgs) or start > end: continue
             cleaned_messages = []
-            for i in range(start - 1, end):
-                cleaned_messages.append(_get_content_without_role(msgs[i]['content']))
+            for i in range(start - 1, end): cleaned_messages.append(_get_content_without_role(msgs[i]['content']))
             group_text = "\n".join(cleaned_messages)
-            groups.append({
-                'global_start': offset + start,
-                'global_end': offset + end,
-                'text': group_text
-            })
+            groups.append({'global_start': offset + start, 'global_end': offset + end, 'text': group_text})
         # Fallback: если LLM не сгруппировал все сообщения, то одиночные сообщения тоже сохраняем
         if not groups:
-            for i, msg in enumerate(msgs, 1):
-                groups.append({
-                    'global_start': offset + i,
-                    'global_end': offset + i,
-                    'text': _get_content_without_role(msg['content'])
-                })
+            for i, msg in enumerate(msgs, 1): groups.append({'global_start': offset + i, 'global_end': offset + i, 'text': _get_content_without_role(msg['content'])})
         return groups
     def _calculate_batch_size(msgs, start_index):
         """Рассчитывает оптимальный размер батча."""
@@ -2339,73 +1726,31 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
         minus_convs = 0
         if global_state.conversations % 2 == 0: minus_convs = 1
         _, history_to_save = get_chat_context(global_state.conversations - minus_convs)
-        if not result and global_state.need_owerwrite_operator:
-            need_ov = True
-            global_state.need_owerwrite_operator = False
+        if not result and global_state.need_owerwrite_operator: need_ov = True; global_state.need_owerwrite_operator = False
     elif dialog_type == 'executor':
         executor_id = get_executor_id()
-        if not executor_id:
-            let_log("Executor not created yet, skipping save")
-            return
+        if not executor_id: let_log("Executor not created yet, skipping save"); return
         doc_id = executor_id
         let_log(f"Executor ID: {doc_id}")
         _, history_to_save = get_chat_context(global_state.conversations)
-        if global_state.need_owerwrite_executor:
-            need_ov = True
-            global_state.need_owerwrite_executor = False
+        if global_state.need_owerwrite_executor: need_ov = True; global_state.need_owerwrite_executor = False
     # --- 2. Если нужно перезаписать - удаляем старые записи ---
     let_log(f"SAVE_EMB_DIALOG: tag={tag}, type={dialog_type}, need_ov={need_ov}")
     if need_ov:
         let_log('\nПЕРЕЗАПИСЬ ЧАТА\n')
-        existing_ids = coll_exec(
-            action="query",
-            coll_name="milana_collection",
-            query_embeddings=[[]],
-            filters={
-                "doc_id": doc_id,
-                "dialog_type": dialog_type,
-                "result": result
-            },
-            fetch="ids",
-            n_results=100,
-            flatten=True
-        )
-        if existing_ids:
-            coll_exec(
-                action="delete",
-                coll_name="milana_collection",
-                ids=existing_ids
-            )
-            let_log(f"Deleted {len(existing_ids)} old records for {doc_id}")
+        existing_ids = coll_exec(action="query", coll_name="milana_collection", query_embeddings=[[]], filters={"doc_id": doc_id, "dialog_type": dialog_type, "result": result}, fetch="ids", n_results=100, flatten=True)
+        if existing_ids: coll_exec(action="delete", coll_name="milana_collection", ids=existing_ids); let_log(f"Deleted {len(existing_ids)} old records for {doc_id}")
     else: let_log('\nНЕТ ПЕРЕЗАПИСИ ЧАТА\n')
     if result:
-        if result_text == '':
-            let_log("Текст результата пустой")
-            return
+        if result_text == '': let_log("Текст результата пустой"); return
         let_log("Сохранение результата отдельно")
         set_common_save_id()
-        metadata = {
-            "doc_id": doc_id,
-            "dialog_type": dialog_type,
-            "done": tag,
-            "result": result,
-            "hierarchy": global_state.now_try,
-            "timestamp": time.time()
-        }
-        coll_exec(
-            action="add",
-            coll_name="milana_collection",
-            ids=[get_common_save_id()],
-            embeddings=[get_embs(result_text)],
-            metadatas=[metadata],
-            documents=[result_text]
-        )
+        metadata = {"doc_id": doc_id, "dialog_type": dialog_type, "done": tag, "result": result, "hierarchy": global_state.now_try, "timestamp": time.time()}
+        coll_exec(action="add", coll_name="milana_collection", ids=[get_common_save_id()], embeddings=[get_embs(result_text)], metadatas=[metadata], documents=[result_text])
         return
     # --- 4. Парсинг и группировка диалога ---
     messages = _parse_dialog_to_messages(history_to_save)
-    if not messages:
-        let_log("Не удалось распарсить сообщения.")
-        return
+    if not messages: let_log("Не удалось распарсить сообщения."); return
     all_groups = []
     total_messages = len(messages)
     current_index = 0
@@ -2414,54 +1759,29 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     numbered_text_all = _create_numbered_messages_text(messages)
     system_prompt_all = grouping_prompt_1 + grouping_prompt_2
     estimated_tokens = (len(system_prompt_all) + len(numbered_text_all)) * get_text_tokens_coefficient()
-    if estimated_tokens <= (get_token_limit() - 1000):
-        let_log("Все сообщения помещаются в один запрос")
-        all_groups = _process_messages_batch(messages, 0)
+    if estimated_tokens <= (get_token_limit() - 1000): let_log("Все сообщения помещаются в один запрос"); all_groups = _process_messages_batch(messages, 0)
     else:
         let_log(f"Сообщения не помещаются (оценка: {estimated_tokens:.0f} токенов), разбиваем на батчи")
         batch_number = 0
         while current_index < total_messages:
             batch_size = _calculate_batch_size(messages, current_index)
             batch_messages = messages[current_index:current_index + batch_size]
-            chunks_info.append({
-                'batch_number': batch_number + 1, 
-                'start_idx': current_index + 1, 
-                'end_idx': min(current_index + batch_size, total_messages)
-            })
+            chunks_info.append({'batch_number': batch_number + 1, 'start_idx': current_index + 1, 'end_idx': min(current_index + batch_size, total_messages)})
             let_log(f"\n--- Обработка батча {batch_number + 1} (сообщения {current_index + 1}-{current_index + batch_size}) ---")
             batch_groups = _process_messages_batch(batch_messages, current_index)
             all_groups.extend(batch_groups)
             current_index += batch_size
             batch_number += 1
-        if chunks_info:
-            let_log(f"--- ИНФОРМАЦИЯ О ЧАНКАХ (для LLM) ---\n" + 
-                   "\n".join([f"Чанк {c['batch_number']}: сообщения {c['start_idx']}-{c['end_idx']}" 
-                             for c in chunks_info]))
+        if chunks_info: let_log(f"--- ИНФОРМАЦИЯ О ЧАНКАХ (для LLM) ---\n" + "\n".join([f"Чанк {c['batch_number']}: сообщения {c['start_idx']}-{c['end_idx']}" for c in chunks_info]))
     # --- 5. Сохранение всех групп ---
     let_log(f"\n--- Сохранение {len(all_groups)} групп для {dialog_type} ---")
     for i, group in enumerate(all_groups):
         set_common_save_id()
-        metadata = {
-            "doc_id": doc_id,
-            "dialog_type": dialog_type,
-            "done": tag,
-            "result": result,
-            "group_index": i,
-            "total_groups": len(all_groups),
-            "hierarchy": global_state.now_try,
-            "timestamp": time.time()
-        }
+        metadata = {"doc_id": doc_id, "dialog_type": dialog_type, "done": tag, "result": result, "group_index": i, "total_groups": len(all_groups), "hierarchy": global_state.now_try, "timestamp": time.time()}
         let_log(f"\n### ГРУППА {i+1} (Сохраняемый документ {get_common_save_id()}) ###")
         let_log(f"Диапазон: {group['global_start']}-{group['global_end']}")
         let_log(f"СОХРАНЯЕМЫЙ ТЕКСТ (первые 500 символов):\n---START---\n{group['text'][:500]}...\n---END---")
-        coll_exec(
-            action="add", 
-            coll_name="milana_collection", 
-            ids=[get_common_save_id()],
-            embeddings=[get_embs(group['text'])], 
-            metadatas=[metadata], 
-            documents=[group['text']]
-        )
+        coll_exec(action="add", coll_name="milana_collection", ids=[get_common_save_id()], embeddings=[get_embs(group['text'])], metadatas=[metadata], documents=[group['text']])
     let_log(f"Всего сохранено {len(all_groups)} групп сообщений для {doc_id}")
     let_log(f"{'='*60}")
 
@@ -2527,38 +1847,23 @@ def critic(task: str, result: str) -> int | str:
         let_log(f"Достигнут максимум реакций ({now_critic_reactions}), пропускаем критика")
         del global_state.critic_reactions[num_critic_reaction]
         return 1
-
     # --- Этап 1: Декомпозиция задачи на критерии ---
-    try:
-        system_prompt1 = prompt_decomposition_1 + "\n" + prompt_decomposition_2
-        criteria_text = ask_model(task, system_prompt=system_prompt1)
-    except:
-        task_cut = text_cutter(task)
-        criteria_text = ask_model(task_cut, system_prompt=system_prompt1)
-    if not criteria_text or not criteria_text.strip():
-        return 1
-
+    try: system_prompt1 = prompt_decomposition_1 + "\n" + prompt_decomposition_2; criteria_text = ask_model(task, system_prompt=system_prompt1)
+    except: task_cut = text_cutter(task); criteria_text = ask_model(task_cut, system_prompt=system_prompt1)
+    if not criteria_text or not criteria_text.strip(): return 1
     # --- Этап 2: Оценка по критериям ---
     user_prompt2 = f"{prompt_evaluation_2}\n{task}\n{prompt_evaluation_3}\n{result}\n{prompt_evaluation_4}\n{criteria_text}"
     system_prompt2 = prompt_evaluation_1 + "\n" + prompt_evaluation_5
-    try:
-        evaluation_text = ask_model(user_prompt2, system_prompt=system_prompt2)
-    except:
-        user_prompt2_cut = text_cutter(user_prompt2)
-        evaluation_text = ask_model(user_prompt2_cut, system_prompt=system_prompt2)
-    if not evaluation_text or not evaluation_text.strip():
-        return 1
-
+    try: evaluation_text = ask_model(user_prompt2, system_prompt=system_prompt2)
+    except: user_prompt2_cut = text_cutter(user_prompt2); evaluation_text = ask_model(user_prompt2_cut, system_prompt=system_prompt2)
+    if not evaluation_text or not evaluation_text.strip(): return 1
     # --- Этап 2.5: Обращение к Библиотекарю (закомментировано) ---
     """
     # Формируем запрос к модели для генерации вопросов к библиотекарю
     system_prompt_librarian = prompt_librarian_questions_1 + "\n" + prompt_librarian_questions_4
     user_prompt_librarian = f"{prompt_librarian_questions_2}\n{task}\n{prompt_librarian_questions_3}\n{result}\nEvaluation report:\n{evaluation_text}"
-    try:
-        questions_text = ask_model(user_prompt_librarian, system_prompt=system_prompt_librarian)
-    except:
-        questions_text = ask_model(text_cutter(user_prompt_librarian), system_prompt=system_prompt_librarian)
-
+    try: questions_text = ask_model(user_prompt_librarian, system_prompt=system_prompt_librarian)
+    except: questions_text = ask_model(text_cutter(user_prompt_librarian), system_prompt=system_prompt_librarian)
     librarian_context = ""
     if questions_text and questions_text.strip():
         print("Критик -> Библиотекарь: Запрос на проверку информации...")
@@ -2566,18 +1871,13 @@ def critic(task: str, result: str) -> int | str:
         if librarian_answers and librarian_answers.strip():
             librarian_context = f"{prompt_decision_librarian_context}{librarian_answers}\n"
     """
-
     # --- Этап 3 и 4: Принятие решения ---
     user_prompt3 = f"{prompt_decision_2}\n{task}\n{prompt_decision_3}\n{result}\n{prompt_decision_4}\n{evaluation_text}"
     # Если блок выше раскомментирован, можно добавить librarian_context:
     # user_prompt3 += f"\n{librarian_context}"
     system_prompt3 = prompt_decision_1 + "\n" + prompt_decision_5
-    try:
-        decision_response = ask_model(user_prompt3, system_prompt=system_prompt3)
-    except:
-        user_prompt3_cut = text_cutter(user_prompt3)
-        decision_response = ask_model(user_prompt3_cut, system_prompt=system_prompt3)
-
+    try: decision_response = ask_model(user_prompt3, system_prompt=system_prompt3)
+    except: user_prompt3_cut = text_cutter(user_prompt3); decision_response = ask_model(user_prompt3_cut, system_prompt=system_prompt3)
     if marker_decision_revise in decision_response:
         try:
             start_index = decision_response.index(marker_new_task) + len(marker_new_task)
@@ -2600,7 +1900,7 @@ def critic(task: str, result: str) -> int | str:
         print("Критик: Не уверен в результате, требуется проверка человеком.")
         del global_state.critic_reactions[num_critic_reaction]
         return 2
-    return 1  # Если вердикт не распознан или ответ пустой
+    return 1 # Если вердикт не распознан или ответ пустой
 
 def find_all_commands(text: str, available_commands: list[str], cutoff: float = 0.75) -> list[str]:
     """
@@ -2613,7 +1913,6 @@ def find_all_commands(text: str, available_commands: list[str], cutoff: float = 
         cutoff (float): Порог схожести для difflib (от 0 до 1). Чем выше, тем строже соответствие.
     Returns: list[str]: Список уникальных имен команд, которые были найдены в тексте.
     """
-    # Используем множество (set) для автоматического сбора только уникальных значений.
     found_commands_set = set()
     # Регулярное выражение для поиска "слов", которые могут быть именами команд
     # (буквы, цифры и знак подчеркивания).
@@ -2622,17 +1921,8 @@ def find_all_commands(text: str, available_commands: list[str], cutoff: float = 
     for match_obj in word_pattern.finditer(text):
         word_from_text = match_obj.group(0)
         # Используем difflib, чтобы найти наилучшее совпадение для этого конкретного слова.
-        close_matches = difflib.get_close_matches(
-            word_from_text,
-            available_commands,
-            n=1,  # Ищем только одно, самое лучшее, совпадение для данного слова
-            cutoff=cutoff)
-        if close_matches:
-            # Если для слова найдено достаточно близкое совпадение,
-            # добавляем соответствующую команду из списка `available_commands` в наше множество.
-            matched_command = close_matches[0]
-            found_commands_set.add(matched_command)
-    # Преобразуем множество обратно в список перед возвратом.
+        close_matches = difflib.get_close_matches(word_from_text, available_commands, n=1, cutoff=cutoff)
+        if close_matches: matched_command = close_matches[0]; found_commands_set.add(matched_command)
     return list(found_commands_set)
 
 def _find_command_markers(text, commands_dict, return_all=False, start_limit=None):
@@ -2643,30 +1933,21 @@ def _find_command_markers(text, commands_dict, return_all=False, start_limit=Non
         если return_all=True: список словарей с ключами 'key', 'content', 'start', 'end', 'full_match'.
     Параметр start_limit ограничивает поиск маркеров, начинающихся не дальше этой позиции.
     """
-    if not text or not commands_dict:
-        return [] if return_all else None
-
+    if not text or not commands_dict: return [] if return_all else None
     exclamation_chars = {'!', '¡'}
     pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
     markers = []
-
     for match in re.finditer(pattern, text):
         start = match.start()
-        if start_limit is not None and start > start_limit:
-            continue
-
+        if start_limit is not None and start > start_limit: continue
         raw_name = match.group(1).strip()
         # Нормализуем имя: заменяем пробелы на подчёркивания, приводим к нижнему регистру
         normalized_name = re.sub(r'\s+', '_', raw_name).lower()
-
         # Поиск соответствия в commands_dict
         found_key = None
         # 1. Точное совпадение по нормализованному имени
         for key in commands_dict:
-            if normalized_name == key.lower():
-                found_key = key
-                break
-
+            if normalized_name == key.lower(): found_key = key; break
         # 2. Нечёткое сравнение, если точного нет
         if not found_key:
             best_match = None
@@ -2674,53 +1955,27 @@ def _find_command_markers(text, commands_dict, return_all=False, start_limit=Non
             threshold = 0.8
             for key in commands_dict:
                 key_lower = key.lower()
-                if abs(len(normalized_name) - len(key_lower)) > 2:
-                    continue
+                if abs(len(normalized_name) - len(key_lower)) > 2: continue
                 ratio = difflib.SequenceMatcher(None, normalized_name, key_lower).ratio()
-                if ratio > best_ratio and ratio >= threshold:
-                    best_ratio = ratio
-                    best_match = key
-            if best_match:
-                found_key = best_match
-
-        if not found_key:
-            continue
-
+                if ratio > best_ratio and ratio >= threshold: best_ratio = ratio; best_match = key
+            if best_match: found_key = best_match
+        if not found_key: continue
         # Определяем конец маркера (позиция после закрывающих символов)
         end = match.end()
         # Содержимое после маркера (до следующего маркера или конца текста)
         next_match = re.search(pattern, text[end:])
-        if next_match:
-            content_end = end + next_match.start()
-        else:
-            content_end = len(text)
+        if next_match: content_end = end + next_match.start()
+        else: content_end = len(text)
         content = text[end:content_end].strip()
-
-        marker_info = {
-            'key': found_key,
-            'content': content,
-            'start': start,
-            'end': end,
-            'full_match': text[start:end]
-        }
-
-        if not return_all:
-            return (found_key, content, start, end)
+        marker_info = {'key': found_key, 'content': content, 'start': start, 'end': end, 'full_match': text[start:end]}
+        if not return_all: return (found_key, content, start, end)
         markers.append(marker_info)
-
-    if return_all:
-        return markers
+    if return_all: return markers
     return None
 
-def find_and_match_command(text, commands_dict):
-    """
-    Ищет в тексте первый маркер команды, начинающийся в первых 5 символах.
-    Возвращает (найденный_ключ, содержимое_после_маркера) или None.
-    """
+def find_and_match_command(text, commands_dict): # Ищет в тексте первый маркер команды, начинающийся в первых 5 символах. Возвращает (найденный_ключ, содержимое_после_маркера) или None.
     result = _find_command_markers(text, commands_dict, return_all=False, start_limit=5)
-    if result:
-        key, content, _, _ = result
-        return (key, content)
+    if result: key, content, _, _ = result;  return (key, content)
     return None
 
 def _find_formatting_ranges(text):
@@ -2731,14 +1986,11 @@ def _find_formatting_ranges(text):
     Возвращает список кортежей (start, end) для всех таких участков.
     """
     n = len(text)
-    # Стек для отслеживания открытых маркеров: каждый элемент (позиция_начала, строка_маркера)
     stack = []
     ranges = []
     i = 0
-
     # Множество символов, которые могут быть частью слова (буквы, цифры, подчёркивание)
     word_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
-
     # Все возможные маркеры с их длиной и признаком, нужно ли проверять границы слов
     marker_defs = [
         ('**', 2, False),  # жирный — два символа, не бывает внутри слов
@@ -2748,13 +2000,9 @@ def _find_formatting_ranges(text):
         ('_', 1, True),    # подчёркивание — аналогично
         ('`', 1, False),   # код — внутри слов обычно не используется как маркер, но бывает; оставим без проверки
     ]
-
     while i < n:
         # Экранирование: пропускаем следующий символ
-        if text[i] == '\\' and i + 1 < n:
-            i += 2
-            continue
-
+        if text[i] == '\\' and i + 1 < n: i += 2; continue
         matched = False
         for mark, length, check_word in marker_defs:
             if i + length <= n and text[i:i+length] == mark:
@@ -2767,24 +2015,17 @@ def _find_formatting_ranges(text):
                         i += 1
                         matched = True
                         break
-
                 # Решаем, открывающий или закрывающий
                 if stack and stack[-1][1] == mark:
                     # Закрываем последний такой же
                     start_pos, _ = stack.pop()
                     ranges.append((start_pos, i + length))
-                else:
-                    # Открываем новый
-                    stack.append((i, mark))
+                else: stack.append((i, mark)) # Открываем новый
                 i += length
                 matched = True
                 break
-
-        if not matched:
-            i += 1
-
+        if not matched: i += 1
     # Оставляем только корректно закрытые пары; незакрытые игнорируем
-
     # Объединяем пересекающиеся интервалы
     if ranges:
         ranges.sort()
@@ -2808,12 +2049,7 @@ def _find_any_markers(text):
     exclamation_chars = {'!', '¡'}
     pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
     markers = []
-    for match in re.finditer(pattern, text):
-        markers.append({
-            'start': match.start(),
-            'end': match.end(),
-            'raw_name': match.group(1).strip()
-        })
+    for match in re.finditer(pattern, text): markers.append({'start': match.start(), 'end': match.end(), 'raw_name': match.group(1).strip()})
     return markers
 
 def analyze_protocol(text):
@@ -2823,67 +2059,38 @@ def analyze_protocol(text):
         None - нет команд (можно завершить цикл и отправить сообщение пользователю)
         str - предупреждение о нарушении (нужно отправить модели и повторить цикл)
     """
-    if global_state.stop_agent:
-        return None
-
+    if global_state.stop_agent: return None
     sid = global_state.now_agent_id
     commands_dict = global_state.tools_commands_dict.get(sid, {})
-
     raw_markers = _find_any_markers(text)
-    if not raw_markers:
-        return None
-
+    if not raw_markers: return None
     violations = []
-
-    # множественность
-    if len(raw_markers) > 1:
-        violations.append("multiple_commands")
-
-    # позиция первого маркера (если не native)
-    if not native_func_call:
+    if len(raw_markers) > 1: violations.append(warn_command_text_2) # множественность
+    if not native_func_call: # позиция первого маркера (если не native)
         first_marker = raw_markers[0]
-        if first_marker['start'] > 5:
-            violations.append("not_at_start")
-
+        if first_marker['start'] > 5: violations.append(warn_command_text_3)
     # markdown-блоки (```)
     markdown_ranges = []
     md_positions = [m.start() for m in re.finditer(r'```', text)]
     for i in range(0, len(md_positions), 2):
-        if i + 1 < len(md_positions):
-            markdown_ranges.append((md_positions[i], md_positions[i+1] + 3))
-
+        if i + 1 < len(md_positions): markdown_ranges.append((md_positions[i], md_positions[i+1] + 3))
     # json-блоки (грубо)
     json_ranges = []
     stack = []
     for i, ch in enumerate(text):
-        if ch == '{':
-            stack.append(i)
+        if ch == '{': stack.append(i)
         elif ch == '}':
-            if stack:
-                start = stack.pop()
-                json_ranges.append((start, i + 1))
-
+            if stack: start = stack.pop(); json_ranges.append((start, i + 1))
     # инлайн-форматирование
     formatting_ranges = _find_formatting_ranges(text)
-
     for marker in raw_markers:
         pos = marker['start']
-        # проверка попадания в markdown-блоки
-        for start, end in markdown_ranges:
-            if start <= pos <= end:
-                violations.append("inside_markdown")
-                break
-        # проверка попадания в json-блоки
-        for start, end in json_ranges:
-            if start <= pos <= end:
-                violations.append("inside_json")
-                break
-        # проверка попадания в инлайн-форматирование
-        for start, end in formatting_ranges:
-            if start <= pos <= end:
-                violations.append("inside_formatting")
-                break
-
+        for start, end in markdown_ranges: # проверка попадания в markdown-блоки
+            if start <= pos <= end: violations.append(warn_command_text_4); break
+        for start, end in json_ranges: # проверка попадания в json-блоки
+            if start <= pos <= end: violations.append(warn_command_text_5); break
+        for start, end in formatting_ranges: # проверка попадания в инлайн-форматирование
+            if start <= pos <= end: violations.append(warn_command_text_6); break
     # проверка известности команды
     unknown_command = False
     for marker in raw_markers:
@@ -2892,9 +2099,7 @@ def analyze_protocol(text):
         found = False
         # точное совпадение
         for key in commands_dict:
-            if normalized_name == key.lower():
-                found = True
-                break
+            if normalized_name == key.lower(): found = True; break
         # нечёткое сравнение, если точного нет
         if not found and commands_dict:
             best_match = None
@@ -2902,41 +2107,17 @@ def analyze_protocol(text):
             threshold = 0.8
             for key in commands_dict:
                 key_lower = key.lower()
-                if abs(len(normalized_name) - len(key_lower)) > 2:
-                    continue
+                if abs(len(normalized_name) - len(key_lower)) > 2: continue
                 ratio = difflib.SequenceMatcher(None, normalized_name, key_lower).ratio()
-                if ratio > best_ratio and ratio >= threshold:
-                    best_ratio = ratio
-                    best_match = key
-            if best_match:
-                found = True
-        if not found:
-            unknown_command = True
-            break
-
-    if unknown_command:
-        violations.append("wrong_command")
-
-    # если нарушений нет, команды корректны, но мы не будем их выполнять (т.к. find_and_match_command не сработал)
-    if not violations:
-        return None
-
-    # формируем сообщение
-    warning_lines = [warn_command_text_1]
-    if "multiple_commands" in violations:
-        warning_lines.append(warn_command_text_2)
-    if "not_at_start" in violations:
-        warning_lines.append(warn_command_text_3)
-    if "inside_markdown" in violations:
-        warning_lines.append(warn_command_text_4)
-    if "inside_json" in violations:
-        warning_lines.append(warn_command_text_5)
-    if "inside_formatting" in violations:
-        warning_lines.append(warn_command_text_7)   # новая переменная
-    if "wrong_command" in violations:
-        warning_lines.append(wrong_command)
-
-    return " ".join(warning_lines)
+                if ratio > best_ratio and ratio >= threshold: best_ratio = ratio; best_match = key
+            if best_match: found = True
+        if not found: unknown_command = True; break
+    if unknown_command: violations.append(wrong_command)
+    if not violations: return None # если нарушений нет, команды корректны, но мы не будем их выполнять (т.к. find_and_match_command не сработал)
+    violations = list(dict.fromkeys(violations)) # TODO: переработай циклы
+    violations.insert(0, warn_command_text_1)
+    violations.append(warn_command_text_7)
+    return " ".join(violations) # формируем сообщение
 
 def tools_selector(text, sid):
     """
@@ -2952,7 +2133,6 @@ def tools_selector(text, sid):
     try:
         if isinstance(cached[1][1], str): return cached[1][1]
     except: pass
-
     #is_warn = analyze_protocol(text) тут возврат не делаем потому что это только сильнее путает модель как оказалось
     # 2) получить словарь команд для сессии
     try: now_commands = global_state.tools_commands_dict.get(sid, {})
@@ -2977,28 +2157,22 @@ def tools_selector(text, sid):
         return None
     found_key, content = match
     let_log(f"[TOOLS_SELECTOR] найден ключ: {found_key}, контент длиной: {len(content) if content else 0}")
-    # 5) определить, системная ли команда
     is_system = False
-    try:
+    try: # 5) определить, системная ли команда
         for sk in sys_keys:
-            if found_key in sk or sk in found_key:
-                is_system = True
-                break
+            if found_key in sk or sk in found_key: is_system = True; break
         if not is_system and sys_keys:
-            close = difflib.get_close_matches(found_key, sys_keys, n=1, cutoff=0.7)
-            if close: is_system = True
+            if difflib.get_close_matches(found_key, sys_keys, n=1, cutoff=0.7): is_system = True
     except Exception: is_system = False
     let_log(f"[TOOLS_SELECTOR] команда системная? {is_system}")
     # 6) Обработка кэша в зависимости от типа команды
-    if not is_system:
-        # ТОЛЬКО для несистемных команд: проверяем кэш
+    if not is_system: # ТОЛЬКО для несистемных команд: проверяем кэш
         if cached != [False]:
             if cached[1] != ["SYSTEM", False]:
                 let_log("[TOOLS_SELECTOR] Возвращаем не-системный результат из кэша")
                 let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
                 return cached[1]
-    else:
-        # Для системных команд: проверяем, не выполняем ли мы её уже (рекурсия)
+    else: # Для системных команд: проверяем, не выполняем ли мы её уже (рекурсия)
         if cached != [False]:
             if cached[1] != ["SYSTEM", False]: raise RuntimeError('СБОЙ КЭШЕРА В ТУЛЗ СЕЛЕКТОРЕ')
         # Помечаем, что начинаем выполнение системной команды
@@ -3041,8 +2215,7 @@ def tools_selector(text, sid):
     except Exception as e: result = "__TOOL_ERROR__: " + str(e)
     if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
     let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
-    # 10) кэшировать результат если не системная команда
-    try:
+    try: # 10) кэшировать результат если не системная команда
         if not is_system:
             let_log("[TOOLS_SELECTOR] Кэшируем результат (не системная команда)")
             write_cache(result)
@@ -3051,7 +2224,6 @@ def tools_selector(text, sid):
     let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
     return result
 
-# ВЕРСИЯ ДЛЯ СТАНДАРТНОГО РЕЖИМА
 def _standard_agent_func(text, agent_number):
     # надо сокращать ещё когда превышен не лимит а какое-то количество ибо модель может начать писать бред
     # нужно резать в первую очередь ответы инструментов ибо сторонние разработчики могут перегрузить модель
@@ -3077,13 +2249,12 @@ def _standard_agent_func(text, agent_number):
             talk_prompt = ask_model(full_prompt)
         except Exception as e:
             let_log(f"Ошибка в _standard_agent_func: {e}")
-            # Ваша логика text_cutter, если нужна
             history = start_dialog_history + text_cutter(history) + last_messages_marker
             full_prompt = prompt + history + msg_from + talk_prompt + you
             talk_prompt = ask_model(full_prompt)
         talk_prompt = remove_commands_roles(talk_prompt)
         # Сначала сообщение от предыдущего, потом ответ от текущего.
-        update_history(sid, last_talk_prompt, msg_from)
+        update_history(sid, last_talk_prompt, msg_from) # TODO: он историю резанную не сохраняет
         update_history(sid, talk_prompt, you)
         answer = tools_selector(talk_prompt, sid)
         if answer:
@@ -3092,8 +2263,6 @@ def _standard_agent_func(text, agent_number):
         else: break
     global_state.stop_agent = False
     return talk_prompt
-
-# ВЕРСИЯ ДЛЯ RAG РЕЖИМА
 
 def _rag_agent_func(text, agent_number):
     global_state.last_agent = agent_number
@@ -3117,10 +2286,7 @@ def _rag_agent_func(text, agent_number):
         # 2. Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
         # 3. Вызываем модель, добавив роль текущего агента для корректной генерации
-        try: talk_prompt = ask_model(final_prompt_for_model + you)
-        except Exception as e:
-            let_log(f"Ошибка в _rag_agent_func: {e}")
-            # Здесь RAG уже должен был обработать длинный контекст
+        talk_prompt = ask_model(final_prompt_for_model + you)
         talk_prompt = remove_commands_roles(talk_prompt)
         # 4. Сохраняем ответ самой модели в RAG-историю
         update_history(sid, talk_prompt, you)
@@ -3133,10 +2299,9 @@ def _rag_agent_func(text, agent_number):
     global_state.stop_agent = False
     return talk_prompt
 
-def get_user_feedback_and_update_task(current_task, dialog_result):
+def get_user_feedback(current_task, dialog_result):
     while True: # очищаем очередь ввода
         ims = get_input_message()
-        print(ims)
         if ims == None: break # TODO:
     send_output_message(text=dialog_result, command='end')
     user_message = get_input_message(wait=True)
@@ -3146,8 +2311,18 @@ def get_user_feedback_and_update_task(current_task, dialog_result):
         upload_user_data(user_message['attachments'])
         send_output_message(text=end_load_attachments_text)
     return updated_task
-'''
+
+def get_user_or_critic_feedback(rmt):
+    if global_state.critic_wants_retry:
+        rmt = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
+        let_log(f"[WORKER] Updating really_main_task after critic retry: {rmt[:100]}")
+    else:
+        rmt = get_user_feedback(rmt, global_state.dialog_result)
+        let_log(f"[WORKER] Updating really_main_task after user feedback: {really_main_task[:100]}")
+    return rmt
+
 def worker(really_main_task):
+    let_log(f"[WORKER] START: really_main_task={really_main_task[:100]}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
     while True:
         global_state.retries = []
         global_state.conversations = 0
@@ -3156,213 +2331,105 @@ def worker(really_main_task):
         global_state.critic_wants_retry = False
         global_state.main_now_task = really_main_task
         global_state.gigo_web_search_allowed = False
+        let_log(f"[WORKER] Before start_dialog: main_now_task={global_state.main_now_task[:100]}, dialog_state={global_state.dialog_state}")
         talk_prompt = start_dialog(global_state.main_now_task)
+        let_log(f"[WORKER] After start_dialog: talk_prompt={talk_prompt[:100] if talk_prompt else 'None'}, dialog_state={global_state.dialog_state}")
         global_state.gigo_web_search_allowed = True
         if not global_state.dialog_state:
-            let_log('worker диалог завершился не начавшись')
-            if global_state.critic_wants_retry: really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-            else: really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
+            let_log(f"[WORKER] Dialog finished without starting")
+            really_main_task = get_user_or_critic_feedback(really_main_task)
             continue
         while True:
+            let_log(f"[WORKER] Main loop start. dialog_state={global_state.dialog_state}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
             if global_state.dialog_state:
+                let_log(f"[WORKER] Calling agent_func(0) with talk_prompt={talk_prompt[:100]}")
                 talk_prompt = agent_func(talk_prompt, 0) # ivan
+                let_log(f"[WORKER] agent_func(0) returned talk_prompt={talk_prompt[:100]}, task_delegated={global_state.task_delegated}")
                 if global_state.task_delegated:
-                    global_state.task_delegated = False # а вот тут чезанах
-                    continue
-            if global_state.dialog_state: talk_prompt = agent_func(talk_prompt, 1) # milana
-            if not global_state.dialog_state:
-                print(global_state.tools_commands_dict)
-                let_log(global_state.dialog_result)
-                let_log(global_state.conversations)
-                # нужно еще задачу в хрому записать
-                # TODO: вынеси эти 2 куска кода в функцию
-                if global_state.conversations <= 0:
-                    if global_state.critic_wants_retry: really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                    else: really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
-                    break
-                else:
-                    global_state.dialog_state = True
-                    if global_state.critic_wants_retry:
-                        global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                        talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
-                    else: talk_prompt = global_state.dialog_result
-'''
-def worker(really_main_task):
-    let_log1(f"[WORKER] START: really_main_task={really_main_task[:100]}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
-    while True:
-        global_state.retries = []
-        global_state.conversations = 0
-        global_state.tools_commands_dict = {}
-        global_state.dialog_state = True
-        global_state.critic_wants_retry = False
-        global_state.main_now_task = really_main_task
-        global_state.gigo_web_search_allowed = False
-        let_log1(f"[WORKER] Before start_dialog: main_now_task={global_state.main_now_task[:100]}, dialog_state={global_state.dialog_state}")
-        talk_prompt = start_dialog(global_state.main_now_task)
-        let_log1(f"[WORKER] After start_dialog: talk_prompt={talk_prompt[:100] if talk_prompt else 'None'}, dialog_state={global_state.dialog_state}")
-        global_state.gigo_web_search_allowed = True
-        if not global_state.dialog_state:
-            let_log1(f"[WORKER] Dialog finished without starting. critic_wants_retry={global_state.critic_wants_retry}")
-            if global_state.critic_wants_retry:
-                really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                let_log1(f"[WORKER] Updating really_main_task after critic retry: {really_main_task[:100]}")
-            else:
-                really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
-                let_log1(f"[WORKER] Updating really_main_task after user feedback: {really_main_task[:100]}")
-            continue
-        while True:
-            let_log1(f"[WORKER] Main loop start. dialog_state={global_state.dialog_state}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
-            if global_state.dialog_state:
-                let_log1(f"[WORKER] Calling agent_func(0) with talk_prompt={talk_prompt[:100]}")
-                talk_prompt = agent_func(talk_prompt, 0) # ivan
-                let_log1(f"[WORKER] agent_func(0) returned talk_prompt={talk_prompt[:100]}, task_delegated={global_state.task_delegated}")
-                if global_state.task_delegated:
-                    let_log1(f"[WORKER] Task delegated, resetting flag and continue")
+                    let_log(f"[WORKER] Task delegated, resetting flag and continue")
                     global_state.task_delegated = False # а вот тут чезанах
                     continue
             if global_state.dialog_state:
-                let_log1(f"[WORKER] Calling agent_func(1) with talk_prompt={talk_prompt[:100]}")
+                let_log(f"[WORKER] Calling agent_func(1) with talk_prompt={talk_prompt[:100]}")
                 talk_prompt = agent_func(talk_prompt, 1) # milana
-                let_log1(f"[WORKER] agent_func(1) returned talk_prompt={talk_prompt[:100]}")
+                let_log(f"[WORKER] agent_func(1) returned talk_prompt={talk_prompt[:100]}")
             if not global_state.dialog_state:
-                let_log1(f"[WORKER] Dialog state became false. tools_commands_dict={global_state.tools_commands_dict}, dialog_result={global_state.dialog_result[:100]}, conversations={global_state.conversations}")
+                let_log(f"[WORKER] Dialog state became false. tools_commands_dict={global_state.tools_commands_dict}, dialog_result={global_state.dialog_result[:100]}, conversations={global_state.conversations}")
                 print(global_state.tools_commands_dict)
                 let_log(global_state.dialog_result)
                 let_log(global_state.conversations)
-                # нужно еще задачу в хрому записать
-                # TODO: вынеси эти 2 куска кода в функцию
-                if global_state.conversations <= 0:
-                    let_log1(f"[WORKER] conversations<=0, handling user feedback/critic")
-                    if global_state.critic_wants_retry:
-                        really_main_task = really_main_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                        let_log1(f"[WORKER] critic retry: updated really_main_task={really_main_task[:100]}")
-                    else:
-                        really_main_task = get_user_feedback_and_update_task(really_main_task, global_state.dialog_result)
-                        let_log1(f"[WORKER] user feedback: updated really_main_task={really_main_task[:100]}")
+                if global_state.conversations <= 0: # нужно еще задачу в хрому записать
+                    let_log(f"[WORKER] conversations<=0, handling user feedback/critic")
+                    really_main_task = get_user_or_critic_feedback(really_main_task)
                     break
                 else:
-                    let_log1(f"[WORKER] conversations>0, resetting dialog_state and possibly retrying with critic or new prompt")
+                    let_log(f"[WORKER] conversations>0, resetting dialog_state and possibly retrying with critic or new prompt")
                     global_state.dialog_state = True
                     if global_state.critic_wants_retry:
                         global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
-                        let_log1(f"[WORKER] critic retry: updated main_now_task={global_state.main_now_task[:100]}")
+                        let_log(f"[WORKER] critic retry: updated main_now_task={global_state.main_now_task[:100]}")
                         talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
-                        let_log1(f"[WORKER] after start_dialog (critic): talk_prompt={talk_prompt[:100]}, dialog_state={global_state.dialog_state}")
+                        let_log(f"[WORKER] after start_dialog (critic): talk_prompt={talk_prompt[:100]}, dialog_state={global_state.dialog_state}")
                     else:
                         talk_prompt = global_state.dialog_result
-                        let_log1(f"[WORKER] using dialog_result as new talk_prompt={talk_prompt[:100]}")
+                        let_log(f"[WORKER] using dialog_result as new talk_prompt={talk_prompt[:100]}")
 
 def init_chromadb(chroma_path, use_rag, max_attempts=3):
-    """
-    Инициализирует ChromaDB с сохранением данных между запусками.
-    При ошибках пытается восстановиться:
-      1) Повторная попытка создания клиента.
-      2) Удаление конкретной проблемной коллекции (если ошибка связана с коллекцией).
-      3) Если не помогает – полное удаление папки chroma_path и создание с нуля.
-    """
-    # Вспомогательная функция для попытки инициализации
-    def _try_init(remove_on_failure=False):
+    def _try_init(remove_on_failure=False): # Вспомогательная функция для попытки инициализации
         try:
-            client = chromadb.PersistentClient(
-                path=chroma_path,
-                settings=Settings(allow_reset=True, anonymized_telemetry=False)
-            )
-            # Не вызываем reset – сохраняем данные
-            milana = client.get_or_create_collection(
-                name="milana_collection", metadata={"hnsw:space": "cosine"}
-            )
-            user = client.get_or_create_collection(
-                name="user_collection", metadata={"hnsw:space": "cosine"}
-            )
+            client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True, anonymized_telemetry=False))
+            milana = client.get_or_create_collection(name="milana_collection", metadata={"hnsw:space": "cosine"})
+            user = client.get_or_create_collection(name="user_collection", metadata={"hnsw:space": "cosine"})
             rag = None
-            if use_rag == 1:
-                rag = client.get_or_create_collection(
-                    name="rag_collection", metadata={"hnsw:space": "cosine"}
-                )
+            if use_rag: rag = client.get_or_create_collection(name="rag_collection", metadata={"hnsw:space": "cosine"})
             return client, milana, user, rag, True
         except Exception as e:
             error_msg = str(e)
             let_log(f"ChromaDB init error: {error_msg}")
-            # Если мы в режиме удаления папки – удаляем и выходим
             if remove_on_failure:
                 if os.path.exists(chroma_path):
                     shutil.rmtree(chroma_path, ignore_errors=True)
                     let_log(f"Removed entire ChromaDB directory: {chroma_path}")
                 return None, None, None, None, False
-            # Пробуем определить, ошибка связана с конкретной коллекцией
             if "already exists" in error_msg.lower():
-                # Пытаемся извлечь имя коллекции из сообщения (это сложно, но можно попробовать)
-                # Простейший подход: попробовать удалить все три коллекции по очереди
                 collections_to_try = ["milana_collection", "user_collection", "rag_collection"]
-                # Создаём временный клиент для удаления коллекций
-                try:
+                try: # Создаём временный клиент для удаления коллекций
                     temp_client = chromadb.PersistentClient(path=chroma_path, settings=Settings(allow_reset=True))
                     for coll_name in collections_to_try:
                         try:
                             temp_client.delete_collection(coll_name)
                             let_log(f"Deleted collection '{coll_name}' to resolve conflict")
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                        except Exception: pass
+                except Exception: pass
             return None, None, None, None, False
-
-    # Основной цикл попыток
     for attempt in range(max_attempts):
         let_log(f"ChromaDB init attempt {attempt+1}/{max_attempts}")
-        # Сначала пробуем без удаления папки
-        client, milana, user, rag, success = _try_init(remove_on_failure=False)
-        if success:
-            return client, milana, user, rag
-
-        # Если не удалось, на последней попытке удаляем папку
-        if attempt == max_attempts - 1:
+        client, milana, user, rag, success = _try_init(remove_on_failure=False) # Сначала пробуем без удаления папки
+        if success: return client, milana, user, rag
+        if attempt == max_attempts - 1: # Если не удалось, на последней попытке удаляем папку
             let_log("Final attempt: deleting entire ChromaDB directory and retrying")
             client, milana, user, rag, success = _try_init(remove_on_failure=True)
-            if success:
-                return client, milana, user, rag
-            else:
-                raise RuntimeError("Cannot initialize ChromaDB even after deleting the database folder")
-        else:
-            # Не последняя попытка: немного ждём перед повторением (опционально)
-            import time
-            time.sleep(0.5)
-
+            if success: return client, milana, user, rag
+            else: raise RuntimeError("Cannot initialize ChromaDB even after deleting the database folder")
     raise RuntimeError("Unexpected: failed to initialize ChromaDB after all attempts")
 
 def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None):
-    global memory_sql
     global actual_handlers_names, another_tools_files_addresses
-    global token_limit, emb_token_limit, most_often, chunk_size
-    global client
-    global milana_collection
-    global user_collection
-    global rag_collection
+    global token_limit, emb_token_limit, chunk_size
+    global client, milana_collection, user_collection, rag_collection
     global ui_conn
-    global cache_path
+    global cache_path, chat_path, memory_sql, folder_path, slash
     global ask_provider_model, ask_provider_model_chat, get_provider_embs
+    global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
     global language
-    global chat_path
-    global do_chat_construct
-    global native_func_call
-    global use_rag
-    global agent_func
-    global clean_variables_content
-    global filter_generations
-    global is_save_log
-    global use_librarian
-    global recreate_agents
-    # Загружаем пароли из родительского процесса UI в память этого процесса
-    if session_passwords:
-        import encryption_utils
-        encryption_utils.SESSION_PASSWORDS.update(session_passwords)
+    global do_chat_construct, native_func_call
+    global use_rag, agent_func, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents
+    if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
     # === Загружаем параметры чата ===
     chat_path = os.path.join(base_dir, "data", "chats", chat_id)
     cache_path = os.path.join(chat_path, "cache.db")
-    # Обновляем пути для system_tools
-    global folder_path, slash
-    folder_path = base_dir
+    folder_path = base_dir # Обновляем пути для system_tools
     sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]
     sys.path.append(os.path.join(folder_path, 'system_tools'))
     sys.path.append(os.path.join(folder_path, 'system_tools', 'milana'))
@@ -3374,66 +2441,36 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     db_path = os.path.join(chat_path, "chatsettings.db")
     let_log(f"Database path: {db_path}")
     memory_sql = connect(db_path)
-    sql_exec('''CREATE TABLE IF NOT EXISTS found_info (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        info TEXT NOT NULL
-    )''')
+    sql_exec('''CREATE TABLE IF NOT EXISTS found_info (id INTEGER PRIMARY KEY AUTOINCREMENT, info TEXT NOT NULL)''')
     initial_text, fl = load_initial_data(chat_id)
     settings = load_chat_settings(chat_id)
     tool_paths = settings.get("another_tools", [])
-    # === Настройки из settings ===
     token_limit = int(settings.get("token_limit", 8192))
-    most_often = int(settings.get("frequent_response", 0))
-    need_best_result = int(settings.get("best_response", 0))
-    use_rag = int(settings.get("use_rag", 1)) # TODO:
-    global_state.write_results = int(settings.get("write_results", 0)) # TODO:
-    if int(settings.get("write_log", 1)) == 0: is_save_log = False # TODO:
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
-
-    # === Чтение параметра use_librarian ===
+    global_state.write_results = int(settings.get("write_results", 0)) == 1
+    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
+    use_rag = int(settings.get("use_rag", 1)) == 1
+    is_save_log = int(settings.get("write_log", 1)) == 1
     use_librarian = int(settings.get("use_librarian", 1)) == 1
     recreate_agents = int(settings.get("recreate_agents", 0)) == 1
-    # === Инициализация ChromaDB ===
-    chroma_path = os.path.join(chat_path, "chroma_db")
+    filter_generations = int(settings.get("filter_generations", 0)) == 1
+    chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)
-
-    if use_rag == 1:
-        use_rag = True
-        agent_func = _rag_agent_func
-    else:
-        use_rag = False
-        agent_func = _standard_agent_func
-
-    filter_generations = int(settings.get("filter_generations", 0))
-    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
-
-    global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
-    from chat_manager import (
-        initialize_schema,
-        create_chat,
-        get_chat_context,
-        update_history,
-        delete_chat
-    )
+    if use_rag: agent_func = _rag_agent_func
+    else: agent_func = _standard_agent_func
+    from chat_manager import (initialize_schema, create_chat, get_chat_context, update_history, delete_chat)
     initialize_schema()
-
     default_tools_dir = os.path.join(base_dir, "default_tools")
     for rel_path in tool_paths:
-        if os.path.isabs(rel_path):
-            full_path = rel_path
-        else:
-            full_path = os.path.join(default_tools_dir, rel_path)
+        if os.path.isabs(rel_path): full_path = rel_path
+        else: full_path = os.path.join(default_tools_dir, rel_path)
         full_path = os.path.normpath(full_path)
         another_tools_files_addresses.append(full_path)
-
     # === Инициализация модели ===
     model_type = settings.get("model_type", "ollama")
-    language = settings.get("language", "ru")
     try:
         model_providers_path = os.path.join(base_dir, "model_providers")
-        if model_providers_path not in sys.path:
-            sys.path.append(model_providers_path)
-
+        if model_providers_path not in sys.path: sys.path.append(model_providers_path)
         model_providers_module = importlib.import_module(f"model_providers.{model_type}")
         ask_model = model_providers_module.ask_model
         ask_model_chat = model_providers_module.ask_model_chat
@@ -3441,103 +2478,61 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         model_connect = model_providers_module.connect
         model_disconnect = model_providers_module.disconnect
         connect_params = settings.get("model_provider_params", "")
-
-        # --- ИНТЕГРАЦИЯ ШИФРОВАНИЯ: расшифровка токена перед передачей провайдеру ---
-        import encryption_utils
-        import inspect
-
-        # Парсим параметры из строки подключения
         params_dict = {}
         for part in connect_params.split(";"):
-            if "=" not in part:
-                continue
+            if "=" not in part: continue
             k, v = part.split("=", 1)
             params_dict[k.strip().lower()] = v.strip()
-
         decrypted_token = None
-        # Если в параметрах указано, что пароль установлен
-        if params_dict.get("password") == "set":
+        if params_dict.get("password") == "set": # Если в параметрах указано, что пароль установлен
             # Пытаемся получить пароль из кэша (сначала по chat_id, потом по model_type)
             password = None
-            if session_passwords:
-                password = session_passwords.get(chat_id) or session_passwords.get(model_type)
-            if not password:
-                # Пароль не найден — выбрасываем исключение, чтобы процесс не стартовал
-                raise RuntimeError(f"Password not found in session for chat {chat_id} or model {model_type}")
-
+            if session_passwords: password = session_passwords.get(chat_id) or session_passwords.get(model_type)
+            if not password: raise RuntimeError(f"Password not found in session for chat {chat_id} or model {model_type}")
             # Определяем, какой параметр содержит зашифрованный токен
             encrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
             if encrypted_token:
-                try:
-                    decrypted_token = encryption_utils.decrypt_token(encrypted_token, password)
-                except Exception as e:
-                    raise RuntimeError(f"Failed to decrypt token: {e}")
-            else:
-                raise RuntimeError("Encrypted token (api_token/token) not found in connection string")
-
-        # Вызываем connect провайдера, передавая расшифрованный токен отдельным параметром
-        sig = inspect.signature(model_connect)
-        if '_decrypted_token' in sig.parameters:
-            connection_result = model_connect(connect_params, _decrypted_token=decrypted_token)
-        else:
-            # fallback для старых провайдеров, которые ещё не обновлены
-            connection_result = model_connect(connect_params)
-        # -------------------------------------------------------------
-
-        if not connection_result or not connection_result[0]:
-            let_log(f"Ошибка подключения модели: {connection_result[1] if len(connection_result) > 1 else 'Unknown error'}")
-            return
-
+                try: decrypted_token = encryption_utils.decrypt_token(encrypted_token, password)
+                except Exception as e: raise RuntimeError(f"Failed to decrypt token: {e}")
+            else: raise RuntimeError("Encrypted token (api_token/token) not found in connection string")
+        elif params_dict.get("password") == "empty": decrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
+        sig = inspect.signature(model_connect) # Вызываем connect провайдера, передавая расшифрованный токен отдельным параметром
+        if '_decrypted_token' in sig.parameters: connection_result = model_connect(connect_params, _decrypted_token=decrypted_token)
+        else: connection_result = model_connect(connect_params)
+        if not connection_result or not connection_result[0]: let_log(f"Ошибка подключения модели: {connection_result[1] if len(connection_result) > 1 else 'Unknown error'}"); return
         success = connection_result[0]
         tags = connection_result[2] if len(connection_result) > 2 else {}
-        if tags:
-            global unified_tags
-            unified_tags = tags
-
-        globals().update({
-            'ask_provider_model': ask_model,
-            'ask_provider_model_chat': ask_model_chat,
-            'get_provider_embs': create_embeddings,
-        })
-
+        if tags: global unified_tags; unified_tags = tags
+        globals().update({'ask_provider_model': ask_model, 'ask_provider_model_chat': ask_model_chat, 'get_provider_embs': create_embeddings,})
         provider_module_name = f"model_providers.{model_type}"
         provider_module = sys.modules.get(provider_module_name)
         setattr(provider_module, "token_limit", token_limit)
         emb_token_limit = provider_module.emb_token_limit
         do_chat_construct = provider_module.do_chat_construct
         native_func_call = provider_module.native_func_call
-
     except Exception as e:
         let_log(f"Ошибка инициализации модели: {str(e)}")
         traceback.print_exc()
         return
-
     # === Загрузка модели и инструментов ===
+    language = settings.get("language", "ru")
     globalize_language_packet(language)
     chunk_size = provider_module.emb_token_limit * text_tokens_coefficient
-
     clean_variables_content = []
     if filter_generations == 1:
         clean_variables_content = [operator_role_text, worker_role_text, func_role_text, system_role_text]
-        if unified_tags.get('bos') is not None:
-            clean_variables_content.append(unified_tags.get('bos'))
-        if unified_tags.get('user_start') is not None:
-            clean_variables_content.append(unified_tags.get('user_start'))
+        if unified_tags.get('bos') is not None: clean_variables_content.append(unified_tags.get('bos'))
+        if unified_tags.get('user_start') is not None: clean_variables_content.append(unified_tags.get('user_start'))
         filter_generations = True
     else: filter_generations = False
-
     let_log(f"\n=== ЗАГРУЗКА СПЕЦИАЛЬНЫХ МОДУЛЕЙ (до системных) ===")
     special_files = {'web_search': None, 'ask_user': None}
     other_files = []
     for file_path in another_tools_files_addresses:
         file_name = os.path.basename(file_path).lower()
-        if file_name.endswith('web_search.py'):
-            special_files['web_search'] = file_path
-        elif file_name == 'ask_user.py':
-            special_files['ask_user'] = file_path
-        else:
-            other_files.append(file_path)
-
+        if file_name.endswith('web_search.py'): special_files['web_search'] = file_path
+        elif file_name == 'ask_user.py': special_files['ask_user'] = file_path
+        else: other_files.append(file_path)
     loaded_tools = []
     for module_type, file_path in special_files.items():
         if file_path:
@@ -3552,20 +2547,14 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
                     elif module_type == 'ask_user':
                         globals()['ask_user'] = func
                         let_log(f"✅ Функция ask_user глобализована")
-            else:
-                let_log(f"⚠ Не удалось загрузить {module_type}")
-
+            else: let_log(f"⚠ Не удалось загрузить {module_type}")
     global_state.ivan_module_tools, global_state.milana_module_tools = system_tools_loader()
-
     if other_files:
         let_log(f"\nЗагрузка обычных модулей ({len(other_files)} файлов)")
         other_loaded = mod_loader(other_files)
         loaded_tools.extend(other_loaded)
-    else:
-        let_log("Нет обычных модулей для загрузки")
-
+    else: let_log("Нет обычных модулей для загрузки")
     global_state.another_tools = loaded_tools
-
     let_log(f"\n=== ИТОГИ ЗАГРУЗКИ ===")
     let_log(f"Всего загружено инструментов: {len(loaded_tools)}")
     let_log(f"Веб-поиск доступен: {'web_search' in globals()}")
@@ -3573,18 +2562,14 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     let_log("Список инструментов:")
     for tt, t, _ in global_state.another_tools:
         global_state.module_tools_keys.append(tt)
-        if tt not in global_state.skip_tools_keys:
-            global_state.tools_str += tt + ' (' + t + ')\n'
+        if tt not in global_state.skip_tools_keys: global_state.tools_str += tt + ' (' + t + ')\n'
         let_log(tt)
-
     if fl:
         send_output_message(text=start_load_attachments_text)
         upload_user_data(fl)
         send_output_message(text=end_load_attachments_text)
-
     let_log("ЗАПУСК")
-    try:
-        worker(initial_text)
+    try: worker(initial_text)
     except Exception as e:
         print(f"Ошибка: {e}")
         tb = traceback.extract_tb(e.__traceback__)[-1]
@@ -3593,9 +2578,6 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         t = f"{e} | {tb.filename}:{tb.lineno}"
         send_ui_no_cache(t)
         log_file = os.path.join(chat_path, 'log.txt')
-        with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(f'{t}\n')
-    try:
-        model_disconnect()
-    except:
-        pass
+        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{t}\n')
+    try: model_disconnect()
+    except: pass

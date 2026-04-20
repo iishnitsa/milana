@@ -5,7 +5,7 @@ Call to obtain missing information. One question per line. Ask all questions at 
 
 import os
 import re
-import difflib  # добавлен импорт difflib
+import difflib
 from cross_gpt import (
     global_state,
     ask_model,
@@ -14,8 +14,7 @@ from cross_gpt import (
     coll_exec,
     let_log,
     found_info_1,
-    parse_prompt_response,
-)
+    parse_prompt_response)
 
 def _extract_first_digit(text, default):
     """Извлекает первую цифру из текста (аналог parse_prompt_response для готового ответа)."""
@@ -42,8 +41,7 @@ def main(quest):
             'source_user_file',
             'source_web',
             'source_unknown',
-            'web_search_available',
-        )
+            'web_search_available')
         main.satisfies_l_1 = 'Is the request fully satisfied with the response?'
         main.select_matter_l = 'Highlight the important. If the answer is already quite short, then just return the received answer unchanged. '
         main.answer_l = 'Does the answer match the query?'
@@ -77,7 +75,6 @@ Just output the fragment exactly as it appears, nothing else.
         main.source_unknown = 'Unknown source'
         main.web_search_available = ' (can also search on the internet)'
         return
-
     let_log('БИБЛИОТЕКАРЬ ВЫЗВАН')
     # Множество для отслеживания текстов запросов, по которым уже выполнялся веб-поиск
     web_search_done_texts = set()
@@ -92,56 +89,30 @@ Just output the fragment exactly as it appears, nothing else.
                 # Список найденных элементов с источником
                 items = []
                 try:
-                    if search_target == 1:  # milana_collection
+                    if search_target == 1: # milana_collection
                         base_filter = {}
                         if not global_state.gigo_web_search_allowed: base_filter = {'source': {'$ne': 'web'}}
                         def query_collection(where_clause):
-                            res_dict = coll_exec(
-                                "query", "milana_collection",
-                                query_embeddings=[emb],
-                                filters=where_clause,
-                                fetch=["documents", "metadatas"],
-                                first=False
-                            ) or {}
+                            res_dict = coll_exec("query", "milana_collection", query_embeddings=[emb], filters=where_clause, fetch=["documents", "metadatas"], first=False) or {}
                             docs = res_dict.get('documents', []) or []
                             metas = res_dict.get('metadatas', []) or []
                             for meta, doc in zip(metas, docs):
-                                if doc and doc.strip():
-                                    items.append({
-                                        'text': doc,
-                                        'source': main.source_milana
-                                    })
-
+                                if doc and doc.strip(): items.append({'text': doc, 'source': main.source_milana})
                         query_collection({"done": donee, "result": True})
                         query_collection({"done": donee})
-                        if donee == 'correct':
-                            query_collection({"done": 'incorrect'})
-
-                    elif search_target == 2:  # user_collection
-                        res_dict = coll_exec(
-                            "query", "user_collection",
-                            query_embeddings=[emb],
-                            fetch=["documents", "metadatas"],
-                            first=False
-                        ) or {}
+                        if donee == 'correct': query_collection({"done": 'incorrect'})
+                    elif search_target == 2: # user_collection
+                        res_dict = coll_exec("query", "user_collection", query_embeddings=[emb], fetch=["documents", "metadatas"], first=False) or {}
                         docs = res_dict.get('documents', []) or []
                         metas = res_dict.get('metadatas', []) or []
                         for meta, doc in zip(metas, docs):
                             if doc and doc.strip():
                                 src = meta.get('source', '')
-                                if src == 'web':
-                                    source_str = main.source_web
-                                elif src == 'file':
-                                    fname = meta.get('name', 'unknown')
-                                    source_str = f"{main.source_user_file} ({fname})"
-                                else:
-                                    source_str = main.source_unknown
+                                if src == 'web': source_str = main.source_web
+                                elif src == 'file': fname = meta.get('name', 'unknown'); source_str = f"{main.source_user_file} ({fname})"
+                                else: source_str = main.source_unknown
                                 items.append({'text': doc, 'source': source_str})
-
-                except Exception as e:
-                    let_log(f"[find_engine] Ошибка запроса: {e}")
-                    items = []
-
+                except Exception as e: let_log(f"[find_engine] Ошибка запроса: {e}"); items = []
                 # Если ничего не найдено, пробуем веб-поиск
                 if not items and global_state.gigo_web_search_allowed:
                     # Проверяем, не выполняли ли уже веб-поиск для этого текста запроса
@@ -155,33 +126,18 @@ Just output the fragment exactly as it appears, nothing else.
                                 if chunks:
                                     for t, chunk in enumerate(chunks):
                                         set_common_save_id()
-                                        coll_exec(
-                                            action="add",
-                                            coll_name="user_collection",
-                                            ids=[get_common_save_id()],
-                                            embeddings=[get_embs(chunk)],
-                                            metadatas=[{
-                                                'name': i,
-                                                'part': t + 1,
-                                                'source': 'web'
-                                            }],
-                                            documents=[chunk]
-                                        )
+                                        coll_exec(action="add", coll_name="user_collection", ids=[get_common_save_id()], embeddings=[get_embs(chunk)], metadatas=[{'name': i, 'part': t + 1, 'source': 'web'}], documents=[chunk])
                                 items.append({'text': web_result, 'source': main.source_web})
                                 # Запоминаем, что для этого текста веб-поиск уже выполнен
                                 web_search_done_texts.add(i)
-                        except Exception as e:
-                            let_log(f"Web search error: {e}")
-
+                        except Exception as e: let_log(f"Web search error: {e}")
                 # Фильтруем пустые и "None"
                 items = [it for it in items if it['text'].strip() and it['text'].strip().lower() != "none"]
-
                 if items:
                     if full_output:
                         # Выбор лучшего результата
                         fragments = '\n'.join(it['text'] for it in items)
-                        user_prompt = (main.label_query + ' ' + i + '\n' +
-                                       main.label_fragments + '\n' + fragments)
+                        user_prompt = (main.label_query + ' ' + i + '\n' + main.label_fragments + '\n' + fragments)
                         try: best_result = ask_model(user_prompt, system_prompt=main.best_result_system)
                         except: best_result = ask_model(text_cutter(user_prompt), system_prompt=main.best_result_system)
                         if best_result and best_result.strip() and best_result != found_info_1:
@@ -189,31 +145,22 @@ Just output the fragment exactly as it appears, nothing else.
                             source_line = main.source_unknown
                             # Сначала точное совпадение
                             for it in items:
-                                if it['text'] == best_result:
-                                    source_line = it['source']
-                                    break
-                            else:
-                                # Если точного нет, используем difflib для поиска наиболее похожего
+                                if it['text'] == best_result: source_line = it['source']; break
+                            else: # Если точного нет, используем difflib для поиска наиболее похожего
                                 texts = [it['text'] for it in items]
                                 close_matches = difflib.get_close_matches(best_result, texts, n=1, cutoff=0.6)
                                 if close_matches:
                                     matched_text = close_matches[0]
                                     for it in items:
-                                        if it['text'] == matched_text:
-                                            source_line = it['source']
-                                            break
+                                        if it['text'] == matched_text: source_line = it['source']; break
                             # Если всё ещё не нашли, берём первый элемент
-                            if source_line == main.source_unknown and items:
-                                source_line = items[0]['source']
+                            if source_line == main.source_unknown and items: source_line = items[0]['source']
                             return f"{source_line}\n{best_result}"
                         else: return found_info_1
                     # Проверка на полное удовлетворение (берём первый элемент)
-                    prompt_satisfies = (main.label_query + '\n' + i + '\n' +
-                                        main.label_answer + '\n' + items[0]['text'])
+                    prompt_satisfies = (main.label_query + '\n' + i + '\n' + main.label_answer + '\n' + items[0]['text'])
                     answer_val = parse_prompt_response(main.satisfies_l_1, prompt_satisfies, 1)
-                    if answer_val == 1:
-                        let_log('удовлетворяет')
-                        return f"{items[0]['source']}\n{items[0]['text']}"
+                    if answer_val == 1: let_log('удовлетворяет'); return f"{items[0]['source']}\n{items[0]['text']}"
                     # Собираем полезные элементы
                     useful_items = []
                     for it in items:
@@ -234,9 +181,7 @@ Just output the fragment exactly as it appears, nothing else.
                         user_answer = (main.label_answer + ' ' + combined_useful + '\n' + main.label_query + ' ' + i)
                         try: answer = ask_model(user_answer, system_prompt=main.answer_l_2)
                         except: answer = ask_model(text_cutter(user_answer), system_prompt=main.answer_l_2)
-                        if _extract_first_digit(answer, 0) != 0:
-                            # Возвращаем все полезные элементы с источниками
-                            return '\n\n'.join(f"{it['source']}\n{it['text']}" for it in useful_items)
+                        if _extract_first_digit(answer, 0) != 0: return '\n\n'.join(f"{it['source']}\n{it['text']}" for it in useful_items)
                         else: new_requests_to_libraries.extend(answer.splitlines())
                     # Если полезных нет, но были элементы – ничего не добавляем (цикл продолжится)
                 # else: items пуст – ничего не добавляем
@@ -246,7 +191,6 @@ Just output the fragment exactly as it appears, nothing else.
                 attempts_left -= 1
             else: break
         return found_info_1
-
     def process_single_question(quest):
         # Обработка входящего запроса для одиночного вопроса
         first_request_target = 1
@@ -256,25 +200,16 @@ Just output the fragment exactly as it appears, nothing else.
             if len(quest) > 1 and quest[1] == '1':
                 full_output = True
                 quest = quest[2:]
-            elif len(quest) > 1 and quest[1] == '2':
-                quest = quest[2:]
-            else:
-                quest = quest[1:]
-
-        result_primary = find_engine(quest, global_state.librarian_max_attempts,
-                                     search_target=1, full_output=full_output) or ""
-        result_user = find_engine(quest, global_state.librarian_max_attempts,
-                                  search_target=2, full_output=full_output) or ""
-
+            elif len(quest) > 1 and quest[1] == '2': quest = quest[2:]
+            else: quest = quest[1:]
+        result_primary = find_engine(quest, global_state.librarian_max_attempts, search_target=1, full_output=full_output) or ""
+        result_user = find_engine(quest, global_state.librarian_max_attempts, search_target=2, full_output=full_output) or ""
         parts = [result_primary, result_user]
         final_res = ''
         for p in parts:
-            if p and p != found_info_1 and p.lower() != "none":
-                final_res += p + '\n\n---\n\n'
-        if not final_res:
-            final_res = found_info_1
+            if p and p != found_info_1 and p.lower() != "none": final_res += p + '\n\n---\n\n'
+        if not final_res: final_res = found_info_1
         return final_res.strip()
-
     if isinstance(quest, str) and '\n' in quest:
         lines = quest.splitlines()
         question_lines = [line for line in lines if '?' in line]
@@ -284,13 +219,10 @@ Just output the fragment exactly as it appears, nothing else.
         cleaned_questions = []
         for question in question_lines:
             cleaned = re.sub(r'^\s*(?:\d+[\.\)]\s*|[-*•]\s*)*', '', question.strip())
-            if cleaned:
-                cleaned_questions.append(cleaned)
+            if cleaned: cleaned_questions.append(cleaned)
         additional_info = ''
         for question in cleaned_questions:
             answer = process_single_question(question)
-            if answer != found_info_1:
-                additional_info += '\n' + answer
+            if answer != found_info_1: additional_info += '\n' + answer
         return additional_info.strip() if additional_info else found_info_1
-    else:
-        return process_single_question(quest)
+    else: return process_single_question(quest)

@@ -18,8 +18,7 @@ def main(text):
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
     path = os.path.join(chat_path, "reports", filename)
     try:
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(text.strip())
+        with open(path, 'w', encoding='utf-8') as f: f.write(text.strip())
         send_ui_no_cache(main.report_created_text + filename, attach=[path])
         return ""
     except Exception as e:

@@ -16,8 +16,7 @@ from cross_gpt import (
     chat_path,
     recreate_agents,
     send_output_message,
-    get_input_message
-)
+    get_input_message)
 import os
 from datetime import datetime
 base_dir = os.path.join(chat_path, "results")

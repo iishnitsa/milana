@@ -30,18 +30,14 @@ from cross_gpt import (
     update_history,
     get_chat_context,
     no_markdown_instruction,
-    write_shortly_prompt,
-)
+    write_shortly_prompt)
 
 def find_tuple_by_first_list(data, target_list):
     for list1, list2, obj in data:
-        if list1 == target_list:
-            return (list1, list2), obj
+        if list1 == target_list: return (list1, list2), obj
     return None
 
 def main(client_task):
-    # Initialize module attributes on first call
-    
     if not hasattr(main, 'attr_names'):
         main.attr_names = (
             'start_dialog_tool_text_1',
@@ -55,7 +51,6 @@ def main(client_task):
             'delegate_unavailable_for_operator',
             'conversations_limit_reached_text',
         )
-        
         main.milana_base_1 = '''You are "Milana", an AI operator. You have received a task plan from a client'''
         main.milana_base_2 = ''' or from a higher-level dialog'''
         main.milana_base_3 = '''.
@@ -120,59 +115,35 @@ When stopping, you must prove impossibility:
             let_log('СОХРАНЕНИЕ перед делегированием')
             save_emb_dialog('delegated')
             let_log('Сохранили оператора как delegated')
-            if global_state.conversations % 2 == 0 and global_state.conversations != 0:
-                save_emb_dialog('delegated', 'executor')
-                let_log('Сохранили исполнителя как delegated')
+            if global_state.conversations % 2 == 0 and global_state.conversations != 0: save_emb_dialog('delegated', 'executor'); let_log('Сохранили исполнителя как delegated')
     global_state.stop_agent = True
-    if client_task == '':
-        prompt = gigo(global_state.main_now_task)
-        global_state.retries = False
-    else:
-        global_state.main_now_task = client_task
-        prompt = gigo(client_task)
-    if global_state.summ_attach != global_state.summ_attach:
-        prompt += global_state.summ_attach
-        global_state.summ_attach = ''
+    if client_task == '': prompt = gigo(global_state.main_now_task); global_state.retries = False
+    else: global_state.main_now_task = client_task; prompt = gigo(client_task)
+    if global_state.summ_attach != global_state.summ_attach: prompt += global_state.summ_attach; global_state.summ_attach = ''
     # === DELEGATION: add a new level ===
     down_hierarchy()
     current_level = get_level()
     let_log(f"После делегирования: {global_state.now_try}, текущий уровень: {current_level}")
-    
-    # Determine whether the future executor can delegate
-    if global_state.hierarchy_limit == 0:
-        ivan_can_delegate = True
-    else:
-        ivan_can_delegate = (current_level + 1) < global_state.hierarchy_limit
-
+    if global_state.hierarchy_limit == 0: ivan_can_delegate = True
+    else: ivan_can_delegate = (current_level + 1) < global_state.hierarchy_limit
     # Tool selection for Milana
     milana_tools = global_state.milana_module_tools.copy()
-    
     if global_state.module_tools_keys:
-        need_tools_raw = ask_model(
-            prompt,  # user message: plan and task
-            system_prompt=main.start_dialog_tool_text_1 +
-                          global_state.tools_str +
-                          main.start_dialog_tool_text_2
-        )
+        need_tools_raw = ask_model(prompt, system_prompt=main.start_dialog_tool_text_1 + global_state.tools_str + main.start_dialog_tool_text_2)
         let_log(need_tools_raw)
         tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
-        
         # Remove delegation command from selected tools if it accidentally got in
         if not ivan_can_delegate and global_state.start_dialog_command_name in tools_names:
             tools_names.remove(global_state.start_dialog_command_name)
             let_log(f"Удалена команда делегирования из выбранных инструментов")
-        
         for name in tools_names:
             for tool_tokens, tool_desc, tool_func in global_state.another_tools:
-                if name == tool_tokens:
-                    milana_tools[tool_tokens] = (tool_desc, tool_func)
-                    break
+                if name == tool_tokens: milana_tools[tool_tokens] = (tool_desc, tool_func); break
         let_log('ошибки нет')
     # Remove delegation command from Milana's tools if the next level is unavailable
     if not ivan_can_delegate and global_state.start_dialog_command_name in milana_tools:
         del milana_tools[global_state.start_dialog_command_name]
         let_log("Удалена команда делегирования из инструментов Миланы")
-    
     # === BUILD PROMPT ===
     full_prompt = main.milana_base_1
     # 1. Information that Ivan can delegate (added ALWAYS except when delegation is completely disabled - limit=1)
@@ -183,17 +154,14 @@ When stopping, you must prove impossibility:
         full_prompt += f"\n{main.delegate_unavailable_for_operator}\n"
         # 2. Message for Milana: she cannot delegate (added ALWAYS except when delegation is completely disabled - limit=1)
     else: full_prompt += main.milana_base_3
-
     # 3. Add hierarchy information if limit is greater than 1
-    if global_state.hierarchy_limit > 1:
-        full_prompt += f"\n{main.hierarchy_limit_info} {current_level}/{global_state.hierarchy_limit}.\n"
+    if global_state.hierarchy_limit > 1: full_prompt += f"\n{main.hierarchy_limit_info} {current_level}/{global_state.hierarchy_limit}.\n"
     full_prompt += no_markdown_instruction + write_shortly_prompt
     let_log(milana_tools)
     prompt += only_one_func_text
     # Add tool descriptions, excluding skip commands
     for tool in milana_tools:
-        if tool not in global_state.skip_tools_keys:
-            prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
+        if tool not in global_state.skip_tools_keys: prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
     if not native_func_call: prompt += what_is_func_text
     full_prompt += prompt + main.oper_anti_loop_text
     let_log(full_prompt)
@@ -212,8 +180,7 @@ When stopping, you must prove impossibility:
             last_messages_marker +
             func_role_text +
             make_exec_first +
-            operator_role_text
-        )
+            operator_role_text)
     except:
         try:
             talk_prompt = ask_model(
@@ -222,8 +189,7 @@ When stopping, you must prove impossibility:
                 last_messages_marker +
                 func_role_text +
                 make_exec_first +
-                operator_role_text
-            )
+                operator_role_text)
         except: raise
     update_history(global_state.conversations, talk_prompt, operator_role_text)
     let_log("НАЧАЛЬНЫЙ ОТВЕТ МИЛАНЫ:")
@@ -234,9 +200,7 @@ When stopping, you must prove impossibility:
     answer = tools_selector(talk_prompt_for_tools, global_state.conversations)
     global_state.now_agent_id = global_state.conversations
     if answer != wrong_command and global_state.dialog_state and answer != None: talk_prompt = answer
-    elif global_state.dialog_state:
-        let_log('СОЗДАНИЕ НОВОГО СПЕЦИАЛИСТА...')
-        talk_prompt = create_executor(talk_prompt)
+    elif global_state.dialog_state: let_log('СОЗДАНИЕ НОВОГО СПЕЦИАЛИСТА...'); talk_prompt = create_executor(talk_prompt)
     else: return answer
     let_log("ОТВЕТ ПОСЛЕ ОБРАБОТКИ:")
     let_log(talk_prompt)
@@ -252,8 +216,7 @@ When stopping, you must prove impossibility:
             history_for_model +
             func_role_text +
             last_talk_prompt +
-            operator_role_text
-        )
+            operator_role_text)
     except:
         history_for_model = start_dialog_history + text_cutter(history_for_model)
         try:
@@ -264,8 +227,7 @@ When stopping, you must prove impossibility:
                 history_for_model +
                 func_role_text +
                 last_talk_prompt +
-                operator_role_text
-            )
+                operator_role_text)
         except Exception as e:
             try:
                 talk_prompt = ask_model(
@@ -275,10 +237,8 @@ When stopping, you must prove impossibility:
                     history_for_model +
                     func_role_text +
                     text_cutter(last_talk_prompt) +
-                    operator_role_text
-                )
+                    operator_role_text)
             except: raise
-    # Write responses to history
     let_log(f"[DBG_HISTORY_WRITE] target_chat={global_state.conversations - 1}, current_conv={global_state.conversations}")
     update_history(global_state.conversations - 1, last_talk_prompt, func_role_text)
     update_history(global_state.conversations - 1, talk_prompt, operator_role_text)

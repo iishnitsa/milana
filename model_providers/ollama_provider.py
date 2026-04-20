@@ -29,10 +29,8 @@ is_cloud_mode = False
 
 def normalize_url(url, default_port, default_scheme="http"):
     """Добавляет схему и порт по умолчанию, если они отсутствуют."""
-    if not url:
-        return url
-    if "://" not in url:
-        url = default_scheme + "://" + url
+    if not url: return url
+    if "://" not in url: url = default_scheme + "://" + url
     parsed = urllib.parse.urlparse(url)
     if not parsed.port:  # порт не указан
         # пересобираем netloc с портом
@@ -44,8 +42,7 @@ def normalize_url(url, default_port, default_scheme="http"):
 
 def normalize_model(model):
     """Добавляет :latest, если в имени модели нет двоеточия."""
-    if model and ":" not in model:
-        return model + ":latest"
+    if model and ":" not in model: return model + ":latest"
     return model
 
 def find_context_size(model_data, base_url, headers):
@@ -67,41 +64,30 @@ def find_context_size(model_data, base_url, headers):
         'gemma3.context_length',
         'mistral.context_length',
         'qwen2.context_length',
-        'phi3.context_length',
-    ]
+        'phi3.context_length',]
     for key in direct_keys:
         if key in model_info:
             try:
                 val = int(model_info[key])
-                if val > 0:
-                    return val
-            except (ValueError, TypeError):
-                continue
-
+                if val > 0: return val
+            except (ValueError, TypeError): continue
     # Если точных ключей нет, ищем любой ключ, содержащий 'context_length' (регистронезависимо)
     for key, value in model_info.items():
-        if 'context_length' in key.lower() and isinstance(value, (int, float)):
-            return int(value)
-
+        if 'context_length' in key.lower() and isinstance(value, (int, float)): return int(value)
     # Поиск в parameters (например, "num_ctx 4096" или "num_ctx=4096")
     parameters = model_data.get('parameters', '')
     if parameters:
         # Ищем num_ctx с пробелом или знаком равенства
         match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', parameters, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
+        if match: return int(match.group(1))
         # Альтернативный поиск: просто слово num_ctx и число рядом
         match = re.search(r'num_ctx\s+(\d+)', parameters, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-
+        if match: return int(match.group(1))
     # Поиск в model_file (редко, но может быть)
     model_file = model_data.get('model_file', '')
     if model_file:
         match = re.search(r'num_ctx\s*[=: ]\s*(\d+)', model_file, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-
+        if match: return int(match.group(1))
     # Попытка найти в любом текстовом представлении модели (запасной вариант)
     possible_paths = [
         ['parameters', 'num_ctx'],
@@ -112,26 +98,19 @@ def find_context_size(model_data, base_url, headers):
         ['model_info', 'gemma3.context_length'],
         ['model_info', 'llama.context_length'],
         ['model_info', 'mistral.context_length'],
-        ['details', 'context_length'],
-    ]
+        ['details', 'context_length']]
     for path in possible_paths:
         try:
             value = model_data
-            for key in path:
-                value = value[key]
-            if isinstance(value, (int, float)):
-                return int(value)
-        except (KeyError, TypeError):
-            continue
-
+            for key in path: value = value[key]
+            if isinstance(value, (int, float)): return int(value)
+        except (KeyError, TypeError): continue
     # Fallback: ищем числа 2048, 4096, 8192 и т.д. в сериализованных данных
     context_sizes = [2048, 4096, 8192, 16384, 32768, 65536, 128000, 200000, 262144]
     model_text = json.dumps(model_data)
     found_sizes = sorted([int(num) for num in re.findall(r'\b\d{4,7}\b', model_text)
                           if int(num) in context_sizes], reverse=True)
-    if found_sizes:
-        return found_sizes[0]
-
+    if found_sizes: return found_sizes[0]
     # Значение по умолчанию
     return 4095
 
@@ -150,22 +129,17 @@ def _parse_template_info(template_info):
         "assist_start": "", "assist_end": "",
         "tool_def_start": "", "tool_def_end": "",
         "tool_call_start": "", "tool_call_end": "",
-        "tool_result_start": "", "tool_result_end": "",
-    }
-
+        "tool_result_start": "", "tool_result_end": "",}
     # Пытаемся извлечь BOS/EOS из model_info, если доступно
     model_info = template_info.get('model_info', {})
     if 'tokenizer.ggml.bos_token_id' in model_info:
         # Преобразуем ID в строковый токен, если возможно (упрощённо)
         # В реальности нужно было бы обращаться к токенизатору, но для совместимости оставляем как есть
         bos_id = model_info.get('tokenizer.ggml.bos_token_id')
-        if bos_id is not None:
-            parsed_tags["bos"] = f"<0x{bos_id:02X}>"  # заглушка
+        if bos_id is not None: parsed_tags["bos"] = f"<0x{bos_id:02X}>"  # заглушка
     if 'tokenizer.ggml.eos_token_id' in model_info:
         eos_id = model_info.get('tokenizer.ggml.eos_token_id')
-        if eos_id is not None:
-            parsed_tags["eos"] = f"<0x{eos_id:02X}>"
-
+        if eos_id is not None: parsed_tags["eos"] = f"<0x{eos_id:02X}>"
     # Пытаемся извлечь системный тег
     if system_msg:
         # Ищем паттерны типа "<|im_start|>system" или "system:"
@@ -177,8 +151,7 @@ def _parse_template_info(template_info):
                 # Ищем соответствующий закрывающий тег
                 end_pattern = re.sub(r'system', r'end', pattern, flags=re.IGNORECASE)
                 end_match = re.search(end_pattern, system_msg, re.IGNORECASE)
-                if end_match:
-                    parsed_tags["sys_end"] = end_match.group(1)
+                if end_match: parsed_tags["sys_end"] = end_match.group(1)
                 break
     # Анализируем шаблон для поиска тегов
     if template:
@@ -196,9 +169,7 @@ def _parse_template_info(template_info):
         for tag_name, patterns in special_tags.items():
             for pattern in patterns:
                 matches = re.findall(pattern, template, re.IGNORECASE)
-                if matches:
-                    parsed_tags[tag_name] = matches[0]
-                    break
+                if matches: parsed_tags[tag_name] = matches[0]; break
     return parsed_tags
 
 def connect(connection_string, timeout=30):
@@ -216,57 +187,44 @@ def connect(connection_string, timeout=30):
         "model": "ministral-3:latest",
         "emb_model": "all-minilm:latest",
         "chat_template": "True",
-        "native_func_call": "False",
-    }
+        "native_func_call": "False",}
     # --- Разбор строки подключения ---
     for part in connection_string.split(";"):
         part = part.strip()
-        if not part or "=" not in part:
-            continue
+        if not part or "=" not in part: continue
         key, value = part.split("=", 1)
         key = key.strip().lower()
         value = value.strip()
-        if key in params:
-            params[key] = value
-
+        if key in params: params[key] = value
     # === НОРМАЛИЗАЦИЯ ===
     params["url"] = normalize_url(params["url"], default_port=11434)
     params["model"] = normalize_model(params["model"])
     params["emb_model"] = normalize_model(params["emb_model"])
-
     base_url = params["url"].strip('/')
     emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"
     native_func_call = params["native_func_call"].lower().strip() == "true"
-
     print('подключение')
     try:
         # === Подключение к Ollama ===
         session = requests.Session()
         session.headers.update({"Content-Type": "application/json"})
-        if is_cloud_mode:
-            session.headers.update({"Authorization": f"Bearer {params['token']}"})
+        if is_cloud_mode: session.headers.update({"Authorization": f"Bearer {params['token']}"})
         api_url = f"{base_url}/api/tags"
         response = session.get(api_url, timeout=timeout)
         response.raise_for_status()
         models_data = response.json()
         available_models = [model['name'] for model in models_data.get('models', [])]
-        if not available_models:
-            return [False, 0, tags, "Не удалось получить список моделей с сервера Ollama."]
-
+        if not available_models: return [False, 0, tags, "Не удалось получить список моделей с сервера Ollama."]
         # Устанавливаем модель для чата
         requested_model = params.get("model")
         # ИЗМЕНЕНИЕ: если запрошенная модель не найдена, возвращаем ошибку, а не берём первую попавшуюся
-        if requested_model and requested_model in available_models:
-            default_chat_model = requested_model
+        if requested_model and requested_model in available_models: default_chat_model = requested_model
         else:
             # Собираем понятное сообщение об ошибке
-            if requested_model:
-                error_msg = f"Запрошенная модель '{requested_model}' не найдена. Доступные модели: {available_models}"
-            else:
-                error_msg = f"Модель не указана в строке подключения. Доступные модели: {available_models}"
+            if requested_model: error_msg = f"Запрошенная модель '{requested_model}' не найдена. Доступные модели: {available_models}"
+            else: error_msg = f"Модель не указана в строке подключения. Доступные модели: {available_models}"
             return [False, 0, tags, error_msg]
-
         # Получаем информацию о модели для извлечения тегов и контекста
         try:
             show_url = f"{base_url}/api/show"
@@ -288,47 +246,27 @@ def connect(connection_string, timeout=30):
                 "assist_start": "", "assist_end": "",
                 "tool_def_start": "", "tool_def_end": "",
                 "tool_call_start": "", "tool_call_end": "",
-                "tool_result_start": "", "tool_result_end": "",
-            }
-
+                "tool_result_start": "", "tool_result_end": "",}
         # Проверяем и устанавливаем модель для эмбеддингов
         if emb_model not in available_models:
             let_log(f"Модель для эмбеддингов '{emb_model}' не найдена. Доступные модели: {available_models}")
             # Пробуем найти любую модель с 'embed' в названии
             embed_models = [m for m in available_models if 'embed' in m.lower()]
-            if embed_models:
-                emb_model = embed_models[0]
-                let_log(f"Выбрана модель для эмбеддингов: {emb_model}")
-            else:
-                # Если нет моделей для эмбеддингов, используем чат-модель
-                emb_model = default_chat_model
-                let_log(f"Модель для эмбеддингов не найдена. Используем чат-модель: {emb_model}")
-
+            if embed_models: emb_model = embed_models[0]; let_log(f"Выбрана модель для эмбеддингов: {emb_model}")
+            else: emb_model = default_chat_model; let_log(f"Модель для эмбеддингов не найдена. Используем чат-модель: {emb_model}")
         # Автоматическое определение лимита токенов для эмбеддингов
         try:
             if emb_model != default_chat_model:  # Если модели разные, получаем детали для эмбеддинг-модели
                 show_url = f"{base_url}/api/show"
                 show_payload = {"name": emb_model}
                 show_response = session.post(show_url, json=show_payload, timeout=timeout)
-                if show_response.status_code == 200:
-                    model_details = show_response.json()
-                    emb_token_limit = find_context_size(model_details, base_url, {})
-                else:
-                    emb_token_limit = 4095
-            else:
-                emb_token_limit = token_limit
-        except Exception as e:
-            let_log(f"Не удалось определить лимит токенов для эмбеддингов: {e}")
-            emb_token_limit = 4095
-
+                if show_response.status_code == 200: model_details = show_response.json(); emb_token_limit = find_context_size(model_details, base_url, {})
+                else: emb_token_limit = 4095
+            else: emb_token_limit = token_limit
+        except Exception as e: let_log(f"Не удалось определить лимит токенов для эмбеддингов: {e}"); emb_token_limit = 4095
         return [True, token_limit, tags]
-
-    except requests.exceptions.RequestException as e:
-        session = None
-        return [False, 0, tags, f"Ошибка подключения: {e}"]
-    except Exception as e:
-        session = None
-        return [False, 0, tags, f"Непредвиденная ошибка: {e}"]
+    except requests.exceptions.RequestException as e: session = None; return [False, 0, tags, f"Ошибка подключения: {e}"]
+    except Exception as e: session = None; return [False, 0, tags, f"Непредвиденная ошибка: {e}"]
 
 def disconnect() -> bool:
     """Закрыть HTTP сессию"""
@@ -352,8 +290,7 @@ def _request_with_backoff(api_url, json_payload):
     for attempt in range(1, MAX_RETRIES + 1):
         # Проверка общего времени выполнения
         elapsed = time.time() - start_time
-        if elapsed > MAX_WAIT_TOTAL:
-            raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
+        if elapsed > MAX_WAIT_TOTAL: raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
         try:
             response = session.post(api_url, json=json_payload)
             # Обработка HTTP ошибок с повторными попытками
@@ -361,60 +298,47 @@ def _request_with_backoff(api_url, json_payload):
                 # Пытаемся определить, является ли ошибка квотной (сессионный/недельный лимит)
                 retry_after = response.headers.get('Retry-After')
                 wait_time = None
-                if retry_after and retry_after.isdigit():
-                    wait_time = int(retry_after)
+                if retry_after and retry_after.isdigit(): wait_time = int(retry_after)
                 else:
                     # Пытаемся извлечь из текста ошибки
                     try:
                         err_data = response.json()
                         err_msg = err_data.get('error', '').lower()
-                        if 'session limit' in err_msg:
-                            wait_time = 5 * 60 * 60  # 5 часов
-                        elif 'weekly limit' in err_msg:
-                            wait_time = 7 * 24 * 60 * 60  # 7 дней
-                        elif 'insufficient_quota' in err_msg:
-                            raise RuntimeError("balance end")
-                    except:
-                        pass
+                        if 'session limit' in err_msg: wait_time = 5 * 60 * 60 # 5 часов
+                        elif 'weekly limit' in err_msg: wait_time = 7 * 24 * 60 * 60  # 7 дней
+                        elif 'insufficient_quota' in err_msg: raise RuntimeError("balance end")
+                    except: pass
                 if wait_time is not None:
                     # ИЗМЕНЕНИЕ: если время ожидания больше 5 часов (18000 секунд) – сразу исключение
                     MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
-                    if wait_time > MAX_QUOTA_WAIT:
-                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                    if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
                     # Дополнительная проверка на общий лимит MAX_WAIT_TOTAL (420с) – для квотных ошибок она обычно не сработает,
                     # но оставим для безопасности
-                    if wait_time > MAX_WAIT_TOTAL:
-                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
+                    if wait_time > MAX_WAIT_TOTAL: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
                     let_log(f"Обнаружен лимит квоты (429). Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
-                    continue  # повторяем запрос после ожидания
+                    continue # повторяем запрос после ожидания
                 # Иначе это обычный rate limit - используем экспоненциальный backoff
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining:
-                        wait_time = remaining
-                    if wait_time < 0.1:
-                        wait_time = 0.1
+                    if wait_time > remaining: wait_time = remaining
+                    if wait_time < 0.1: wait_time = 0.1
                     let_log(f"HTTP 429 (Rate Limit) на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     continue
-                else:
-                    response.raise_for_status()
+                else: response.raise_for_status()
             if response.status_code in (500, 502, 503, 504):
                 # Временные серверные ошибки - используем экспоненциальный backoff
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining:
-                        wait_time = remaining
-                    if wait_time < 0.1:
-                        wait_time = 0.1
+                    if wait_time > remaining: wait_time = remaining
+                    if wait_time < 0.1: wait_time = 0.1
                     let_log(f"HTTP {response.status_code} на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     continue
-                else:
-                    response.raise_for_status()
+                else: response.raise_for_status()
             # Для других статусов сразу вызываем исключение, если код не 2xx
             response.raise_for_status()
             return response.json()
@@ -423,56 +347,42 @@ def _request_with_backoff(api_url, json_payload):
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining:
-                    wait_time = remaining
-                if wait_time < 0.1:
-                    wait_time = 0.1
+                if wait_time > remaining: wait_time = remaining
+                if wait_time < 0.1: wait_time = 0.1
                 let_log(f"Ошибка соединения на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else:
-                raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
+            else: raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
         except requests.exceptions.Timeout as e:
             # Таймаут запроса – повторяем
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining:
-                    wait_time = remaining
-                if wait_time < 0.1:
-                    wait_time = 0.1
+                if wait_time > remaining: wait_time = remaining
+                if wait_time < 0.1: wait_time = 0.1
                 let_log(f"Таймаут на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else:
-                raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
+            else: raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
         except requests.exceptions.RequestException as e:
             # Другие ошибки сети
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining:
-                    wait_time = remaining
-                if wait_time < 0.1:
-                    wait_time = 0.1
+                if wait_time > remaining: wait_time = remaining
+                if wait_time < 0.1: wait_time = 0.1
                 let_log(f"Сетевая ошибка на попытке {attempt}: {e}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else:
-                raise RuntimeError(f"Сетевая ошибка после {MAX_RETRIES} попыток: {e}")
+            else: raise RuntimeError(f"Сетевая ошибка после {MAX_RETRIES} попыток: {e}")
     raise RuntimeError("Превышено максимальное количество попыток")
 
 def ask_model(generation_params):
-    if not session or not base_url or not default_chat_model:
-        raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
+    if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/generate"
     try:
         let_log(f"ask_model: Отправка запроса на {api_url}")
-        ollama_params = {
-            "model": default_chat_model,
-            "prompt": generation_params.get("prompt", ""),
-            "stream": False,
-            "options": {}}
+        ollama_params = {"model": default_chat_model, "prompt": generation_params.get("prompt", ""), "stream": False, "options": {}}
         param_mapping = {
             "max_tokens": "num_predict",
             "temperature": "temperature",
@@ -481,25 +391,19 @@ def ask_model(generation_params):
             "repeat_penalty": "repeat_penalty",
             "stop": "stop"}
         for param, value in generation_params.items():
-            if param == "prompt":
-                continue
-            if param in param_mapping:
-                ollama_params["options"][param_mapping[param]] = value
-            else:
-                ollama_params["options"][param] = value
+            if param == "prompt": continue
+            if param in param_mapping: ollama_params["options"][param_mapping[param]] = value
+            else: ollama_params["options"][param] = value
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model: Получен ответ, длина: {len(str(data))} символов")
         result = data.get("response", "").strip()
         let_log(f"ask_model: Результат: '{result[:100]}...'")
         return result
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Ошибка сети: {e}")
-    except Exception as e:
-        raise RuntimeError(f"Неожиданная ошибка: {e}")
+    except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
+    except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
 
 def ask_model_chat(generation_params):
-    if not session or not base_url or not default_chat_model:
-        raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
+    if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/chat"
     try:
         let_log(f"ask_model_chat: Отправка запроса на {api_url}")
@@ -518,24 +422,18 @@ def ask_model_chat(generation_params):
             "repeat_penalty": "repeat_penalty",
             "stop": "stop"}
         for param, value in generation_params.items():
-            if param in ["messages", "model"]:
-                continue
-            if param in param_mapping:
-                ollama_params["options"][param_mapping[param]] = value
-            else:
-                ollama_params["options"][param] = value
+            if param in ["messages", "model"]: continue
+            if param in param_mapping: ollama_params["options"][param_mapping[param]] = value
+            else: ollama_params["options"][param] = value
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model_chat: Получен ответ, длина: {len(str(data))} символов")
         return data
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Ошибка сети: {e}")
-    except Exception as e:
-        raise RuntimeError(f"Неожиданная ошибка: {e}")
+    except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
+    except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
 
 def create_embeddings(text):
     global base_url, emb_model, session
-    if not base_url or not emb_model or not session:
-        raise RuntimeError("Клиент Ollama для эмбеддингов не инициализирован. Вызовите connect() сначала.")
+    if not base_url or not emb_model or not session: raise RuntimeError("Клиент Ollama для эмбеддингов не инициализирован. Вызовите connect() сначала.")
     api_url = f"{base_url}/api/embeddings"
     text = text.strip()
     payload = {"model": emb_model, "prompt": text}
@@ -547,8 +445,7 @@ def create_embeddings(text):
         while True:
             try:
                 elapsed = time.time() - start_time
-                if elapsed > MAX_WAIT_TOTAL:
-                    raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с) для эмбеддингов")
+                if elapsed > MAX_WAIT_TOTAL: raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с) для эмбеддингов")
                 response = session.post(api_url, json=payload, timeout=30)
                 # Обработка ошибок контекста
                 if response.status_code == 500:
@@ -561,33 +458,23 @@ def create_embeddings(text):
                         'token limit exceeded',
                         'exceeds the context',
                         'exceeds context length']
-                    if any(keyword in error_text for keyword in context_error_keywords):
-                        raise RuntimeError('ContextOverflowError')
+                    if any(keyword in error_text for keyword in context_error_keywords): raise RuntimeError('ContextOverflowError')
                 if response.status_code == 429:
-                    # Аналогичная логика как в _request_with_backoff
                     retry_after = response.headers.get('Retry-After')
                     wait_time = None
-                    if retry_after and retry_after.isdigit():
-                        wait_time = int(retry_after)
+                    if retry_after and retry_after.isdigit(): wait_time = int(retry_after)
                     else:
                         try:
                             err_data = response.json()
                             err_msg = err_data.get('error', '').lower()
-                            if 'session limit' in err_msg:
-                                wait_time = 5 * 60 * 60
-                            elif 'weekly limit' in err_msg:
-                                wait_time = 7 * 24 * 60 * 60
-                            elif 'insufficient_quota' in err_msg:
-                                raise RuntimeError("balance end")
-                        except:
-                            pass
+                            if 'session limit' in err_msg: wait_time = 5 * 60 * 60
+                            elif 'weekly limit' in err_msg: wait_time = 7 * 24 * 60 * 60
+                            elif 'insufficient_quota' in err_msg: raise RuntimeError("balance end")
+                        except: pass
                     if wait_time is not None:
-                        # ИЗМЕНЕНИЕ: если время ожидания больше 5 часов (18000 секунд) – сразу исключение
                         MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
-                        if wait_time > MAX_QUOTA_WAIT:
-                            raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
-                        if wait_time > MAX_WAIT_TOTAL:
-                            raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
+                        if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                        if wait_time > MAX_WAIT_TOTAL: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
                         let_log(f"create_embeddings: Обнаружен лимит квоты (429). Ожидание {wait_time:.2f} с...")
                         time.sleep(wait_time)
                         attempt += 1
@@ -596,10 +483,8 @@ def create_embeddings(text):
                     if attempt < MAX_RETRIES:
                         wait_time = BASE_BACKOFF ** attempt
                         remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                        if wait_time > remaining:
-                            wait_time = remaining
-                        if wait_time < 0.1:
-                            wait_time = 0.1
+                        if wait_time > remaining: wait_time = remaining
+                        if wait_time < 0.1: wait_time = 0.1
                         let_log(f"create_embeddings: HTTP 429 (Rate Limit), повтор через {wait_time:.2f} с...")
                         time.sleep(wait_time)
                         attempt += 1
@@ -609,10 +494,8 @@ def create_embeddings(text):
                     if attempt < MAX_RETRIES:
                         wait_time = BASE_BACKOFF ** attempt
                         remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                        if wait_time > remaining:
-                            wait_time = remaining
-                        if wait_time < 0.1:
-                            wait_time = 0.1
+                        if wait_time > remaining: wait_time = remaining
+                        if wait_time < 0.1: wait_time = 0.1
                         let_log(f"create_embeddings: HTTP {response.status_code}, повтор через {wait_time:.2f} с...")
                         time.sleep(wait_time)
                         attempt += 1
@@ -620,39 +503,30 @@ def create_embeddings(text):
                 response.raise_for_status()
                 data = response.json()
                 embedding = data.get('embedding', [])
-                if not embedding:
-                    raise ValueError("Пустой вектор эмбеддингов в ответе от Ollama")
+                if not embedding: raise ValueError("Пустой вектор эмбеддингов в ответе от Ollama")
                 let_log(f"create_embeddings: Получен вектор размером {len(embedding)}")
                 return embedding
             except requests.exceptions.ConnectionError as e:
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining:
-                        wait_time = remaining
-                    if wait_time < 0.1:
-                        wait_time = 0.1
+                    if wait_time > remaining: wait_time = remaining
+                    if wait_time < 0.1: wait_time = 0.1
                     let_log(f"create_embeddings: Ошибка соединения, повтор через {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     attempt += 1
                     continue
-                else:
-                    raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
+                else: raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
             except requests.exceptions.Timeout as e:
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining:
-                        wait_time = remaining
-                    if wait_time < 0.1:
-                        wait_time = 0.1
+                    if wait_time > remaining: wait_time = remaining
+                    if wait_time < 0.1: wait_time = 0.1
                     let_log(f"create_embeddings: Таймаут, повтор через {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     attempt += 1
                     continue
-                else:
-                    raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Ошибка API эмбеддингов Ollama: {str(e)}")
-    except (KeyError, IndexError, ValueError) as e:
-        raise RuntimeError(f"Некорректный формат ответа от API эмбеддингов Ollama: {e}")
+                else: raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
+    except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка API эмбеддингов Ollama: {str(e)}")
+    except (KeyError, IndexError, ValueError) as e: raise RuntimeError(f"Некорректный формат ответа от API эмбеддингов Ollama: {e}")

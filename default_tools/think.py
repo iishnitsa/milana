@@ -9,9 +9,7 @@ import cross_gpt # чтобы система посчитала функцию �
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = (
-            'answer',
-        )
+        main.attr_names = ('answer',)
         main.answer = 'Accepted. Your thought was not sent to the interlocutor.'
         return
     return main.answer

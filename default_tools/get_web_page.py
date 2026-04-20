@@ -161,28 +161,19 @@ def get_page_text(url):
                 text_content = best_elem.get_text(" ", strip=True)
             else:
                 text_content = soup.get_text(" ", strip=True)
-
         text_content = re.sub(r'\s+', ' ', text_content).strip()
-
-        if len(text_content) < 100:
-            return ''
+        if len(text_content) < 100: return ''
         words = text_content.split()
-        if len(words) < 20:
-            return ''
+        if len(words) < 20: return ''
         error_phrases = ['404', 'not found', 'page not found', 'access denied']
-        if any(phrase in text_content.lower() for phrase in error_phrases):
-            return ''
-
+        if any(phrase in text_content.lower() for phrase in error_phrases): return ''
         return text_content
-    except Exception as e:
-        return ''
+    except Exception as e: return ''
 
 def main(text):
     if not hasattr(main, 'attr_names'):
         let_log('INITIALIZATION')
-        main.attr_names = (
-            'extract_error_msg',
-        )
+        main.attr_names = ('extract_error_msg')
         main.extract_error_msg = 'Extraction error: '
         return
     let_log('WEB PAGE TEXT CALLED')
@@ -190,9 +181,6 @@ def main(text):
     url = text.strip()
     try:
         page_text = get_page_text(url)
-        if not page_text:
-            return found_info_1
+        if not page_text: return found_info_1
         return page_text
-    except Exception as e:
-        let_log(f'Error in web_page_text: {str(e)}')
-        return f"{main.extract_error_msg}{str(e)}"
+    except Exception as e: let_log(f'Error in web_page_text: {str(e)}'); return f"{main.extract_error_msg}{str(e)}"

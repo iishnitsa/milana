@@ -21,19 +21,13 @@ def main(text: str) -> str:
     filename = filename_part.strip()
     content = content.strip()
     base_dir = os.path.join(chat_path, "files")
-    # Get filename parts
     name, ext = os.path.splitext(filename)
     counter = 1
     original_filename = filename
-    # Find unique filename
-    while os.path.exists(os.path.join(base_dir, filename)):
-        filename = f"{name}_{counter}{ext}"
-        counter += 1
+    while os.path.exists(os.path.join(base_dir, filename)): filename = f"{name}_{counter}{ext}"; counter += 1
     path = os.path.join(base_dir, filename)
     try:
         with open(path, 'w', encoding='utf-8') as f: f.write(content)
         if filename != original_filename: return main.file_exists.format(filename=filename)
         return main.confirmation_text
-    except Exception as e:
-        print(f"Error: {e}")
-        return main.confirmation_text
+    except Exception as e: print(f"Error: {e}"); return main.confirmation_text
