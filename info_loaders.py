@@ -35,6 +35,7 @@ from cross_gpt import (
     excel_cheet_error_text,
     excel_empty_text,
     excel_error_text)
+from cross_gpt import global_state   # ДОБАВЛЕНО
 
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'): return os.path.join(sys._MEIPASS, relative_path)
@@ -191,6 +192,8 @@ def process_pdf(file_path_or_data, input_file_handlers):
         text = page.get_text()
         if text.strip(): full_text.append(f"--- {page_pdf_prompt_infoloaders} {page_num} ---"); full_text.append(text.strip())
         for image_index, img in enumerate(page.get_images(full=True), start=1):
+            if global_state.skip_nested_images:   # ДОБАВЛЕНО
+                continue                           # ДОБАВЛЕНО
             xref = img[0]
             base_image = pdf.extract_image(xref)
             image_bytes = base_image["image"]
@@ -223,6 +226,8 @@ def process_docx(file_path_or_data, input_file_handlers):
                     embed_elements = run.element.xpath('.//a:blip/@r:embed')
                     if embed_elements:
                         for embed_id in embed_elements:
+                            if global_state.skip_nested_images:   # ДОБАВЛЕНО
+                                continue                           # ДОБАВЛЕНО
                             attachment_count += 1
                             try:
                                 # Получаем часть документа, соответствующую медиафайлу
@@ -261,6 +266,8 @@ def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0
         return [{'filename': zip_archive_name_infoloaders, 'content': f"Достигнута максимальная глубина вложенности архивов ({max_depth})", 'type': 'error'}]
     let_log('ZIP-архив' + (' (вложенный)' if is_nested else ''))
     results = []
+    # ДОБАВЛЕНО: список расширений изображений
+    image_extensions = {'jpg', 'jpeg', 'png', 'bmp', 'gif', 'tiff'}
     try:
         # Определяем тип входных данных
         if isinstance(file_path_or_data, bytes): zip_file = zipfile.ZipFile(BytesIO(file_path_or_data))
@@ -274,6 +281,10 @@ def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0
                 # Получаем расширение файла
                 _, ext = os.path.splitext(file_info.filename)
                 ext = ext[1:].lower() # Убираем точку и приводим к нижнему регистру
+                # ДОБАВЛЕНО: пропуск изображений при включённом флаге
+                if ext in image_extensions and global_state.skip_nested_images:
+                    results.append({'filename': file_path, 'content': "Обработка вложенных изображений отключена", 'type': 'skipped'})
+                    continue
                 # Читаем содержимое файла
                 try: file_content = zip_file.read(file_info)
                 except Exception as read_error: results.append({'filename': file_path, 'content': f"Ошибка чтения файла из архива: {read_error}", 'type': 'error'}); continue

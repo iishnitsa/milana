@@ -64,6 +64,7 @@ TEXTS = {
     "hierarchy_limit": "Hierarchy level limit",
     "use_librarian": "Use Librarian",
     "recreate_agents": "Recreate agents with a new task",
+    "skip_nested_images": "Skip nested images",
     "system_modules": "System Modules",
     "global_custom_modules": "Custom Modules (Global)",
     "chat_specific_modules": "New Modules (Chat-specific)",

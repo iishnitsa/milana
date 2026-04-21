@@ -56,6 +56,7 @@ class GlobalState:
         self.start_dialog_command_name = ''
         self.skip_tools_keys = []
         self.last_agent = None
+        self.skip_nested_images = 0
 global_state = GlobalState()
 
 chat_path = ''
@@ -2446,9 +2447,10 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     settings = load_chat_settings(chat_id)
     tool_paths = settings.get("another_tools", [])
     token_limit = int(settings.get("token_limit", 8192))
+    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     global_state.write_results = int(settings.get("write_results", 0)) == 1
-    global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
+    global_state.skip_nested_images = int(settings.get("skip_nested_images", 0)) == 1
     use_rag = int(settings.get("use_rag", 1)) == 1
     is_save_log = int(settings.get("write_log", 1)) == 1
     use_librarian = int(settings.get("use_librarian", 1)) == 1

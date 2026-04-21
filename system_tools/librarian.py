@@ -1,6 +1,6 @@
 '''
 need_info
-Call to obtain missing information. One question per line. Ask all questions at once in A SINGLE COMMAND but on a new line if there are multiple questions. Each question must be self-contained, as the system does not consider context during the search. For example, "What authoritative sources study the phenomenon X?" instead of "What authoritative sources exist?". Only questions are allowed; no other text. Searches through files sent by the client, if any, completed dialogues. It may well not find anything, if the query is nothing, use another available search tool.
+Call to obtain missing information. One question per line. Ask all questions at once in A SINGLE COMMAND but on a new line if there are multiple questions. Each question must be self-contained, as the system does not consider context during the search. For example, "What authoritative sources study the phenomenon X?" instead of "What authoritative sources exist?". Only questions are allowed; no other text. Searches through files sent by the client, if any, completed dialogues. It may well not find anything, if the query is nothing, use another available search tool. Be sure to put a question mark (?) at the end of each line with a question
 '''
 
 import os
@@ -214,8 +214,8 @@ Just output the fragment exactly as it appears, nothing else.
         lines = quest.splitlines()
         question_lines = [line for line in lines if '?' in line]
         if not question_lines:
-            return found_info_1
-            question_lines = lines # TODO:
+            # return found_info_1
+            question_lines = lines # TODO: если ретёрн то надо писать почему а в описании команды писать что надо вопросы ставить, в gigo и critic тоже написать
         cleaned_questions = []
         for question in question_lines:
             cleaned = re.sub(r'^\s*(?:\d+[\.\)]\s*|[-*•]\s*)*', '', question.strip())

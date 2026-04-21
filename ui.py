@@ -698,7 +698,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "filter_generations": "0", "hierarchy_limit": "0",
                 "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
                 "max_token_limit": "8192", "use_librarian": "1",
-                "recreate_agents": "0"}
+                "recreate_agents": "0",
+                "skip_nested_images": "0"}
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
             widget_type_map = {
@@ -708,6 +709,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "write_results": "switch",
                 "use_librarian": "switch",
                 "recreate_agents": "switch",
+                "skip_nested_images": "switch",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",}
             for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))

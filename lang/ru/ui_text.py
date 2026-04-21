@@ -64,6 +64,7 @@ TEXTS = {
     "hierarchy_limit": "Лимит ступеней иерархии",
     "use_librarian": "Использовать Библиотекаря",
     "recreate_agents": "Пересоздавать агентов с новой задачей",
+    "skip_nested_images": "Пропускать вложенные изображения",
     "system_modules": "Системные модули",
     "global_custom_modules": "Пользовательские модули (глобальные)",
     "chat_specific_modules": "Новые модули (только для этого чата)",
