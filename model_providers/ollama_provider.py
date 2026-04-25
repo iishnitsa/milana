@@ -19,6 +19,9 @@ do_chat_construct = True
 native_func_call = False
 tags = {}
 
+# Флаг автоматического пропуска num_predict (костыль для 400 ошибок)
+_skip_num_predict = False
+
 # Константы для прогрессивной задержки
 MAX_RETRIES = 20          # Максимальное количество попыток
 MAX_WAIT_TOTAL = 420      # 7 минут в секундах
@@ -281,26 +284,37 @@ def disconnect() -> bool:
     return False
 
 def _request_with_backoff(api_url, json_payload):
+    let_log(json_payload)
     """
     Универсальный метод для запросов к Ollama с прогрессивной задержкой.
     Для облачного режима отдельно обрабатывает 429 с лимитами сессии/недели.
     """
+    global _skip_num_predict
     start_time = time.time()
     last_exception = None
+    # Если флаг уже установлен, сразу удаляем num_predict, чтобы не тратить попытки
+    if _skip_num_predict and 'options' in json_payload and 'num_predict' in json_payload['options']:
+        del json_payload['options']['num_predict']
+        let_log("Костыль: num_predict удалён из запроса (по флагу _skip_num_predict).")
     for attempt in range(1, MAX_RETRIES + 1):
         # Проверка общего времени выполнения
         elapsed = time.time() - start_time
         if elapsed > MAX_WAIT_TOTAL: raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
         try:
-            response = session.post(api_url, json=json_payload)
+            response = session.post(api_url, json=json_payload) # Обработка HTTP 400 — отдельно, для возможного исключения num_predict
+            if response.status_code == 400:
+                if 'options' in json_payload and 'num_predict' in json_payload['options']:# Убираем num_predict и пробуем снова
+                    del json_payload['options']['num_predict']
+                    let_log("Обнаружена ошибка 400. Убираем num_predict и пробуем снова.")
+                    _skip_num_predict = True
+                    continue  # повторить запрос (счётчик попыток не сбрасываем, но прогресс идёт)
+                else: response.raise_for_status()
             # Обработка HTTP ошибок с повторными попытками
-            if response.status_code == 429:
-                # Пытаемся определить, является ли ошибка квотной (сессионный/недельный лимит)
+            if response.status_code == 429:  # Пытаемся определить, является ли ошибка квотной (сессионный/недельный лимит)
                 retry_after = response.headers.get('Retry-After')
                 wait_time = None
                 if retry_after and retry_after.isdigit(): wait_time = int(retry_after)
-                else:
-                    # Пытаемся извлечь из текста ошибки
+                else: # Пытаемся извлечь из текста ошибки
                     try:
                         err_data = response.json()
                         err_msg = err_data.get('error', '').lower()
