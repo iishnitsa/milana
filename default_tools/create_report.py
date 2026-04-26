@@ -20,7 +20,5 @@ def main(text):
     try:
         with open(path, 'w', encoding='utf-8') as f: f.write(text.strip())
         send_ui_no_cache(main.report_created_text + filename, attach=[path])
-        return ""
-    except Exception as e:
-        print(f"Error: {e}")
-        return main.confirmation_text
+    except Exception as e: print(f"Error: {e}")
+    return main.confirmation_text

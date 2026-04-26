@@ -29,5 +29,5 @@ def main(text: str) -> str:
     try:
         with open(path, 'w', encoding='utf-8') as f: f.write(content)
         if filename != original_filename: return main.file_exists.format(filename=filename)
-        return main.confirmation_text
-    except Exception as e: print(f"Error: {e}"); return main.confirmation_text
+    except Exception as e: print(f"Error: {e}")
+    return main.confirmation_text

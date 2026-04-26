@@ -644,67 +644,51 @@ def globalize_language_packet(language):
     let_log(f"Языковой пакет '{language}' загружен, переменные экспортированы")
 
 def _check_module_uses_cross_gpt(file_contents):
-    """Проверяет, использует ли модуль функции из cross_gpt, которые требуют кэширования."""
-    # Удаляем комментарии из содержимого файла
+    """Проверяет, использует ли модуль важные функции из cross_gpt, которые требуют кэширования."""
+    # Удаляем комментарии
     lines = file_contents.split('\n')
     clean_lines = []
     for line in lines:
         if '#' in line: line = line[:line.index('#')]
         clean_lines.append(line)
     clean_content = '\n'.join(clean_lines)
-    # 1. Проверяем импорт всего модуля cross_gpt или chat_manager
-    for module in important_modules:
-        if f'import {module}' in clean_content: return True
-        if f'from {module} import' in clean_content: return True
-    # 2. Проверяем многострочные импорты из cross_gpt
-    # Ищем паттерн: from cross_gpt import ( ... )
-    import_pattern = r'from\s+cross_gpt\s+import\s*\(([^)]+)\)'
-    matches = re.findall(import_pattern, clean_content, re.DOTALL | re.IGNORECASE)
-    for match in matches:
-        # Разбиваем импортируемые имена по запятым
-        imports = [imp.strip().split()[0] for imp in match.split(',') if imp.strip()]
-        # Проверяем, есть ли среди них важные функции
-        for imp in imports: # Убираем возможные as-алиасы
+    # 1. Импорт из chat_manager (всегда системный)
+    if re.search(r'from\s+chat_manager\s+import', clean_content, re.IGNORECASE): return True
+    if 'chat_manager.' in clean_content: return True
+    # 2. Проверяем использование cross_gpt.важная_функция
+    for func in important_functions:
+        if f'cross_gpt.{func}' in clean_content: return True
+    # 3. Ищем импорты из cross_gpt
+    # Многострочный импорт: from cross_gpt import ( ... )
+    multi_pattern = r'from\s+cross_gpt\s+import\s*\(([^)]+)\)'
+    for match in re.finditer(multi_pattern, clean_content, re.DOTALL | re.IGNORECASE):
+        imports = [imp.strip().split()[0] for imp in match.group(1).split(',') if imp.strip()]
+        if '*' in imports: return True
+        for imp in imports:
             if ' as ' in imp: imp = imp.split(' as ')[0].strip()
             if imp in important_functions: return True
-    # 3. Проверяем однострочные импорты из cross_gpt
-    # Ищем паттерн: from cross_gpt import func1, func2, func3
-    single_line_pattern = r'from\s+cross_gpt\s+import\s+([^\(\n]+)'
-    matches = re.findall(single_line_pattern, clean_content, re.IGNORECASE)
-    for match in matches:
-        # Исключаем импорт с *
-        if '*' in match: return True
-        # Разбиваем импортируемые имена по запятым
-        imports = [imp.strip().split()[0] for imp in match.split(',') if imp.strip()]
-        # Проверяем, есть ли среди них важные функции
-        for imp in imports: # Убираем возможные as-алиасы
+    # Однострочный импорт: from cross_gpt import func1, func2, ...
+    single_pattern = r'from\s+cross_gpt\s+import\s+([^\(\n]+)'
+    for match in re.finditer(single_pattern, clean_content, re.IGNORECASE):
+        imports = [imp.strip().split()[0] for imp in match.group(1).split(',') if imp.strip()]
+        if '*' in imports: return True
+        for imp in imports:
             if ' as ' in imp: imp = imp.split(' as ')[0].strip()
             if imp in important_functions: return True
-    # 4. Проверяем импорты внутри функций (могут быть многострочными)
-    # Ищем все вхождения from cross_gpt import независимо от позиции
+    # 4. Импорты внутри функций (могут быть многострочными)
     all_imports = re.findall(r'from\s+cross_gpt\s+import\s+.*?(?=\n|$)', clean_content, re.DOTALL | re.IGNORECASE)
-    for import_stmt in all_imports: # Извлекаем часть после import
+    for import_stmt in all_imports:
         import_part = import_stmt.split('import', 1)[1].strip()
-        # Проверяем многострочный ли это импорт
-        if '(' in import_part and ')' in import_part: # Многострочный импорт в одной строке
+        if '(' in import_part and ')' in import_part:
             start = import_part.find('(') + 1
             end = import_part.rfind(')')
             import_list = import_part[start:end]
-        else: import_list = import_part # Однострочный импорт
-        # Разбиваем по запятым
+        else: import_list = import_part
         imports = [imp.strip().split()[0] for imp in import_list.split(',') if imp.strip()]
-        # Проверяем, есть ли среди них важные функции
-        for imp in imports: # Убираем возможные as-алиасы
+        if '*' in imports: return True
+        for imp in imports:
             if ' as ' in imp: imp = imp.split(' as ')[0].strip()
-            if imp == '*': return True
             if imp in important_functions: return True
-    # 5. Проверяем использование cross_gpt.функция
-    for func in important_functions:
-        if f'cross_gpt.{func}' in clean_content: return True
-    # 6. Проверяем импорт из chat_manager
-    # Ищем from chat_manager import что-угодно
-    if re.search(r'from\s+chat_manager\s+import', clean_content, re.IGNORECASE): return True
-    if 'chat_manager.' in clean_content: return True # 7. Проверяем использование chat_manager.что-угодно
     return False
 
 def mod_loader(adrs):
@@ -2219,7 +2203,7 @@ def tools_selector(text, sid):
     try: # 10) кэшировать результат если не системная команда
         if not is_system:
             let_log("[TOOLS_SELECTOR] Кэшируем результат (не системная команда)")
-            write_cache(result)
+            write_cache([True, result])
             traceprint()
     except Exception: pass
     let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
