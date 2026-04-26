@@ -27,7 +27,7 @@ rsync -av --delete \
     --exclude='*.pyo' \
     --exclude='*.pyd' \
     --exclude='*.db' \
-    --exclude='chats' \
+    --exclude='chats/*' \
     --exclude='*.log' \
     --exclude='*.tmp' \
     --exclude='.git*' \
