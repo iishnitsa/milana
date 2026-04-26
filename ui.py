@@ -1926,14 +1926,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 fg_color="transparent",
                 border_width=0,
                 corner_radius=0)
-            self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=1.5)
+            self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
             if hasattr(self.messages_frame, '_scrollbar'):
                 self.messages_frame._scrollbar.configure(width=12)
                 try: self.messages_frame._scrollbar.configure(corner_radius=50)
-                except: pass
-            if hasattr(self.messages_frame, '_scrollbar_horizontal'):
-                self.messages_frame._scrollbar_horizontal.configure(width=12)
-                try: self.messages_frame._scrollbar_horizontal.configure(corner_radius=50)
                 except: pass
             self.log_message_widgets = []
             self.check_log_queue()
