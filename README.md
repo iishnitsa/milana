@@ -34,10 +34,10 @@ You can write your own module using the documentation below. It's not difficult.
 In the future, I will add compatibility with popular standards such as MCP.
 
 The request I used to debug the system was related to progress in Alzheimer's treatment, as this ambiguous topic requires meticulous study. Literally, it was:
-```
+`
 perform a meta-study on the entire study of alzheimer's and drugs for this disease, draw conclusions about what alzheimer's is according to the most likely theory (this can be found out by comparing many works), about scandals, about misconceptions, etc., in order to get the most reliable information about what alzheimer's is and how to treat it
 periodically make reports on the information found and the conclusions drawn
-```
+`
 Unfortunately, `ministral-3` responses are quite unstable, cloud `qwen3.5:2b` was unavailable, and there was no time for GPU-based work; the demo was recorded on `qwen3.5:cloud`, which isn't very cheap. In the future, I will disable thinking for the model in some places and record a demo on a weaker `Qwen3.5`.
 With these settings, I obtained the following result, consisting of several reports and a final answer, though a demo with link-only access is better:
 [Milana 04 2026 demo YouTube](https://www.youtube.com/watch?v=USj5WB6UfME)
@@ -127,6 +127,8 @@ Run `linux_macos.sh` in the `install` folder.
 To compile a binary `ELF`, use the `build_linux.sh` script.
 </details>
 </details>
+</details>
+
 <details>
 <summary>How to Use</summary>
 1. Run Milana and configure the model. Models like `qwen3.5` are recommended.
@@ -150,6 +152,7 @@ Chat Settings
 - Only `Ollama` and `GPT4All` providers are well-tested.
 - If you encounter errors, send to Discord `iishnitsa_milana`: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other relevant files from the chat folder where the problem occurred, with a detailed description.
 </details>
+
 <details>
 <summary>How to Develop Modules</summary>
 A module consists of:
@@ -403,6 +406,8 @@ The `librarian` and `simple_web_search` modules, although they don't have a deco
 * **`get_input_message()`**: wait for a message from the user sent after executing this command.
 * **`send_log_to_ui(message)`**: send service text to the UI log window.
 </details>
+</details>
+
 <details>
 <summary>How to Develop Model Providers</summary>
 
@@ -535,11 +540,12 @@ Important exceptions expected by the engine:
 - When API balance is exhausted: `raise RuntimeError("balance end")`
 - On context overflow: `raise RuntimeError("ContextOverflowError")`
 </details>
-</details>
+
 <details>
 <summary>Third-Party Modules</summary>
 Links to modules developed by the community will appear here.
 </details>
+
 <details>
 <summary>Third-Party Providers</summary>
 Links to providers developed by the community will appear here.
