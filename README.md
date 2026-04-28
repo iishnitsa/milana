@@ -1,199 +1,431 @@
-# milana  
-A prototype of a dynamic hierarchical agent system focused on weak models and requiring minimal user intervention. The goal is to create something at the user's request, with the ability to interact with the physical world using various tools.  
+<p align="center"><img src="data/icons/icon.png" alt="Milana Logo" width="120"></p>
+<h1 align="center"><span style="color: #5200ff;">Milana</span></h1>
+<p align="center"><strong>Autonomous · Independent · Free · For Mere Mortals</strong></p>
+<p align="center"><img src="https://img.shields.io/badge/Discord-iishnitsa_milana-5865F2?logo=discord&logoColor=white" alt="Discord"></p>
+
+[Features (+video demo)](#features-and-use-cases) | [How It Works](#how-it-works) | [History](#history-and-project-details) | [Installation](#installation-for-users-or-in-venv-for-windowsmacoslinux-or-exe-build) | [How to Use](#how-to-use) | [Module Development](#how-to-develop-modules) | [Provider Development](#how-to-develop-model-providers) | [Third-Party Modules and Providers](#third-party-modules)
+
+Here is what I am **trying** to achieve.
+
+## Autonomous
+It develops an execution plan, delegates complex tasks, and verifies itself without human intervention. Hierarchical delegation allows returning fully developed results instead of abstract answers for complex tasks. Using deep research? A single request of yours will trigger a chain of deep research and reasoning.
+
+## Independent
+Requires only a connection to a model, which can also run locally. Agent memory is stored locally. Computations happen locally.
+
+## Free
+No request limits, file upload limits, paid subscription tiers, or regional restrictions.
+
+## For Mere Mortals
+Just run the .exe installer; no console required.
+
+## Optimized for Weak Models
+Initially, I was limited by an old laptop, and then I grew to like it. I have to write detailed prompts and create special user-friendly conditions. It spends an incredibly small number of tokens on medium-complexity tasks. More to come.
+
+## Universal
+Supports any sufficiently smart instruct model. The model doesn't necessarily need agentic or tool-calling capabilities, nor does it need to strictly follow specific standards.
+
+## The Best
+The prototype is far from an attractive state, but I will constantly improve it, putting my soul and vision into it.
+
+## Features and Use Cases
+Module support allows the system to do anything, even turning on a kettle. At the moment, I've written a few modules; the truly useful ones are web search, deep research, and report generation. I haven't finished the command-line work yet.
+You can write your own module using the documentation below. It's not difficult.
+In the future, I will add compatibility with popular standards such as MCP.
+
+The request I used to debug the system was related to progress in Alzheimer's treatment, as this ambiguous topic requires meticulous study. Literally, it was:
+```
+perform a meta-study on the entire study of alzheimer's and drugs for this disease, draw conclusions about what alzheimer's is according to the most likely theory (this can be found out by comparing many works), about scandals, about misconceptions, etc., in order to get the most reliable information about what alzheimer's is and how to treat it
+periodically make reports on the information found and the conclusions drawn
+```
+Unfortunately, `ministral-3` responses are quite unstable, cloud `qwen3.5:2b` was unavailable, and there was no time for GPU-based work; the demo was recorded on `qwen3.5:cloud`, which isn't very cheap. In the future, I will disable thinking for the model in some places and record a demo on a weaker `Qwen3.5`.
+With these settings, I obtained the following result, consisting of several reports and a final answer, though a demo with link-only access is better:
+[Milana 04 2026 demo on YouTube](https://www.youtube.com/watch?v=USj5WB6UfME)
+Currently, interaction with the PC is limited. The command-line module doesn't inspire confidence, and direct advanced file handling hasn't been implemented. But! Both command line and file handling are in the plans. I won't say exactly what I'm going to do, but it will be a very clever and fault-tolerant system, also adapted for weak models.
+
+## How It Works
+```mermaid
+flowchart TD
+    A[Client Task] --> B[GIGO: Plan Generation - Dreamer → Realist → Critic]
+    B --> C[Create Milana Operator and Select Tools]
+    C --> D[Create Ivan Executor with Toolset]
+    D --> E[Dialogue between Milana and Ivan, Task Execution]
+
+    E --> F{Executor Delegates?}
+    F -->|Yes| B
+    F -->|No| G[End Dialogue and Transfer Result]
+
+    G --> H[Critic Evaluates Result]
+    H --> I{Satisfactory?}
+    I -->|Yes, 3| J[Success → Result to Client]
+    I -->|No, <2 attempts| K[Formulate New Task for Executor or Operator]
+    K --> B
+    I -->|Unsure, 2| J
+    I -->|No, 2 attempts| J
+```
+The system begins by receiving a client task, which enters the GIGO block where three roles—Dreamer, Realist, and Critic—trigger sequentially to form a structured action plan. Based on this plan, a Milana agent-operator is created to select the necessary tools, followed by the creation of an Ivan executor with its own toolset, and a dialogue begins between them to execute the task. If during the dialogue the executor realizes it cannot handle the task, it can delegate it to a new level, returning the process to the GIGO block to create a nested dialogue. When the dialogue is finished and a result is obtained, it is passed to the Critic, who evaluates its quality (up to two attempts are given by default). Depending on the evaluation: on full success, the result is returned to the client; if unsure, human verification is required; if the result is unsatisfactory but attempts remain, a refined task is formed and the process returns to executor creation; if both attempts fail, the task with the critic's comments is returned to the level above (to the superior agent or the original client).
 
 <details>
-<summary>About the project</summary>
-Once, I was talking to ChatGPT, asking for help in developing a certain project. In response, I received an implementation plan. At first, I fed the tasks from the plan to ChatGPT one by one, and then I got the idea to make it communicate with itself.
+<summary>History and Project Details</summary>
+One day I was talking to ChatGPT, asking for help in developing a project. In response, I received an implementation plan. At first, I fed the tasks from the plan to ChatGPT one by one, and then I had the idea to make it talk to itself.
 
-Later, I realized that the tasks were too complex for it, and it would be good to create a plan for those tasks as well. The idea was expanded with a hierarchy that should grow by one level at the AI's command.
+Later I realized that the tasks were too complex for it, and it would be good to create a plan for those tasks as well. The idea expanded into a hierarchy that should grow by one level at the AI's command.
 
-I started the implementation.
+I proceeded to implementation.
 
-I chose LangChain as the foundation. At the time, I thought it would be well-suited for creating an agent that would issue commands to create hierarchy levels. However, several problems emerged during development:
+I chose LangChain as the foundation. At the time, I thought it would be well-suited for creating an agent that would issue commands to create hierarchy levels. However, several problems arose during development:
 1. LangChain changes constantly and significantly.
-2. It is designed for powerful AI models, as even weak models can make mistakes in writing commands.
-3. The library does not allow fine-grained integration into custom code.
+2. It is designed for powerful AI models, as even weak models can make mistakes when writing commands.
+3. The library does not allow for fine integration into user code.
 
-So, I wrote my own mechanism.
+Therefore, I wrote my own mechanism.
 
-I realized that not everyone has access to powerful AI, high-performance PCs, or a nuclear power plant to run servers. Weak models can also be useful if you find the right approach. For example, I allowed models to make typos in commands and tried to simplify prompts.
+I realized that not everyone has access to powerful AI, high-performance PCs, or a nuclear power plant to run servers. Weak models can also be useful if the right approach is found. For example, I allowed models to make typos in commands and tried to simplify the prompts.
 
-<details>
-<summary>upd1</summary>
-While I was preparing the release for December 2025, I realized that a hierarchical structure is poorly suited for programming. I learned about this from here: https://deepmind.google/discover/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/ and from here: https://arxiv.org/abs/2512.08296.
+**upd1**
+While I was preparing the release for December 2025, I realized that a hierarchical structure is poorly suited for programming. I learned about this from here: https://deepmind.google/discover/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/ and here: https://arxiv.org/abs/2512.08296.
 
-I see a significant problem with data exchange between the levels of hierarchy and between dialogues within the same level of hierarchy. I tried to solve this by storing the entire dialogue in embeddings after it is completed, allowing the librarian to retrieve information from it later. I also need to figure out automatic safe creation, reading, editing, and deletion of files during work, as well as automatic aggregation of file access. I will experiment with combining structures.
+I see a significant problem with data exchange between hierarchy levels and between dialogues within the same hierarchy level. I tried to solve this by saving the entire dialogue in embeddings after its completion so that a librarian could later extract information from it. I also need to figure out automatic safe creation, reading, editing, and deletion of files during operation, as well as automatic aggregation of file access. I will experiment with combining structures.
+
+**upd2 05 2026**
+The 05 2026 release is mostly bug fixes, minor refinements, and a redesign. I also worked hard to fix the data exchange problem. Now agents can get information about other dialogues, both existing and deleted. For the next release, I will focus on file handling and plan to make the hierarchy structure a bit more advanced, while also leaving room for non-hierarchical structures.
+
+I removed "10,000 monkeys" and the best-solution selection. It was highly underdeveloped, very costly, and slow, which doesn't align with the philosophy of a cheap system on fast small models. I will decide to add it in the distant future.
+
+My own command protocol and response system turned out to be even better than standard ones. True, I had to tinker with writing instructions for the model on correct command usage. Now the system doesn't depend on whether the model natively supports function calling. It doesn't depend on which calling standard the model was trained on. Standardization is a common problem among agents; sometimes the model tries to call a tool but triggers a parsing error due to a mismatch. Sometimes the agent simply refuses to work with the model. I still left the native call option but haven't tested it. In the future, I will work on debugging native calls and automatic standard detection, but for now, I recommend not enabling this option.
+
+The project is very raw, but I decided to release it to avoid getting bogged down in endless refinement. I'll be happy to hear your ideas, bug reports, and suggestions. I have many interesting ideas for the future! Versions will be marked with the publication date.
 </details>
 
-The project is very raw, but I decided to release it to avoid getting stuck in endless refinement. I look forward to your ideas, bug reports, and suggestions. In the future, I have many interesting ideas! Versions will be labeled with the publication date.
-</details>
+<details>
+<summary>Installation for Users or in Venv for Windows/macOS/Linux or .exe Build</summary>
+**Installation for Users**
+
+Just run `MilanaSetup.exe`. For Linux, unpack the Linux version, grant execution permission to the `Milana` file, and run it.
 
 <details>
-<summary>Windows/macOS/Linux Venv installation or .exe Building</summary>
-
-**Windows**
-
+<summary>Installation Windows/macOS/Linux Venv, `.exe` or `ELF` Build</summary>
+<details>
+<summary>**Windows**</summary>
 Before installation, you need:
 - `Git`
-- `Desktop development with C++` workload (via `Visual Studio Installer`)
-- `Python 3.12` or latest `3.13` (not `3.14`, because some libraries were not rewrote for `3.14`)
+- `MSVC Build Tools`
+- `Python 3.13.7` (not `3.14`, as some libraries haven't been rewritten for `3.14`; I might handle the adaptation of my code later) with `Tk` installed (otherwise the interface won't work)
 
-Run `windows.bat` in the `install` folder and wait for the start_milana.bat to be created.
-
-Or run `buildexe.bat` in the `install` folder and wait for the Milana.exe to be created.
-
-To create the installer, download Inno Setup and compile the installer using the `InnoSetupInstallerBild.iss` config in the `install` folder.
-
-**Linux and macOS**
+Run `windows.bat` in the `install` folder and wait for `start_milana.bat` to be created.
+Or run `buildexe.bat` in the `install` folder and wait for `Milana.exe` to be created.
+To create an installer, download Inno Setup and compile the installer using the `InnoSetupInstallerBuild.iss` config in the `install` folder.
+</details>
+<details>
+<summary>**Linux and macOS**</summary>
+Before installation, you need:
+- pyenv
+- python tk packages, e.g., `sudo pacman -S tk` (if you forgot to install them, clear the pyenv cache `pyenv uninstall 3.13.7`, install the packages, and try again), otherwise the interface won't work
 
 Run `linux_macos.sh` in the `install` folder.
+To compile a binary `ELF`, use the `build_linux.sh` script.
 </details>
-
+</details>
 <details>
-<summary>How to use</summary>
-1. Launch Milana and configure the model. Instruct models are recommended (e.g., codegemma, Mistral Instruct or Ministral).
-2. Choose a model provider (Ollama, GPT4All or OpenAI). For Ollama, download the models (e.g., `mistral:latest` and `all-minilm:latest`). Important: if the model name doesn't contain a colon, add `:latest` at the end.
-3. Click "Validate model" and save the settings.
-4. Enable the required modules in the settings (e.g., web search or command line).
-5. Create a chat, enter a task, and send the message.
+<summary>How to Use</summary>
+1. Run Milana and configure the model. Models like `qwen3.5` are recommended.
+2. Select a model provider (Ollama, GPT4All, or OpenAI). For Ollama, download the models (e.g., `qwen3.5:2b` and `all-minilm:latest`). Click `Validate model` and save the settings.
+4. Enable the necessary modules in the settings.
+6. Create a chat, enter a task, and send the message.
+
+Chat Settings
+- Hierarchy level limit: default 0, unlimited.
+- Maximum critic reactions: default 2, 0 to disable. This is the final result evaluation option triggered at the end of any dialogue between agents at any hierarchy level. Its request for refinement recreates the dialogue with a new, refined task.
+- Use advanced dialogue memory: enabled by default. Dialogue memory will use retrieval of relevant old messages using a vector database when the entire dialogue doesn't fit in the context. Similar to RAG. The mode where advanced memory is disabled is not programmed very well; disabling it is not recommended.
+- Clear generations: disabled by default. Intended to help very small (1b or old 7b) models when the model violates the command call protocol or when generation breakdown occurs (the model starts generating a repeating phrase of several words many times or until the context runs out). It doesn't work very well yet and is usually not needed.
+- Record log: enabled by default. Records almost every step in the code; quickly reaches 100 MB in a few hours. Disable it if you won't be analyzing or sharing the incorrect behavior of this prototype with me.
+- Record results: disabled by default. If the prototype refuses to create reports despite the connected module, or if you just want to see the program's operation, enable it. The result of each completed dialogue between agents will be recorded.
+- Use Librarian: disabled by default. A module that may sometimes work incorrectly. It searches through all internal data (from user files, past dialogues, and internet searches), as well as the internet if available. Usually, disabling it is not required.
+- Recreate agents with a new task: disabled by default. When you receive a response in the chat, the last agent dialogue is already finished. Your response to the message will start a new dialogue with the initial task, the result, and your response. If you enable this parameter, the dialogue will not end and be recreated; your response will go to the operator in response to the dialogue completion request.
+- Skip nested images: disabled by default. If an image is nested in an archive, docx, or pdf (including pdfs found by the system on the internet), it doesn't process it. Helps filter out junk images. But it might skip important information if, for example, text in a pdf is stored as a scanned image.
 
 **Note:**
-- For stable operation, use powerful models or `GPT-OSS`.
-- Due to restrictions in Russia, I currently only support Ollama, GPT4All and OpenAI.
-- If you encounter bugs, please send to Discord `iishnitsa_milana`: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db` and other relevant files from the chat folder where the issue occurred, along with a detailed description. My PC isn't powerful enough to reproduce all scenarios.
+- For stable operation, use a model more powerful than the one whose result you didn't like. The system is not perfect, but `qwen3.5` with 7 or 2 billion parameters is usually enough.
+- Only `Ollama` and `GPT4All` providers are well-tested.
+- If you encounter errors, send to Discord `iishnitsa_milana`: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other relevant files from the chat folder where the problem occurred, with a detailed description.
 </details>
-
 <details>
-<summary>For developers</summary>
-
-### Important Notes
-- Due to technical limitations and restrictions in Russia, I currently only support Ollama, GPT4All and OpenAI.
-- My PC is not powerful enough to test all scenarios. If you want me to make your changes to the program/find a bug/fix a bug, please write to me in Discord "iishnitsa_milana" with your suggestions, attach screenshots/videos, `log.txt` , `cache.db`, `chatsettings.db` and detailed descriptions.
-
-<details>
-<summary>How to develop modules</summary>
+<summary>How to Develop Modules</summary>
 A module consists of:
-- A main file (e.g., linux_cmd.py).
-- An optional localization file (e.g., linux_cmd_lang.py).
+- A main file (e.g., `linux_cmd.py`).
+- An optional localization file with the same name ending in `_lang` in the same folder (e.g., `linux_cmd_lang.py`).
 
-**Module structure:**
+**Module Structure:**
 ```python
 '''
-# Command for the model (e.g. execute_command)
-# Short description for the model 
-# Module name for the user  
-# Description for the user  
+# Command for the model (e.g., execute_command)
+# Brief description for the model
+# Module name for the user
+# Description for the user
 '''
 
-def main(text: str) -> str:  
-    if not hasattr(main, 'attr_names'):  
-        main.attr_names = (  
-            'output_text',  
-            'forbidden_text',  
-            'path_error_text',  
-            'timeout_text',  
-            'exception_text'  
-        )  
-        main.output_text = 'Output'  
-        main.forbidden_text = 'Forbidden command detected'  
-        main.path_error_text = 'Access to paths outside the workspace is forbidden'  
-        main.timeout_text = 'Command timed out'  
-        main.exception_text = 'Error:'  
-        return  
+def main(text: str) -> str:
+    if not hasattr(main, 'attr_names'):
+        main.attr_names = (
+            'output_text',
+            'forbidden_text',
+            'path_error_text',
+            'timeout_text',
+            'exception_text'
+        )
+        main.output_text = 'Output'
+        main.forbidden_text = 'Forbidden command detected'
+        main.path_error_text = 'Access to paths outside the workspace is forbidden'
+        main.timeout_text = 'Command timed out'
+        main.exception_text = 'Error:'
+        return
 
-    # Module logic  
-    return "Result"  
+    # Module logic
+    return "Result"
 ```
-
-**Localization file (optional but recommended):**  
-```python  
-locales = {  
-    'ru': {  
-        'module_doc': [  
-            'command_for_model',  
-            'description_for_model',  
-            'name_for_user',  
-            'description_for_user'  
-        ],  
-        'main.output_text': 'Output',  
-        'main.forbidden_text': 'Forbidden command',  
-        # other strings  
+Localization file (optional but recommended; you can also leave `main.` strings in the main file empty and move 'en' localization to the localization file):
+```python
+locales = {
+    'ru': {
+        'module_doc': [
+            'command_for_model',
+            'description_for_model',
+            'name_for_user',
+            'description_for_user'
+        ],
+        'main.output_text': 'Output',
+        'main.forbidden_text': 'Forbidden command',
+        # other strings
     }
 }
 ```
-
-**Rules:**
-- The `main` function only accepts and returns text.
-- Localization simplifies work for the model and the user.
-- For text sent to the AI or user, use the `attr_names` structure.
+Rules:
+- The `main` function accepts and returns only text.
+- Localization simplifies the work for both the model and the user.
+- For text sent to the AI or user, use the `attr_names` structure; this is required for localization to work.
 - The localization file must be in the same folder as the module.
 - The `_lang` suffix for the localization file is mandatory.
-- It is highly desirable not to use third-party libraries or libraries that are not in `requirements.txt`. If it is necessary to do so, please make sure that the module acts as a layer between your service, which will include third-party libraries, and Milana.
-
-Examples of modules can be found in the `default_tools` folder.
-</details>
+- It is strongly recommended not to use third-party libraries or libraries not in `requirements.txt`. If necessary, ensure the module acts as a layer between your service (which will include third-party libraries) and Milana.
+- You can use Milana's system functions, such as querying the LLM, with some caution.
+- Consider the specifics of the cache system.
 
 <details>
-<summary>How to develop model providers</summary>
-## Complete Guide to Writing Providers for CrossGPT
+<summary>How to correctly use system functions **and work with system state saves for recovery after restart!**</summary>
+Progress saving is done through caching:
+- Critically important operations (changes in SQLite and ChromaDB databases, to avoid repeated modification or access to already modified or deleted data).
+- Expensive and time-consuming operations (generation, web search, computations).
+- Inside operations that change the system state, if they don't directly relate to changing the system state (e.g., `ask_model` inside `start_dialog`).
 
-## File Structure and Requirements
+Caching is forbidden for operations:
+- Changing the system state (e.g., `start_dialog`, so that during replay the system is brought to the state it was in at the time of shutdown).
+- Located outside functions that change the system state, at any nesting level.
+- Located inside or outside functions that use caching, at any nesting level; currently, the caching system does not support nesting.
 
-### 1. File Naming
-**MANDATORY:** `[service_name]_provider.py`
-```
-✅ openai_provider.py
-✅ ollama_provider.py  
-✅ gpt4all_provider.py
-✅ myapi_provider.py
-❌ openai.py
-❌ ollama.py
-❌ provider.py
-```
+The system caches many different types of data, except classes and functions. Exceptions will be saved to the cache and re-thrown.
+The `pickle` library is used for serialization.
 
-### 2. Dependencies
-**ONLY ALLOWED:**
-- `requests` (already in `requirements.txt`)
-- something if it also in `requirements.txt`
-- Python standard library (`re`, `json`, `os`, `time`, etc.)
+The caching system consists of:
+- `read_cache`: reads the cache from the database by `id` from the `cache_counter` variable, returns `[True, deserialized_value]` where `deserialized_value` is the required value, then increments the counter by 1; otherwise returns `[False]` and does not increment the counter if the record is not found, meaning the cache has ended.
+- `write_cache`: writes the value and increments the counter.
+- `cacher`: uses `read_cache` and `write_cache` automatically; used via the `@cacher` decorator.
 
-**PROHIBITED:**
-- Any third-party libraries (`aiohttp`, `httpx`, `pydantic`, etc.)
-- Libraries requiring compilation
+In most cases, you will only need `cacher`.
 
-**REASON:** Users of .exe version cannot install additional libraries.
+Use manual control with `read_cache` and `write_cache` only in case of extreme necessity and with great caution! Any violation of the sequence will lead to an immediate exception or the inability to continue work after shutdown.
 
-## Mandatory Provider Structure
+Correct sequence:
+- read/read when the cache is not exhausted.
+- read/write when the cache is exhausted.
 
-### Minimal Provider Template:
+Always read first, then, if `[False]` is received, write.
+**Example: read/read/read/read/write/read/write**
+
+If you don't use system functions that use the decorator, don't use caching. In this case, the system will automatically cache the result of your tool's execution and, upon restart, use the cached result without running the tool.
+
+If you use system functions that have a decorator but you need caching to avoid repeated computations or to avoid getting different data upon program restart, cache some actions separately, as in the example below.
+
+Allowed:
 ```python
-# example_provider.py
-import requests
-import json
-import re
-import time
-from typing import Dict, Any, Optional, List
+from cross_gpt import cacher, ask_model
 
-# === GLOBAL VARIABLES ===
-session: Optional[requests.Session] = None
-base_url: str = ""
-default_chat_model: Optional[str] = None
+@cacher
+def get_weather(): return '+10, windy'
 
-# Ollama for embeddings (fallback)
-ollama_session: Optional[requests.Session] = None
-ollama_base_url: str = "http://localhost:11434"
-ollama_emb_model: str = "all-minilm:latest"
-use_ollama_for_embeddings: bool = False
+ask_model(get_weather())
+```
+Not allowed:
+```python
+from cross_gpt import cacher, ask_model
 
-# Token limits
+@cacher
+def get_weather(): return ask_model('+10, windy')
+
+get_weather()
+```
+
+If you don't need caching of the module's result or data inside it in any case, and the module must run upon system restart, write, for example, `from cross_gpt import *` or `from cross_gpt import ask_model`; the system will take this into account.
+
+List of available and safe-to-use functions that have a decorator:
+- `ask_model`: query the LLM.
+- `get_embs`: generate embeddings.
+- `text_cutter`: summarize and reduce text size.
+- `get_input_message`: get a message from the user sent **after** calling this function.
+- `send_output_message`: send a message to the chat with the user.
+- `send_log_to_ui`: send a message to the log window.
+
+Logging functions `let_log('text')` and `send_log_to_ui` are not decorated and do not affect the operation of saves; use them for debugging.
+Descriptions of how to use all listed functions will be in the section below.
+Everything else is at your own risk.
+</details>
+<details>
+<summary>How to use some useful system functions</summary>
+When writing your own modules, you can use built-in core functions. **All of them already have built-in caching**—you don't need to manually write `read_cache` / `write_cache` logic.
+
+#### 1. `ask_model`
+`ask_model(prompt_text, ...)`—the main function for generating responses with automatic fallback via `text_cutter` on context overflow.
+
+**Basic Parameters**
+* `prompt_text` (str, required): Request text.
+* `system_prompt` (str, optional): System instruction.
+* `all_user` (bool): If `True`, forces passing the entire context as the user (ignoring roles).
+* `temperature` (float): Default 0.6.
+* `limit` (int): Token limit (if supported).
+
+**Dialogue Formation**
+Pass a string assembled with markers to `prompt_text`. There should be an odd number of messages, not counting the system prompt. At the end, add a model marker (needed by the parser to determine roles); this marker should not be the same as the marker marking the first non-system message. The markers themselves are removed by the parser. Maintain message alternation.
+Three system marker variables are defined in the core for this:
+* `system_role_text`: system prompt marker (optional).
+* `operator_role_text`: interlocutor 1 marker (e.g., user).
+* `worker_role_text`: interlocutor 2 marker (e.g., model).
+
+#### 2. Vector Memory (ChromaDB)
+`get_embs(text)` returns a vector (list of floats) for the passed text. Returns [] on error. Text is automatically truncated on context overflow.
+
+`coll_exec(action, coll_name, ...)` is a universal cached wrapper for any operations with vector collections.
+
+Actions: add, update, delete, query, get, count, modify, delete_collection.
+Collections (`coll_name`):
+- `user_collection`: user files.
+- `milana_collection`: system memory (dialogues, work results, web search results).
+- `rag_collection`: stores message vectors for composing dialogues.
+
+Filtering (`filters` parameter): Supports comparison operators and logical links. Used in `query` and `get`.
+Operators:
+- `$eq`, `$ne`: equal, not equal.
+- `$gt`, `$gte`, `$lt`, `$lte`: comparison of numbers/strings.
+- `$in`, `$nin`: inclusion in list / non-inclusion.
+- `$and`, `$or`: logical groupings.
+
+**Examples of Queries with Filters**
+
+Search only among successful dialogues:
+```python
+result = coll_exec(
+    action="query",
+    coll_name="milana_collection",
+    query_embeddings=[get_embs("alzheimer's treatment")],
+    filters={"result": True},   # $eq by default
+)
+```
+Exclude web sources:
+```python
+result = coll_exec(
+    action="query",
+    coll_name="user_collection",
+    query_embeddings=[get_embs("latest news")],
+    filters={"source": {"$ne": "web"}},
+    n_results=5
+)
+```
+Complex filter with `$and`:
+```python
+result = coll_exec(
+    action="get",
+    coll_name="milana_collection",
+    filters={
+        "$and": [
+            {"done": "correct"},
+            {"hierarchy": {"$contains": "/2:"}}   # example with partial string match
+        ]
+    },
+    fetch="documents")
+```
+Filter by a list of values `$in`:
+```python
+result = coll_exec(
+    action="query",
+    coll_name="user_collection",
+    query_embeddings=[get_embs("reports")],
+    filters={"source": {"$in": ["file", "web"]}},
+    n_results=8)
+```
+Important: When using `$in` or `$nin` for the `vector_id` field (i.e., filtering by document identifiers), `coll_exec` automatically switches to an efficient collection traversal algorithm. In other cases, filters work normally.
+
+Example search with multiple conditions and metadata retrieval:
+```python
+result = coll_exec(
+    action="query",
+    coll_name="milana_collection",
+    query_embeddings=[get_embs("plan criticism")],
+    filters={"done": "incorrect", "dialog_type": "executor"},
+    fetch=["documents", "metadatas", "distances"],
+    n_results=3)
+```
+`result` will be a dictionary with keys 'documents', 'metadatas', 'distances'.
+
+#### 3. Built-in Search Modules
+The `librarian` and `simple_web_search` modules, although they don't have a decorator, use cached core functions internally. **Their calls also cannot be wrapped in the `@cacher` decorator at any nesting level** within your scripts, otherwise caching will break.
+
+* `librarian`
+    Intelligent database search. Searches first in system memory (`milana_collection`), then in user data (`user_collection`). If the internet is enabled and nothing is found, it automatically triggers a web search if available (if you've connected `simple_web_search.py` or another module ending in `_web_search.py`). Returns formatted snippets with sources.
+    *Important rule for prompts:* When forming requests to the librarian, **be sure to put a question mark at the end of lines with questions**, as the module relies on them when parsing multi-line requests; a separate search is performed for each multi-line request, so requests must be self-contained.
+    ```python
+    from cross_gpt import librarian
+    result = librarian("What are the latest studies on RAG architecture?\nWho is their author?\nHow to correctly apply RAG?")
+    ```
+
+* `simple_web_search`
+    Direct search via DuckDuckGo. Accepts 1 query, collects raw website texts, compresses them, and returns a summary with links. Works only if web search is allowed in settings.
+    ```python
+    from cross_gpt import web_search
+    result = web_search("python 3.12 release notes")
+    ```
+    You can write your own search module ending in `_web_search.py`, and `librarian` will use it.
+
+#### 4. Auxiliary Utilities
+
+* **`text_cutter(text, cut_message=False)`**: iterative compression of long reads via LLM.
+    * `False`: brief summary (summarization).
+    * `True`: detailed paraphrasing (without losing minor facts from the user's message).
+* **`let_log(text)`**: output debugging information to the console and record it in `log.txt`.
+* **`send_output_message(text=None, attachments=None)`**: send a message to the user interface.
+* **`get_input_message()`**: wait for a message from the user sent after executing this command.
+* **`send_log_to_ui(message)`**: send service text to the UI log window.
+</details>
+<details>
+<summary>How to Develop Model Providers</summary>
+
+Providers are scripts that teach Milana to communicate with different APIs (Ollama, OpenAI, Anthropic, etc.).
+The system (`ui.py` and `cross_gpt.py`) reads the provider code directly (parses the file's AST tree), so the provider structure is strictly regulated. If the rules are violated, the provider won't even appear in the interface settings.
+
+### 1. File and Import Rules
+* **File Name:** Must be in the `model_providers` folder and end in `_provider.py` (e.g., `gemini_provider.py`). Must not start with an underscore `_`.
+* **Dependencies:** Only built-in Python libraries (e.g., `json`, `re`, `time`) and the `requests` library are allowed. **Forbidden** to use third-party SDKs (like official `openai` or `anthropic` libraries), as users of compiled `.exe` versions won't be able to install them. All requests are made via raw `requests`.
+* **Logging:** To output logs to the interface, import the system function: `from cross_gpt import let_log`.
+
+### 2. Mandatory Global Variables
+The system reads these variables directly from the module's namespace. They must be declared at the file level:
+
+```python
+# Default context limits
 token_limit = 4095
 emb_token_limit = 4095
 
-# Operation modes
-do_chat_construct = True     # Use chat/completions API
-native_func_call = False     # Native function calling support
+# API capability flags
+do_chat_construct = True  # Whether to use the Chat API (user/assistant roles). Almost always True.
+native_func_call = False  # Whether the API supports native function calling (Tool calling). Usually False.
 
-# Formatting tags (MANDATORY FORMAT)
+# Mandatory tags dictionary. If the API doesn't use explicit tags, leave them empty.
 tags = {
     "bos": "", "eos": "",
     "sys_start": "", "sys_end": "",
@@ -203,746 +435,111 @@ tags = {
     "tool_call_start": "", "tool_call_end": "",
     "tool_result_start": "", "tool_result_end": "",
 }
-
-# Thinking filter (ONLY if API doesn't have native support)
-filter_think_enabled: bool = False
-filter_start_tag: str = "</think>"
-filter_end_tag: str = ""
-
-# === LOGGING ===
-from cross_gpt import let_log
-
-# === MANDATORY FUNCTIONS ===
 ```
+### 3. Mandatory `connect` Function (The most important part!)
+The application interface scans this function to dynamically build the settings menu. A `params` dictionary must be declared inside the function. The keys of this dictionary will become input fields in the UI.
 
-## connect Function (mandatory)
-
+If a key name contains the word `file`, `path`, or `dir`, the UI will automatically create a file selection button for it.
 ```python
-def connect(connection_string: str, timeout: int = 30) -> List[Any]:
-    """
-    Connect to API provider
+def connect(connection_string, timeout=30, _decrypted_token=None):
+    global token_limit, emb_token_limit, do_chat_construct, native_func_call, tags
     
-    Connection string format:
-    "url=http://api.example.com; model=my-model; emb_model=emb-model; 
-     chat_template=True; native_func_call=False; 
-     ollama_url=http://localhost:11434; ollama_emb_model=all-minilm:latest; 
-     ollama=False; token_limit=8192; filter_think=False"
-    
-    ALL parameters are mandatory for UI support
-    """
-    global session, base_url, default_chat_model, token_limit, tags
-    global ollama_session, ollama_base_url, ollama_emb_model, use_ollama_for_embeddings
-    global do_chat_construct, native_func_call, filter_think_enabled, filter_start_tag, filter_end_tag
-    
-    from cross_gpt import let_log
-    
-    # 1. DEFAULT PARAMETERS (ALL MANDATORY)
+    # ATTENTION: The params dictionary MUST be declared exactly like this.
+    # ui.py parses this section of code to create fields in the settings!
     params = {
-        "url": "http://localhost:8080",          # Base API URL
-        "model": "default",                      # Chat model
-        "emb_model": "text-embedding-ada-002",   # Embeddings model (if available)
-        
-        # === IMPORTANT: These parameters MUST be present ===
-        "chat_template": "True",                 # "True"/"False" - use chat/completions
-        "native_func_call": "False",             # "True"/"False" - function calling support
-        "ollama_url": "http://localhost:11434",  # Ollama URL for embeddings fallback
-        "ollama_emb_model": "all-minilm:latest", # Ollama model for embeddings
-        "ollama": "False",                       # "True"/"False" - use Ollama for embeddings
-        "token_limit": "4095",                   # Fallback token limit
-        
-        # Thinking filter (optional, but parameters must exist)
-        "filter_think": "False",                 # "True"/"False" - filter think part
-        "filter_start": "</think>",              # Start tag for think part
-        "filter_end": "",                        # End tag for think part
+        "url": "http://api.example.com",
+        "model": "example-model",
+        "emb_model": "example-embed",
+        "token": "", # UI will hide input with asterisks if the key contains token or password
     }
-    
-    # 2. PARSE CONNECTION STRING
-    let_log(f"Parsing connection string: {connection_string}")
-    
+
+    # Parsing connection_string, which the UI will send after clicking "Save"
     for part in connection_string.split(";"):
         part = part.strip()
-        if not part or "=" not in part:
-            continue
-        
-        try:
-            key, value = part.split("=", 1)
-            key = key.strip().lower()
-            value = value.strip()
-            
-            if key in params:
-                params[key] = value
-                let_log(f"  Parameter '{key}' = '{value}'")
-        except:
-            continue
-    
-    # 3. SET VARIABLES
-    base_url = params["url"].rstrip("/")
-    ollama_base_url = params["ollama_url"].rstrip("/")
-    ollama_emb_model = params["ollama_emb_model"]
-    
-    # Boolean parameters
-    do_chat_construct = params["chat_template"].lower() == "true"
-    native_func_call = params["native_func_call"].lower() == "true"
-    use_ollama_for_embeddings = params["ollama"].lower() == "true"
-    filter_think_enabled = params["filter_think"].lower() == "true"
-    
-    filter_start_tag = params["filter_start"]
-    filter_end_tag = params["filter_end"]
-    
-    # Numeric parameters
+        if not part or "=" not in part: continue
+        key, value = part.split("=", 1)
+        key = key.strip().lower()
+        if key in params:
+            params[key] = value.strip()
+
+    # The token may come encrypted from the UI (if a password is set),
+    # then it is unpacked into _decrypted_token
+    api_key = _decrypted_token if _decrypted_token else params["token"]
+
     try:
-        token_limit = int(params["token_limit"])
-    except:
-        token_limit = 4095  # Fallback
-    
-    let_log(f"Provider settings:")
-    let_log(f"  base_url: {base_url}")
-    let_log(f"  do_chat_construct: {do_chat_construct}")
-    let_log(f"  native_func_call: {native_func_call}")
-    let_log(f"  use_ollama_for_embeddings: {use_ollama_for_embeddings}")
-    let_log(f"  token_limit: {token_limit}")
-    
-    # 4. CONNECT TO MAIN API
-    try:
-        session = requests.Session()
-        session.headers.update({
-            "Content-Type": "application/json",
-            "User-Agent": "CrossGPT-Provider/1.0"
-        })
+        # Here you initialize the requests session and check API availability
+        # session = requests.Session() ...
+        # response = session.get(...)
         
-        # Test connection (depends on API)
-        # For example, for OpenAI-compatible APIs:
-        test_url = f"{base_url}/models"
-        let_log(f"Testing connection to {test_url}")
-        
-        response = session.get(test_url, timeout=timeout)
-        response.raise_for_status()
-        
-        # Get list of available models
-        models_data = response.json()
-        
-        # Response format depends on API:
-        # OpenAI: {"data": [{"id": "model1"}, {"id": "model2"}]}
-        # Ollama: {"models": [{"name": "model1"}, {"name": "model2"}]}
-        
-        available_models = []
-        if "data" in models_data:  # OpenAI format
-            available_models = [model["id"] for model in models_data.get("data", [])]
-        elif "models" in models_data:  # Ollama format
-            available_models = [model["name"] for model in models_data.get("models", [])]
-        
-        let_log(f"Available models: {available_models}")
-        
-        if not available_models:
-            return [False, 0, tags, "No models available on server"]
-        
-        # Select model
-        requested_model = params.get("model")
-        if requested_model and requested_model in available_models:
-            default_chat_model = requested_model
-        else:
-            default_chat_model = available_models[0]
-        
-        let_log(f"Selected model: {default_chat_model}")
-        
-        # 5. AUTO-DETECT TOKEN LIMIT
-        # Try to get model information
-        try:
-            # Depends on API - example for OpenAI-compatible
-            model_info_url = f"{base_url}/models/{default_chat_model}"
-            info_response = session.get(model_info_url, timeout=timeout)
-            
-            if info_response.status_code == 200:
-                model_info = info_response.json()
-                let_log(f"Model info: {json.dumps(model_info, indent=2)[:500]}...")
-                
-                # Try to find context limit in response
-                # Different APIs store this in different places
-                found_limit = find_context_size(model_info, base_url, {})
-                if found_limit and found_limit > 100:
-                    token_limit = found_limit
-                    let_log(f"Auto-detected token_limit: {token_limit}")
-        except Exception as e:
-            let_log(f"Could not auto-detect token limit: {e}")
-            # Use value from parameters
-        
-        # 6. CONNECT TO OLLAMA (for embeddings)
-        if use_ollama_for_embeddings:
-            try:
-                ollama_session = requests.Session()
-                ollama_session.headers.update({"Content-Type": "application/json"})
-                
-                # Check Ollama availability
-                ollama_test = f"{ollama_base_url}/api/tags"
-                ollama_response = ollama_session.get(ollama_test, timeout=10)
-                
-                if ollama_response.status_code == 200:
-                    ollama_models = ollama_response.json().get("models", [])
-                    ollama_model_names = [m["name"] for m in ollama_models]
-                    
-                    # Check if embeddings model is available
-                    if ollama_emb_model not in ollama_model_names:
-                        let_log(f"Model {ollama_emb_model} not found in Ollama, using first available")
-                        if ollama_model_names:
-                            ollama_emb_model = ollama_model_names[0]
-                    
-                    let_log(f"Ollama for embeddings available, model: {ollama_emb_model}")
-                else:
-                    let_log(f"Ollama not available (status {ollama_response.status_code})")
-                    ollama_session = None
-                    
-            except Exception as e:
-                let_log(f"Ollama connection error: {e}")
-                ollama_session = None
-        
-        # 7. RETURN SUCCESS RESULT
+        # If successful, MUST return a list of 3 elements:
+        # [Status (bool), Chat model token limit (int), Tags (dict)]
         return [True, token_limit, tags]
-    
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"Could not connect to {base_url}: {e}"
-        let_log(error_msg)
-        return [False, 0, tags, error_msg]
-    
-    except requests.exceptions.Timeout as e:
-        error_msg = f"Connection timeout to {base_url}"
-        let_log(error_msg)
-        return [False, 0, tags, error_msg]
-    
+        
     except Exception as e:
-        error_msg = f"Unexpected error: {e}"
-        let_log(error_msg)
-        return [False, 0, tags, error_msg]
+        # If error, return 4 elements:
+        # [Status (False), 0, Tags, "Error text"]
+        return [False, 0, tags, f"Connection error: {e}"]
 ```
-
-## Function for Auto-detecting Context Limit
-
+### 4. Mandatory Generation Functions
+The system expects three functions for working with models. In them, it is necessary to correctly handle context overflow: if there are too many tokens, you must raise an exception with the string 'ContextOverflowError' in the text.
 ```python
-def find_context_size(model_data: Dict[str, Any], base_url: str, headers: Dict[str, str]) -> int:
-    """
-    Auto-detect context limit from model data.
-    Searches in different possible places in API response.
-    """
-    from cross_gpt import let_log
-    
-    # 1. Try to get limit from server (if API supports it)
-    try:
-        config_url = f"{base_url}/api/config"
-        config_resp = requests.get(config_url, headers=headers, timeout=10)
-        if config_resp.status_code == 200:
-            server_config = config_resp.json()
-            server_limit = server_config.get('max_context_length')
-            if server_limit is not None:
-                let_log(f"Found limit in server config: {server_limit}")
-                return int(server_limit)
-    except:
-        pass
-    
-    # 2. Search in possible JSON paths
-    possible_paths = [
-        ['parameters', 'num_ctx'],
-        ['parameters', 'context_length'],
-        ['model_info', 'context_length'],
-        ['model_info', 'max_seq_len'],
-        ['model_info', 'n_ctx'],
-        ['details', 'context_length'],
-        ['config', 'max_position_embeddings'],
-        ['max_tokens'],
-        ['context_length'],
-    ]
-    
-    for path in possible_paths:
-        try:
-            value = model_data
-            for key in path:
-                value = value[key]
-            
-            if isinstance(value, (int, float)):
-                let_log(f"Found limit in path {path}: {value}")
-                return int(value)
-        except (KeyError, TypeError):
-            continue
-    
-    # 3. Search in string parameters
-    if isinstance(model_data.get('parameters'), str):
-        param_str = model_data['parameters']
-        for line in param_str.split('\n'):
-            if any(kw in line.lower() for kw in ['num_ctx', 'context', 'n_ctx', 'max_tokens']):
-                numbers = re.findall(r'\b\d{3,5}\b', line)
-                if numbers:
-                    let_log(f"Found limit in string parameters: {numbers[-1]}")
-                    return int(numbers[-1])
-    
-    # 4. Search numbers in JSON
-    context_sizes = [2048, 4096, 8192, 16384, 32768, 65536, 128000, 200000]
-    model_text = json.dumps(model_data)
-    found_sizes = sorted([int(num) for num in re.findall(r'\b\d{4,6}\b', model_text)
-                         if int(num) in context_sizes], reverse=True)
-    
-    if found_sizes:
-        let_log(f"Found limit in JSON text: {found_sizes[0]}")
-        return found_sizes[0]
-    
-    # 5. Fallback
-    let_log("Could not determine context limit, using 4095")
-    return 4095
-```
+def disconnect():
+    """Closes the requests session and clears data."""
+    # global session; if session: session.close(); session = None
+    return True
 
-## ask_model Function (completions API)
-
-```python
 def ask_model(generation_params):
     """
-    Text generation via completions API (/v1/completions)
-    Returns string with response text
+    Old completions method.
+    Accepts a dictionary (contains the 'prompt' key).
+    MUST return a string (str).
     """
-    from cross_gpt import let_log
-    
-    # 1. CHECK CONNECTION
-    if not session or not base_url:
-        let_log("ERROR: Provider not connected")
-        raise RuntimeError("Provider not connected. Call connect() first.")
-    
-    # 2. PREPARE URL
-    api_url = f"{base_url}/v1/completions"
-    let_log(f"ask_model: Sending request to {api_url}")
-    
-    # 3. ADD DEFAULT MODEL
-    if 'model' not in generation_params and default_chat_model:
-        generation_params['model'] = default_chat_model
-        let_log(f"ask_model: Added default model: {default_chat_model}")
-    
-    # 4. SEND REQUEST
-    try:
-        let_log(f"ask_model: Request parameters: {json.dumps(generation_params, indent=2)[:500]}...")
-        
-        response = session.post(api_url, json=generation_params, timeout=60)
-        
-        # 5. PROCESS RESPONSE
-        if response.status_code != 200:
-            error_text = response.text
-            let_log(f"ask_model: HTTP error {response.status_code}: {error_text}")
-            
-            # CRITICALLY IMPORTANT: ContextOverflowError handling
-            if response.status_code in [413]:  # 413 - Payload Too Large
-                let_log("ask_model: Error 413 -> ContextOverflowError")
-                raise RuntimeError('ContextOverflowError')
-            
-            elif response.status_code == 400:  # 400 - Bad Request
-                if any(keyword in error_text.lower() for keyword in ['context', 'length', 'token', 'exceed']):
-                    let_log("ask_model: Error 400 is context-related -> ContextOverflowError")
-                    raise RuntimeError('ContextOverflowError')
-                else:
-                    raise RuntimeError(f"Request error: {error_text}")
-            
-            elif response.status_code == 500:  # 500 - Internal Server Error
-                if 'context' in error_text.lower():
-                    let_log("ask_model: Error 500 is context-related -> ContextOverflowError")
-                    raise RuntimeError('ContextOverflowError')
-                else:
-                    raise RuntimeError(f"Server error: {error_text}")
-            
-            elif response.status_code == 429:  # 429 - Too Many Requests
-                raise RuntimeError(f"Too many requests (429): {error_text}")
-            
-            else:
-                raise RuntimeError(f"HTTP error {response.status_code}: {error_text}")
-        
-        # 6. PARSE SUCCESSFUL RESPONSE
-        data = response.json()
-        let_log(f"ask_model: Received response, size: {len(str(data))} characters")
-        
-        if "choices" not in data or not data["choices"]:
-            let_log("ask_model: Invalid response format - no choices")
-            raise RuntimeError("Invalid response format - no choices")
-        
-        choice = data["choices"][0]
-        result = choice.get("text", "").strip()
-        
-        # 7. THINK-PART FILTERING (if enabled)
-        if filter_think_enabled:
-            result = apply_think_filter(result)
-        
-        let_log(f"ask_model: Result: '{result[:100]}...'")
-        return result
-        
-    except requests.exceptions.ConnectionError as e:
-        let_log(f"ask_model: Connection error: {e}")
-        raise RuntimeError(f"Connection error: {e}")
-        
-    except RuntimeError as e:
-        # Re-raise ContextOverflowError and other RuntimeErrors as-is
-        raise e
-        
-    except Exception as e:
-        let_log(f"ask_model: Unexpected error: {e}")
-        raise RuntimeError(f"Unexpected error: {e}")
-```
+    prompt = generation_params.get("prompt", "")
+    # Make request to API...
+    # Return text
+    return "Generated text"
 
-## ask_model_chat Function (chat/completions API)
-
-```python
 def ask_model_chat(generation_params):
     """
-    Text generation via chat/completions API (/v1/chat/completions)
-    Returns FULL API response as dictionary (doesn't extract text)
+    Chat completions method.
+    Accepts a dictionary (contains the 'messages' key).
+    MUST return the FULL response dictionary from the API (dict).
+    Parsing (searching for 'choices' or 'message') will be done by the system itself in cross_gpt.py.
     """
-    from cross_gpt import let_log
+    messages = generation_params.get("messages", [])
+    # Make request to API...
+    # ...
+    # If context is overflowed:
+    # raise RuntimeError("ContextOverflowError")
     
-    # 1. CHECK CONNECTION
-    if not session or not base_url:
-        let_log("ERROR: Provider not connected")
-        raise RuntimeError("Provider not connected. Call connect() first.")
-    
-    # 2. PREPARE URL
-    api_url = f"{base_url}/v1/chat/completions"
-    let_log(f"ask_model_chat: Sending request to {api_url}")
-    
-    # 3. ADD DEFAULT MODEL
-    if 'model' not in generation_params and default_chat_model:
-        generation_params['model'] = default_chat_model
-        let_log(f"ask_model_chat: Added default model: {default_chat_model}")
-    
-    # 4. SEND REQUEST
-    try:
-        let_log(f"ask_model_chat: Request parameters: {json.dumps(generation_params, indent=2)[:500]}...")
-        
-        response = session.post(api_url, json=generation_params, timeout=60)
-        
-        # 5. PROCESS RESPONSE
-        if response.status_code != 200:
-            error_text = response.text
-            let_log(f"ask_model_chat: HTTP error {response.status_code}: {error_text}")
-            
-            # CRITICALLY IMPORTANT: ContextOverflowError handling
-            if response.status_code in [413]:  # 413 - Payload Too Large
-                let_log("ask_model_chat: Error 413 -> ContextOverflowError")
-                raise RuntimeError('ContextOverflowError')
-            
-            elif response.status_code == 400:  # 400 - Bad Request
-                if any(keyword in error_text.lower() for keyword in ['context', 'length', 'token', 'exceed']):
-                    let_log("ask_model_chat: Error 400 is context-related -> ContextOverflowError")
-                    raise RuntimeError('ContextOverflowError')
-                else:
-                    raise RuntimeError(f"Request error: {error_text}")
-            
-            elif response.status_code == 500:  # 500 - Internal Server Error
-                if 'context' in error_text.lower():
-                    let_log("ask_model_chat: Error 500 is context-related -> ContextOverflowError")
-                    raise RuntimeError('ContextOverflowError')
-                else:
-                    raise RuntimeError(f"Server error: {error_text}")
-            
-            elif response.status_code == 429:  # 429 - Too Many Requests
-                raise RuntimeError(f"Too many requests (429): {error_text}")
-            
-            else:
-                raise RuntimeError(f"HTTP error {response.status_code}: {error_text}")
-        
-        # 6. PARSE SUCCESSFUL RESPONSE
-        data = response.json()
-        let_log(f"ask_model_chat: Received response, size: {len(str(data))} characters")
-        
-        # IMPORTANT: Return FULL response, system will extract text
-        return data
-        
-    except requests.exceptions.ConnectionError as e:
-        let_log(f"ask_model_chat: Connection error: {e}")
-        raise RuntimeError(f"Connection error: {e}")
-        
-    except RuntimeError as e:
-        # Re-raise ContextOverflowError and other RuntimeErrors as-is
-        raise e
-        
-    except Exception as e:
-        let_log(f"ask_model_chat: Unexpected error: {e}")
-        raise RuntimeError(f"Unexpected error: {e}")
-```
+    # Return raw JSON response from requests
+    return {"choices": [{"message": {"content": "Model response"}}]}
 
-## create_embeddings Function
-
-```python
-def create_embeddings(text: str) -> List[float]:
+def create_embeddings(text):
     """
-    Create vector embeddings for text.
-    Priority: Main API -> Ollama -> Error
+    Embeddings generation method.
+    MUST return a list of floating-point numbers (List[float]).
     """
-    from cross_gpt import let_log
-    
-    let_log(f"create_embeddings: Received text, length {len(text)} characters")
-    
-    # 1. TRY MAIN API (if supported)
-    if session and base_url:
-        try:
-            let_log(f"create_embeddings: Trying main API")
-            
-            # Format depends on API
-            # OpenAI: /embeddings
-            # Others: may have different endpoints
-            
-            # Check different possible endpoints
-            endpoints = [
-                f"{base_url}/embeddings",
-                f"{base_url}/v1/embeddings",
-                f"{base_url}/api/embeddings"
-            ]
-            
-            for api_url in endpoints:
-                try:
-                    payload = {
-                        "input": text,
-                        "model": "text-embedding-ada-002"  # or from parameters
-                    }
-                    
-                    let_log(f"create_embeddings: Trying {api_url}")
-                    response = session.post(api_url, json=payload, timeout=30)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        # Different response formats
-                        if "data" in data and len(data["data"]) > 0:
-                            embedding = data["data"][0]["embedding"]
-                        elif "embedding" in data:
-                            embedding = data["embedding"]
-                        elif "embeddings" in data and len(data["embeddings"]) > 0:
-                            embedding = data["embeddings"][0]
-                        else:
-                            continue  # Try next endpoint
-                        
-                        let_log(f"create_embeddings: Success from main API, size: {len(embedding)}")
-                        return embedding
-                        
-                except Exception as e:
-                    let_log(f"create_embeddings: Error with endpoint {api_url}: {e}")
-                    continue
-            
-        except Exception as e:
-            let_log(f"create_embeddings: Main API doesn't support embeddings: {e}")
-    
-    # 2. FALLBACK TO OLLAMA (if enabled)
-    if use_ollama_for_embeddings and ollama_session and ollama_base_url:
-        try:
-            let_log(f"create_embeddings: Trying Ollama")
-            
-            api_url = f"{ollama_base_url}/api/embeddings"
-            payload = {
-                "model": ollama_emb_model,
-                "prompt": text
-            }
-            
-            response = ollama_session.post(api_url, json=payload, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            if "embedding" in data:
-                embedding = data["embedding"]
-                let_log(f"create_embeddings: Success from Ollama, size: {len(embedding)}")
-                return embedding
-            else:
-                let_log(f"create_embeddings: Ollama returned invalid format: {data}")
-                
-        except Exception as e:
-            let_log(f"create_embeddings: Ollama error: {e}")
-    
-    # 3. IF NOTHING WORKED
-    error_msg = "Failed to get embeddings. Check:\n1. API connection\n2. Embeddings model availability\n3. Ollama availability (if used)"
-    let_log(f"create_embeddings: {error_msg}")
-    raise RuntimeError(error_msg)
+    text = text.strip()
+    # Make request to API...
+    # ...
+    # If context is overflowed:
+    # raise RuntimeError("ContextOverflowError")
+    return [0.01, -0.02, 0.05, ...]
 ```
+### 5. Error Handling (Retry Logic)
+Since you are using raw `requests`, you must independently implement retry logic (Exponential Backoff) for 429 (Rate Limit), 500+ (Server Errors), and network timeouts. Study the `_request_with_backoff` function in `ollama_provider.py` as a reference example.
 
-## Helper Functions
-
-### Thinking Filter (only if API doesn't support natively)
-```python
-def apply_think_filter(text: str) -> str:
-    """
-    Filter think part from response.
-    Used ONLY if API doesn't have native thinking support.
-    """
-    if not filter_think_enabled:
-        return text
-    
-    from cross_gpt import let_log
-    
-    let_log(f"apply_think_filter: Applying filter. Start='{filter_start_tag}', End='{filter_end_tag}'")
-    
-    # Find start tag
-    start_pos = text.find(filter_start_tag)
-    
-    if start_pos == -1:
-        let_log("apply_think_filter: Start tag not found, returning original")
-        return text
-    
-    # Take text after start tag
-    filtered_text = text[start_pos + len(filter_start_tag):]
-    let_log(f"apply_think_filter: Found start tag at position {start_pos}")
-    
-    # If end tag specified
-    if filter_end_tag and filter_end_tag.strip():
-        end_pos = filtered_text.find(filter_end_tag)
-        if end_pos != -1:
-            filtered_text = filtered_text[:end_pos]
-            let_log(f"apply_think_filter: Cut to end tag at position {end_pos}")
-        else:
-            let_log("apply_think_filter: End tag not found, leaving as is")
-    
-    result = filtered_text.strip()
-    let_log(f"apply_think_filter: Final text: '{result[:100]}...'")
-    return result
-```
-
-### disconnect Function
-```python
-def disconnect() -> bool:
-    """
-    Close all connections and clean up resources.
-    """
-    global session, ollama_session, base_url, default_chat_model
-    
-    from cross_gpt import let_log
-    
-    let_log("disconnect: Closing connections")
-    
-    if session:
-        session.close()
-        session = None
-        let_log("disconnect: Main session closed")
-    
-    if ollama_session:
-        ollama_session.close()
-        ollama_session = None
-        let_log("disconnect: Ollama session closed")
-    
-    base_url = ""
-    default_chat_model = None
-    
-    let_log("disconnect: All connections closed")
-    return True
-```
-
-## Recursive Recovery on Connection Loss
-
-```python
-# Additional recovery logic (optional but recommended)
-
-def ask_model_with_retry(generation_params):
-    """
-    Wrapper with recursive recovery on ConnectionError
-    """
-    if not hasattr(ask_model_with_retry, 'retry_count'):
-        ask_model_with_retry.retry_count = 0
-    
-    try:
-        result = ask_model(generation_params)
-        ask_model_with_retry.retry_count = 0  # Reset on success
-        return result
-        
-    except requests.exceptions.ConnectionError as e:
-        ask_model_with_retry.retry_count += 1
-        
-        if ask_model_with_retry.retry_count > 3:  # Max 3 attempts
-            ask_model_with_retry.retry_count = 0
-            raise RuntimeError(f"Failed to restore connection after 3 attempts: {e}")
-        
-        let_log(f"Connection error, attempt {ask_model_with_retry.retry_count}/3 in 60 seconds")
-        time.sleep(60)
-        
-        # Recursive retry
-        return ask_model_with_retry(generation_params)
-```
-
-## Checklist Before Submission
-
-### Mandatory Checks:
-- [ ] File named `[name]_provider.py`
-- [ ] No third-party libraries (only requests + standard)
-- [ ] All 5 mandatory functions present
-- [ ] `tags` has correct format
-- [ ] All mandatory parameters in `connect()` supported
-- [ ] `ContextOverflowError` handling exists
-- [ ] `let_log` used for logging
-- [ ] Ollama fallback for embeddings exists (highly recommended)
-- [ ] Thinking filter added ONLY if API doesn't support natively
-- [ ] Functions return correct types:
-  - `connect()` → `List[Any]`
-  - `ask_model()` → `str`
-  - `ask_model_chat()` → `Dict` (full API response)
-  - `create_embeddings()` → `List[float]`
-  - `disconnect()` → `bool`
-
-### Testing:
-- [ ] Connection works with test string
-- [ ] Text generation works
-- [ ] Chat completions returns full response
-- [ ] Embeddings created (main API or Ollama)
-- [ ] Disconnect properly closes connections
-- [ ] Network error handling works
-- [ ] ContextOverflowError correctly detected
-
-## Examples for Different APIs
-
-### For OpenAI-compatible APIs:
-```python
-# API URL: https://api.openai.com/v1
-# Endpoints: /completions, /chat/completions, /embeddings
-# Models: gpt-4o, gpt-4-turbo, text-embedding-3-small
-```
-
-### For Ollama:
-```python
-# API URL: http://localhost:11434
-# Endpoints: /api/generate, /api/chat, /api/embeddings
-# Models: mistral:latest, llama3.2:latest, all-minilm:latest
-```
-
-### For Local Servers (LM Studio, Text Generation WebUI):
-```python
-# API URL: http://localhost:1234
-# Endpoints: /v1/completions, /v1/chat/completions
-# May not support embeddings → need Ollama fallback
-```
-
-## Common Issues
-
-### 1. API Doesn't Support Embeddings
-```python
-# In create_embeddings() immediately switch to Ollama:
-def create_embeddings(text: str) -> List[float]:
-    if use_ollama_for_embeddings:
-        # use Ollama
-    else:
-        raise RuntimeError("This API doesn't support embeddings. Enable Ollama fallback.")
-```
-
-### 2. API Has Non-Standard Endpoints
-```python
-# In connect() check available endpoints:
-endpoints_to_check = ["/completions", "/v1/completions", "/api/generate"]
-for endpoint in endpoints_to_check:
-    try:
-        response = session.get(f"{base_url}{endpoint}")
-        if response.status_code == 200:
-            # found working endpoint
-            break
-    except:
-        continue
-```
-
-### 3. API Requires Authentication
-```python
-# In connect() add headers:
-api_key = params.get("api_key") or os.getenv("API_KEY")
-if api_key:
-    session.headers.update({"Authorization": f"Bearer {api_key}"})
-```
-
+Important exceptions expected by the engine:
+- When API balance is exhausted: `raise RuntimeError("balance end")`
+- On context overflow: `raise RuntimeError("ContextOverflowError")`
 </details>
 </details>
-
 <details>
-<summary>Third-party modules</summary>
-Links to community-developed modules will appear here.
+<summary>Third-Party Modules</summary>
+Links to modules developed by the community will appear here.
 </details>
-
-**Questions and suggestions:** Discord `iishnitsa_milana`
+<details>
+<summary>Third-Party Providers</summary>
+Links to providers developed by the community will appear here.
+</details>
