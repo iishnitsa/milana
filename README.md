@@ -40,7 +40,7 @@ periodically make reports on the information found and the conclusions drawn
 ```
 Unfortunately, `ministral-3` responses are quite unstable, cloud `qwen3.5:2b` was unavailable, and there was no time for GPU-based work; the demo was recorded on `qwen3.5:cloud`, which isn't very cheap. In the future, I will disable thinking for the model in some places and record a demo on a weaker `Qwen3.5`.
 With these settings, I obtained the following result, consisting of several reports and a final answer, though a demo with link-only access is better:
-[Milana 04 2026 demo on YouTube](https://www.youtube.com/watch?v=USj5WB6UfME)
+[Milana 04 2026 demo YouTube](https://www.youtube.com/watch?v=USj5WB6UfME)
 Currently, interaction with the PC is limited. The command-line module doesn't inspire confidence, and direct advanced file handling hasn't been implemented. But! Both command line and file handling are in the plans. I won't say exactly what I'm going to do, but it will be a very clever and fault-tolerant system, also adapted for weak models.
 
 ## How It Works
@@ -57,11 +57,12 @@ flowchart TD
 
     G --> H[Critic Evaluates Result]
     H --> I{Satisfactory?}
-    I -->|Yes, 3| J[Success → Result to Client]
+    I -->|Yes, 3| J[Success → Result to Client or Ivan]
     I -->|No, <2 attempts| K[Formulate New Task for Executor or Operator]
     K --> B
     I -->|Unsure, 2| J
     I -->|No, 2 attempts| J
+    J -->|Return to higher dialogue| E
 ```
 The system begins by receiving a client task, which enters the GIGO block where three roles—Dreamer, Realist, and Critic—trigger sequentially to form a structured action plan. Based on this plan, a Milana agent-operator is created to select the necessary tools, followed by the creation of an Ivan executor with its own toolset, and a dialogue begins between them to execute the task. If during the dialogue the executor realizes it cannot handle the task, it can delegate it to a new level, returning the process to the GIGO block to create a nested dialogue. When the dialogue is finished and a result is obtained, it is passed to the Critic, who evaluates its quality (up to two attempts are given by default). Depending on the evaluation: on full success, the result is returned to the client; if unsure, human verification is required; if the result is unsatisfactory but attempts remain, a refined task is formed and the process returns to executor creation; if both attempts fail, the task with the critic's comments is returned to the level above (to the superior agent or the original client).
 
