@@ -27,8 +27,17 @@ MAX_RETRIES = 20          # Максимальное количество поп
 MAX_WAIT_TOTAL = 420      # 7 минут в секундах
 BASE_BACKOFF = 2.0        # Основание экспоненты
 
-# Флаг облачного режима (если указан токен)
-is_cloud_mode = False
+# === НОВЫЕ ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
+llm_cpu = False
+emb_cpu = True
+offload_on_boot = False
+is_thinking = False
+default_num_ctx = None     # заданный в строке подключения контекст (если есть)
+
+# Прошлые состояния для детекта изменений
+_last_llm_num_ctx = None
+_last_think_value = None
+_last_llm_cpu = None
 
 def normalize_url(url, default_port, default_scheme="http"):
     """Добавляет схему и порт по умолчанию, если они отсутствуют."""
@@ -179,18 +188,27 @@ def connect(connection_string, timeout=30):
     """
     Подключение к серверу Ollama API.
     Формат строки подключения:
-    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest; token=xxx" (token - для облачного режима)
+    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest;
+     llm_cpu=false; emb_cpu=true; offload_on_boot=false; is_thinking=false; num_ctx=..."
     """
     global session, base_url, default_chat_model, token_limit, emb_token_limit
     global emb_model, do_chat_construct, native_func_call, tags, model_template_info
-    global is_cloud_mode
+    global llm_cpu, emb_cpu, offload_on_boot, is_thinking, default_num_ctx
+    global _last_llm_num_ctx, _last_think_value, _last_llm_cpu
+
     # Параметры по умолчанию (только необходимые)
     params = {
         "url": "http://localhost:11434",
         "model": "qwen3.5:2b",
         "emb_model": "all-minilm:latest",
         "chat_template": "True",
-        "native_func_call": "False",}
+        "native_func_call": "False",
+        "num_ctx": "",
+        "llm_cpu": "false",
+        "emb_cpu": "true",
+        "offload_on_boot": "false",
+        "is_thinking": "false",
+    }
     # --- Разбор строки подключения ---
     for part in connection_string.split(";"):
         part = part.strip()
@@ -207,12 +225,26 @@ def connect(connection_string, timeout=30):
     emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"
     native_func_call = params["native_func_call"].lower().strip() == "true"
+
+    # Новые параметры
+    llm_cpu = params["llm_cpu"].lower().strip() == "true"
+    emb_cpu = params["emb_cpu"].lower().strip() == "true"
+    offload_on_boot = params["offload_on_boot"].lower().strip() == "true"
+    is_thinking = params["is_thinking"].lower().strip() == "true"
+
+    # Обработка num_ctx
+    num_ctx_str = params.get("num_ctx", "").strip()
+    if num_ctx_str.isdigit():
+        default_num_ctx = int(num_ctx_str)
+    else:
+        default_num_ctx = None
+
     print('подключение')
     try:
         # === Подключение к Ollama ===
         session = requests.Session()
         session.headers.update({"Content-Type": "application/json"})
-        if is_cloud_mode: session.headers.update({"Authorization": f"Bearer {params['token']}"})
+
         api_url = f"{base_url}/api/tags"
         response = session.get(api_url, timeout=timeout)
         response.raise_for_status()
@@ -267,6 +299,29 @@ def connect(connection_string, timeout=30):
                 else: emb_token_limit = 4095
             else: emb_token_limit = token_limit
         except Exception as e: let_log(f"Не удалось определить лимит токенов для эмбеддингов: {e}"); emb_token_limit = 4095
+
+        # === ВЫГРУЗКА МОДЕЛИ ПРИ ПОДКЛЮЧЕНИИ (если offload_on_boot) ===
+        if offload_on_boot and session:
+            try:
+                session.post(
+                    f"{base_url}/api/generate",
+                    json={
+                        "model": default_chat_model,
+                        "prompt": "",
+                        "keep_alive": 0,
+                        "stream": False
+                    },
+                    timeout=timeout
+                )
+                let_log("Модель выгружена (offload_on_boot=true).")
+            except Exception as e:
+                let_log(f"Предупреждение: не удалось выгрузить модель при старте: {e}")
+
+        # Сохраняем начальные состояния
+        _last_llm_num_ctx = default_num_ctx
+        _last_think_value = is_thinking
+        _last_llm_cpu = llm_cpu
+
         return [True, token_limit, tags]
     except requests.exceptions.RequestException as e: session = None; return [False, 0, tags, f"Ошибка подключения: {e}"]
     except Exception as e: session = None; return [False, 0, tags, f"Непредвиденная ошибка: {e}"]
@@ -282,6 +337,43 @@ def disconnect() -> bool:
         model_template_info = {}
         return True
     return False
+
+def _check_and_reload_model():
+    """
+    Сравнивает текущие настройки с сохранёнными.
+    Если что-то изменилось — выгружает модель (keep_alive=0),
+    чтобы следующий запрос подхватил новые параметры.
+    """
+    global _last_llm_num_ctx, _last_think_value, _last_llm_cpu
+    need_reload = False
+
+    if _last_llm_num_ctx != default_num_ctx:
+        need_reload = True
+    if is_thinking and _last_think_value != is_thinking:
+        need_reload = True
+    if _last_llm_cpu != llm_cpu:
+        need_reload = True
+
+    if need_reload:
+        let_log("Обнаружены изменения настроек. Выгружаю модель...")
+        try:
+            session.post(
+                f"{base_url}/api/generate",
+                json={
+                    "model": default_chat_model,
+                    "prompt": "",
+                    "keep_alive": 0,
+                    "stream": False
+                },
+                timeout=10
+            )
+        except Exception as e:
+            let_log(f"Ошибка при выгрузке модели: {e}")
+        finally:
+            # Обновляем сохранённые состояния в любом случае
+            _last_llm_num_ctx = default_num_ctx
+            _last_think_value = is_thinking
+            _last_llm_cpu = llm_cpu
 
 def _request_with_backoff(api_url, json_payload):
     let_log(json_payload)
@@ -396,7 +488,32 @@ def ask_model(generation_params):
     api_url = f"{base_url}/api/generate"
     try:
         let_log(f"ask_model: Отправка запроса на {api_url}")
-        ollama_params = {"model": default_chat_model, "prompt": generation_params.get("prompt", ""), "stream": False, "options": {}}
+
+        # Проверка настроек и перезагрузка модели при необходимости
+        _check_and_reload_model()
+
+        ollama_params = {
+            "model": default_chat_model,
+            "prompt": generation_params.get("prompt", ""),
+            "stream": False,
+            "keep_alive": "1.5m",  # время жизни модели 1.5 минуты
+            "options": {}
+        }
+
+        # Устанавливаем контекст
+        ctx = default_num_ctx if default_num_ctx else token_limit
+        ollama_params["options"]["num_ctx"] = ctx
+
+        # Пробрасываем think, если модель это поддерживает
+        if is_thinking:
+            think_value = generation_params.get("think", False)  # По умолчанию запрещаем думать
+            ollama_params["think"] = think_value
+
+        # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
+        if not _skip_num_predict and "max_tokens" in generation_params:
+            ollama_params["options"]["num_predict"] = generation_params["max_tokens"]
+
+        # Маппинг остальных параметров
         param_mapping = {
             "max_tokens": "num_predict",
             "temperature": "temperature",
@@ -405,9 +522,13 @@ def ask_model(generation_params):
             "repeat_penalty": "repeat_penalty",
             "stop": "stop"}
         for param, value in generation_params.items():
-            if param == "prompt": continue
-            if param in param_mapping: ollama_params["options"][param_mapping[param]] = value
-            else: ollama_params["options"][param] = value
+            if param in ["prompt", "max_tokens", "think"]:
+                continue
+            if param in param_mapping:
+                ollama_params["options"][param_mapping[param]] = value
+            else:
+                ollama_params["options"][param] = value
+
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model: Получен ответ, длина: {len(str(data))} символов")
         result = data.get("response", "").strip()
@@ -421,12 +542,31 @@ def ask_model_chat(generation_params):
     api_url = f"{base_url}/api/chat"
     try:
         let_log(f"ask_model_chat: Отправка запроса на {api_url}")
+
+        # Проверка настроек и перезагрузка модели при необходимости
+        _check_and_reload_model()
+
         # Подготовка параметров для Ollama Chat API
         ollama_params = {
             "model": default_chat_model,
             "messages": generation_params.get("messages", []),
             "stream": False,
+            "keep_alive": "1.5m",  # время жизни модели 1.5 минуты
             "options": {}}
+
+        # Устанавливаем контекст
+        ctx = default_num_ctx if default_num_ctx else token_limit
+        ollama_params["options"]["num_ctx"] = ctx
+
+        # Пробрасываем think, если модель это поддерживает
+        if is_thinking:
+            think_value = generation_params.get("think", False)  # По умолчанию запрещаем думать
+            ollama_params["think"] = think_value
+
+        # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
+        if not _skip_num_predict and "max_tokens" in generation_params:
+            ollama_params["options"]["num_predict"] = generation_params["max_tokens"]
+
         # Маппинг параметров
         param_mapping = {
             "max_tokens": "num_predict",
@@ -436,9 +576,13 @@ def ask_model_chat(generation_params):
             "repeat_penalty": "repeat_penalty",
             "stop": "stop"}
         for param, value in generation_params.items():
-            if param in ["messages", "model"]: continue
-            if param in param_mapping: ollama_params["options"][param_mapping[param]] = value
-            else: ollama_params["options"][param] = value
+            if param in ["messages", "model", "max_tokens", "think"]:
+                continue
+            if param in param_mapping:
+                ollama_params["options"][param_mapping[param]] = value
+            else:
+                ollama_params["options"][param] = value
+
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model_chat: Получен ответ, длина: {len(str(data))} символов")
         return data
