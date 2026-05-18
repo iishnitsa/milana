@@ -6,21 +6,21 @@ echo ========================================
 echo Milana Build Script
 echo ========================================
 
-REM 1) Define paths (safe with spaces)
+REM Define paths (safe with spaces)
 set "SCRIPT_DIR=%~dp0"
 set "PROJECT_ROOT=%SCRIPT_DIR%.."
 IF "!PROJECT_ROOT:~-1!"=="\" SET "PROJECT_ROOT=!PROJECT_ROOT:~0,-1!"
 set "VENV_DIR=%PROJECT_ROOT%\mvenv"
 set "REQUIREMENTS=%SCRIPT_DIR%requirements.txt"
 
-REM 2) Clean previous builds
+REM Clean previous builds
 echo Cleaning previous builds...
 if exist "%PROJECT_ROOT%\build" rmdir /s /q "%PROJECT_ROOT%\build"
 if exist "%PROJECT_ROOT%\dist" rmdir /s /q "%PROJECT_ROOT%\dist"
 if exist "%PROJECT_ROOT%\Milana.exe" del "%PROJECT_ROOT%\Milana.exe"
 if exist "%PROJECT_ROOT%\_internal" rmdir /s /q "%PROJECT_ROOT%\_internal"
 
-REM 3) Check virtual environment - НЕ ПЕРЕСОЗДАЕМ если существует
+REM Check virtual environment - НЕ ПЕРЕСОЗДАЕМ если существует
 echo Checking virtual environment in "%VENV_DIR%"...
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Creating virtual environment...
@@ -45,7 +45,7 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Virtual environment already exists. Using existing one.
 )
 
-REM 4) Activate virtual environment using DIRECT python path
+REM Activate virtual environment using DIRECT python path
 echo Activating virtual environment...
 if not exist "%VENV_DIR%\Scripts\activate.bat" (
     echo ERROR: activate.bat not found! Virtual environment may be corrupted.
@@ -71,7 +71,7 @@ if errorlevel 1 (
     )
 )
 
-REM 5) Update pip and install dependencies
+REM Update pip and install dependencies
 echo Updating pip...
 python -m pip install --upgrade pip
 
@@ -97,7 +97,7 @@ if not exist "%PROJECT_ROOT%\launcher.py" (
     exit /b 1
 )
 
-REM 7) Build with PyInstaller
+REM Build with PyInstaller
 echo ========================================
 echo Building executable...
 echo ========================================
@@ -148,7 +148,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM 8) Move built files to project root
+REM Move built files to project root
 echo Moving built files to project root...
 if exist "%PROJECT_ROOT%\dist\Milana\*" (
     echo Copying files from "%PROJECT_ROOT%\dist\Milana\" to "%PROJECT_ROOT%\"
@@ -167,13 +167,13 @@ if exist "%PROJECT_ROOT%\dist\Milana\*" (
     exit /b 1
 )
 
-REM 9) Clean temporary files
+REM Clean temporary files
 echo Cleaning temporary files...
 if exist "%PROJECT_ROOT%\build" rmdir /s /q "%PROJECT_ROOT%\build"
 if exist "%PROJECT_ROOT%\dist" rmdir /s /q "%PROJECT_ROOT%\dist"
 if exist "%PROJECT_ROOT%\Milana.spec" del "%PROJECT_ROOT%\Milana.spec"
 
-REM 10) Verify build contents in project root
+REM Verify build contents in project root
 echo Verifying build in project root...
 if exist "%PROJECT_ROOT%\Milana.exe" (
     echo ✓ Executable file: "%PROJECT_ROOT%\Milana.exe"

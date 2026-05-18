@@ -131,6 +131,7 @@ milana_collection = None
 user_collection = None
 rag_collection = None
 cache_counter = 1 # всегда начинается с 1
+left_cache_counter = 0 # остаток
 language = ''
 is_print_log = True
 is_save_log = True
@@ -195,16 +196,8 @@ def let_log(t):
     full_message = f"{caller_info} {t}"
     if is_print_log: print(full_message)
     if is_save_log:
-        conn = connect(cache_path)
-        cursor = conn.cursor()
-        cursor.execute('CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, value TEXT)')
-        conn.commit()
-        cursor.execute('SELECT MAX(id) FROM cache')
-        row = cursor.fetchone()
-        max_id = row[0] if row and row[0] is not None else -1
-        conn.close()
-        if max_id <= cache_counter: lname = 'log.txt'
-        else: lname = 'log_cache.txt'; return
+        if left_cache_counter == 0: lname = 'log.txt'
+        else: return
         log_file = os.path.join(chat_path, lname)
         with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
 
@@ -217,50 +210,36 @@ def traceprint(*args, **kwargs):
     else: let_log(f"[{filename}:{line_number}]:", *args, **kwargs)
 
 def read_cache():
-    global cache_counter
+    global cache_counter, left_cache_counter
     global cache_can_write
     cache_conn = None
     try:
-        cache_conn = connect(cache_path)
-        cache_cursor = cache_conn.cursor()
-        let_log(f"Попытка чтения кэша с id: {cache_counter}")
-        cache_cursor.execute('SELECT value FROM cache WHERE id = ?', (cache_counter,))
-        result = cache_cursor.fetchone()
-        cache_conn.close()
-        cache_conn = None
-        if result is None:
-            if cache_can_write: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
-            cache_can_write = True
-            let_log(f"Запись кэша с id {cache_counter} не найдена.")
-            return [False]
-        stored_data = result[0]
-        marker = stored_data[0:1]
-        data_part = stored_data[1:]
-        if marker == b'\x00': decompressed_bytes = data_part
-        elif marker == b'\x01': decompressed_bytes = gzip.decompress(data_part)
-        elif marker == b'\x02': decompressed_bytes = lzma.decompress(data_part)
-        try: deserialized_value = pickle.loads(decompressed_bytes)
-        except Exception as pickle_error: raise
-        let_log(f"[CACHE READ] id={cache_counter}")
-        cache_counter += 1
-        let_log(deserialized_value)
-        return [True, deserialized_value]
-    except OperationalError as e:
-        error_msg = str(e).lower()
-        if "no such table" in error_msg or "cache" in error_msg:
-            let_log(f"Таблица кэша не найдена, выполняется инициализация: {e}")
-            if cache_conn:
-                cache_cursor.execute("PRAGMA max_page_count = 2147483647;")
-                cache_cursor.execute('CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, value BLOB)')
-                cache_conn.commit()
-                cache_conn.close()
-                cache_conn = None
-                let_log("Таблица кэша только что создана, записей нет.")
-                if cache_can_write: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
-                cache_can_write = True
-                return [False]
-            else: raise
-        else: raise
+        if left_cache_counter > 0:
+            cache_conn = connect(cache_path)
+            cache_cursor = cache_conn.cursor()
+            let_log(f"Попытка чтения кэша с id: {cache_counter}")
+            cache_cursor.execute('SELECT value FROM cache WHERE id = ?', (cache_counter,))
+            result = cache_cursor.fetchone()
+            cache_conn.close()
+            cache_conn = None
+            if result != None:
+                stored_data = result[0]
+                marker = stored_data[0:1]
+                data_part = stored_data[1:]
+                if marker == b'\x00': decompressed_bytes = data_part
+                elif marker == b'\x01': decompressed_bytes = gzip.decompress(data_part)
+                elif marker == b'\x02': decompressed_bytes = lzma.decompress(data_part)
+                try: deserialized_value = pickle.loads(decompressed_bytes)
+                except Exception as pickle_error: raise
+                let_log(f"[CACHE READ] id={cache_counter}")
+                cache_counter += 1
+                left_cache_counter -= 1
+                let_log(deserialized_value)
+                return [True, deserialized_value]
+        if cache_can_write: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
+        cache_can_write = True
+        let_log(f"Запись кэша с id {cache_counter} не найдена.")
+        return [False]
     except Exception as e:
         if cache_conn: cache_conn.close()
         error_msg = f'{e}'
@@ -295,7 +274,7 @@ def write_cache(content):
         send_ui_no_cache(e)
         raise SystemExit(e)
 
-def rollback_cache(num_records):
+def rollback_cache(num_records): # TODO: left_cache_counter
     global cache_counter
     cache_conn = None
     if num_records >= cache_counter: num_records = cache_counter - 1
@@ -2400,7 +2379,7 @@ def init_chromadb(chroma_path, use_rag, max_attempts=3):
 
 def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None):
     global actual_handlers_names, another_tools_files_addresses
-    global token_limit, emb_token_limit, chunk_size
+    global token_limit, emb_token_limit, chunk_size, left_cache_counter
     global client, milana_collection, user_collection, rag_collection
     global ui_conn
     global cache_path, chat_path, memory_sql, folder_path, slash
@@ -2423,6 +2402,13 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     let_log(f"Chat path: {chat_path}")
     let_log(f"Folder path: {folder_path}")
     # === Подготовка SQLite БД ===
+    init_cache_conn = connect(cache_path)
+    init_cache_cursor = init_cache_conn.cursor()
+    init_cache_cursor.execute('CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, value BLOB)')
+    init_cache_cursor.execute('SELECT COUNT(*) FROM cache')
+    left_cache_counter = cursor.fetchone()[0]
+    init_cache_conn.commit()
+    init_cache_conn.close()
     db_path = os.path.join(chat_path, "chatsettings.db")
     let_log(f"Database path: {db_path}")
     memory_sql = connect(db_path)
