@@ -23,7 +23,6 @@ TEXTS = {
     # Main Window
     "new_chat": "Новый чат",
     "settings": "Настройки",
-    "chat_prefix": "Чат ",
 
     # Chat Context Menu
     "active_chat_delete_title": "Активный чат",

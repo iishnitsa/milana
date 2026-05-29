@@ -23,7 +23,6 @@ TEXTS = {
     # Main Window
     "new_chat": "New Chat",
     "settings": "Settings",
-    "chat_prefix": "Chat ",
 
     # Chat Context Menu
     "active_chat_delete_title": "Active Chat",

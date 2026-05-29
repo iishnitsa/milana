@@ -2014,7 +2014,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def _get_default_settings(self):
             settings = self.backend.get_global_settings()
             s_vars = {key: tk.StringVar(value=val) for key, val in settings.items()}
-            s_vars['chat_name'] = tk.StringVar(value=f"{Lang.get('chat_prefix')} {self.backend.generate_id(4)}")
+            s_vars['chat_name'] = tk.StringVar(value=self.backend.generate_id(4))
             module_manager = ModuleManager()
             default_mods = module_manager.get_default_modules()
             s_vars['default_mods'] = { mod['id']: tk.BooleanVar(value=mod['enabled']) for mod in default_mods }
