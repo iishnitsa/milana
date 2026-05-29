@@ -792,35 +792,23 @@ def system_tools_loader():
 
 @cacher
 def get_embs(text):
-    """
-    Получает эмбеддинг текста через провайдера.
-    Если текст не помещается в лимит токенов, последовательно уменьшает его пополам,
-    пока не останется 1 символ. Если после этого ошибка переполнения повторяется,
-    исключение пробрасывается выше.
-    """
+    global emb_token_limit
     if not text or not text.strip(): return []
     current_text = text
-    while True: # Оценка количества токенов
-        estimated_tokens = len(current_text) * text_tokens_coefficient
-        if estimated_tokens <= emb_token_limit:
-            try: return get_provider_embs(current_text)
-            except Exception as e:
-                if 'ContextOverflowError' in str(e):
-                    half_len = len(current_text) // 2
-                    if half_len == 0: raise
-                    current_text = current_text[:half_len]
-                    continue
-                else: print(f"[get_embs] Ошибка: {e}"); return []
-        else: # Не помещается — уменьшаем пополам
-            half_len = len(current_text) // 2
-            if half_len == 0:
-                # Уже остался 1 символ, но оценка всё ещё превышает лимит? 
-                # Это маловероятно, но на всякий случай пробуем отправить 1 символ
-                try: return get_provider_embs(current_text)
-                except Exception as e:
-                    if 'ContextOverflowError' in str(e): raise
-                    else: print(f"[get_embs] Ошибка: {e}"); return []
-            current_text = current_text[:half_len]
+    if len(current_text) * text_tokens_coefficient > emb_token_limit: half_len = len(current_text) // 2
+    while True:
+        try:
+            result = get_provider_embs(current_text)
+            # Обновляем лимит, если пришлось урезать текст
+            if len(current_text) < len(text): emb_token_limit = int(len(current_text) * text_tokens_coefficient); let_log(f"[get_embs] Обновлён emb_token_limit: {new_limit} (был {emb_token_limit})")
+            return result
+        except Exception as e:
+            if 'ContextOverflowError' in str(e):
+                half_len = len(current_text) // 2
+                if half_len == 0: raise
+                current_text = current_text[:half_len]
+                continue
+            else: print(f"[get_embs] Ошибка: {e}"); return []
 
 def get_token_limit(): return token_limit
 
