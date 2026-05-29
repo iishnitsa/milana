@@ -86,6 +86,7 @@ def _rag_update_history(chat_id: int, message_text: str, role: str): # Доба�
         embedding = get_embs(message_text)
         coll_exec(action="add", coll_name="rag_collection", ids=[vector_id], metadatas=[{'chat_id': str_chat_id, 'role': role, 'relevance_score': 0}], embeddings=[embedding])
         let_log(f"Сообщение {vector_id} сразу векторизовано и добавлено в RAG.")
+        return vector_id
     except Exception as e:
         let_log(f"##### ОШИБКА: Не удалось векторизовать сообщение {vector_id} при сохранении: {e} #####")
         sql_exec("UPDATE rag_messages SET is_vectorized = FALSE WHERE vector_id = ?", (vector_id,))

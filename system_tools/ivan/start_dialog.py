@@ -56,9 +56,9 @@ def main(client_task):
         main.milana_base_3 = '''.
 Your workflow:
 1. CREATE ONE EXECUTOR — Use the command "!!!create_executor!!!" followed by the task description. This creates "Ivan", an AI executor who will handle the current subtask.
-CORRECT: "!!!create_executor!!! React frontend for an online store"
-INCORRECT: "!!!create_executor!!! Create Ivan for frontend"
-INCORRECT: "!!!create_executor!!! Ivan, write frontend"
+CORRECT: "!!!create_executor!!! *current subtask*"
+INCORRECT: "!!!create_executor!!! Create Ivan for *current subtask*"
+INCORRECT: "!!!create_executor!!! Ivan, *current subtask*"
 2. WORK WITH THE SAME EXECUTOR — After creation, continue the conversation with Ivan. Give instructions, answer questions, receive results. DO NOT create a new executor unless absolutely necessary.
 IMPORTANT: Once Ivan is created, NEVER use the "!!!create_executor!!!" command again during your conversation with him. This command is only for the initial creation. Using it again will cause errors and unnecessarily recreate the executor.
 3. WHEN RECREATION IS ALLOWED — Recreate Ivan ONLY in these cases:

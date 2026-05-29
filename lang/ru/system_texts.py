@@ -207,6 +207,8 @@ warn_command_text_6 = "Команда находится внутри markdown-�
 
 warn_command_text_7 = 'Если вы НЕ пытались вызвать команду, используйте !!!пропустить!!! в самом начале сообщения, и затем напишите ваше сообщение ещё раз — оно будет отправлено собеседнику (например, "!!!пропустить!!! Я хочу сказать, что...").'
 
+warn_command_text_8 = 'Доступные инструменты:'
+
 no_markdown_instruction = 'ВАЖНО: Не используй Markdown (например, **жирный**, *курсив*, `код`, списки с * или -) в своих ответах. Пиши обычным текстом. Markdown разрешён только если это явно требуется для передачи форматированного кода или данных, но в обычном общении избегай его.'
 
 yes_no_instruction = """
@@ -240,7 +242,7 @@ prompt_chunk_summary = "Сжато изложи суть приведённог�
 
 prompt_global_summary = "На основе сводок отдельных фрагментов составь единую глобальную сводку всего диалога. Опиши основные темы, принятые решения и ключевые факты. Используй 2-4 предложения."
 
-prompt_recent_summary = "На основе сводок фрагментов составь краткую сводку последней темы разговора. Выдели суть обсуждения и важные детали. Используй 1-3 предложения."
+prompt_recent_summary = "На основе сводок фрагментов составь краткую сводку последней темы разговора. Выдели суть обсуждения и важные детали. Используй 1-3 предложения."d
 
 text_tokens_coefficient = 0.5 # усреднённый коэффициент для русского языка
 
@@ -340,6 +342,7 @@ class SystemTextContainer:
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
+        self.warn_command_text_8 = warn_command_text_8
         self.no_markdown_instruction = no_markdown_instruction
         self.yes_no_instruction = yes_no_instruction
         self.yes_word = yes_word

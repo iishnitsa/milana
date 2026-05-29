@@ -57,9 +57,11 @@ class GlobalState:
         self.skip_tools_keys = []
         self.last_agent = None
         self.skip_nested_images = 0
+        self.d = []
 global_state = GlobalState()
 
 chat_path = ''
+vector_id_out = ''
 do_chat_construct = False
 native_func_call = False
 use_rag = None
@@ -70,6 +72,7 @@ cache_can_write = False
 agent_func = None
 use_librarian = True
 recreate_agents = False
+cut_wrong_command_history = True
 
 default_handlers_names = { # это из настроек должно выгружаться
     'doc': 'process_docx',
@@ -2016,7 +2019,16 @@ def _find_any_markers(text):
     for match in re.finditer(pattern, text): markers.append({'start': match.start(), 'end': match.end(), 'raw_name': match.group(1).strip()})
     return markers
 
-def analyze_protocol(text):
+def remove_wrong_command_messages():
+    if global_state.wrong_command_messages_vector_ids != []:
+        sql_exec("DELETE FROM rag_messages WHERE vector_id IN ({})".format(','.join('?' * len(wrong_command_messages_vector_ids))), wrong_command_messages_vector_ids)
+        coll_exec(action="delete", coll_name="rag_collection", ids=wrong_command_messages_vector_ids)
+        global_state.wrong_command_messages_vector_ids = []
+
+def add_wrong_command_message_id(vid):
+    if cut_wrong_command_history: global_state.wrong_command_messages_vector_ids.append(vid)
+
+def analyze_protocol(text, now_commands={}):
     """
     Анализирует текст ответа модели на соответствие протоколу вызова инструментов.
     Возвращает:
@@ -2076,12 +2088,18 @@ def analyze_protocol(text):
                 if ratio > best_ratio and ratio >= threshold: best_ratio = ratio; best_match = key
             if best_match: found = True
         if not found: unknown_command = True; break
-    if unknown_command: violations.append(wrong_command)
-    if not violations: return None # если нарушений нет, команды корректны, но мы не будем их выполнять (т.к. find_and_match_command не сработал)
+    if unknown_command:
+        known_commands_str = warn_command_text_7
+        for known_tool in now_commands: known_commands_str + '\n' + ' (' + now_commands[known_tool][0] + ')'
+        violations.append(wrong_command + known_commands_str)
+    if not violations:
+        remove_wrong_command_messages()
+        return None # если нарушений нет, команды корректны, но мы не будем их выполнять (т.к. find_and_match_command не сработал) TODO: ТУТ МОЖЕТ БЫТЬ ОШИБКА
+    add_wrong_command_message_id(vector_id_out)
     violations = list(dict.fromkeys(violations)) # TODO: переработай циклы
     violations.insert(0, warn_command_text_1)
     violations.append(warn_command_text_7)
-    return " ".join(violations) # формируем сообщение
+    return "\n".join(violations) # формируем сообщение
 
 def tools_selector(text, sid):
     """
@@ -2110,7 +2128,7 @@ def tools_selector(text, sid):
         let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
         let_log(text)
         let_log(now_commands)
-        is_warn = analyze_protocol(text)
+        is_warn = analyze_protocol(text, now_commands)
         if is_warn != None:
             let_log(is_warn)
             write_cache([False, is_warn])
@@ -2147,7 +2165,7 @@ def tools_selector(text, sid):
     except Exception: entry = None
     if entry == None:
         let_log("[TOOLS_SELECTOR] команда не найдена в словаре сессии (после сопоставления)")
-        is_warn = analyze_protocol(text)
+        is_warn = analyze_protocol(text, now_commands)
         if is_warn != None:
             let_log(is_warn)
             write_cache([False, is_warn])
@@ -2175,6 +2193,7 @@ def tools_selector(text, sid):
     # 9) выполнить функцию
     let_log("[TOOLS_SELECTOR] Выполняем функцию...")
     if found_key == global_state.start_dialog_command_name: global_state.task_delegated = True
+    remove_wrong_command_messages()
     try: result = func_callable(content)
     except Exception as e: result = "__TOOL_ERROR__: " + str(e)
     if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
@@ -2229,6 +2248,7 @@ def _standard_agent_func(text, agent_number):
     return talk_prompt
 
 def _rag_agent_func(text, agent_number):
+    global vector_id_out
     global_state.last_agent = agent_number
     global_state.stop_agent = False
     talk_prompt = text
@@ -2246,14 +2266,15 @@ def _rag_agent_func(text, agent_number):
     while not global_state.stop_agent:
         let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}")
         # 1. Сохраняем входящее сообщение от предыдущего агента в RAG-историю
-        update_history(sid, talk_prompt, msg_from)
+        vector_id_in = update_history(sid, talk_prompt, msg_from)
+        if global_state.wrong_command_messages_vector_ids != []: add_wrong_command_message_id(vector_id_in)
         # 2. Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
         # 3. Вызываем модель, добавив роль текущего агента для корректной генерации
         talk_prompt = ask_model(final_prompt_for_model + you)
         talk_prompt = remove_commands_roles(talk_prompt)
         # 4. Сохраняем ответ самой модели в RAG-историю
-        update_history(sid, talk_prompt, you)
+        vector_id_out = update_history(sid, talk_prompt, you)
         answer = tools_selector(talk_prompt, sid)
         if answer:
             let_log(global_state.stop_agent)
@@ -2387,7 +2408,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
     global language
     global do_chat_construct, native_func_call
-    global use_rag, agent_func, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents
+    global use_rag, agent_func, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
     # === Загружаем параметры чата ===
@@ -2406,7 +2427,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     init_cache_cursor = init_cache_conn.cursor()
     init_cache_cursor.execute('CREATE TABLE IF NOT EXISTS cache (id INTEGER PRIMARY KEY, value BLOB)')
     init_cache_cursor.execute('SELECT COUNT(*) FROM cache')
-    left_cache_counter = cursor.fetchone()[0]
+    left_cache_counter = init_cache_cursor.fetchone()[0]
     init_cache_conn.commit()
     init_cache_conn.close()
     db_path = os.path.join(chat_path, "chatsettings.db")
@@ -2426,11 +2447,12 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     use_librarian = int(settings.get("use_librarian", 1)) == 1
     recreate_agents = int(settings.get("recreate_agents", 0)) == 1
     filter_generations = int(settings.get("filter_generations", 0)) == 1
+    cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 1)) == 1
     chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)
     if use_rag: agent_func = _rag_agent_func
     else: agent_func = _standard_agent_func
-    from chat_manager import (initialize_schema, create_chat, get_chat_context, update_history, delete_chat)
+    from chat_manager import initialize_schema, create_chat, get_chat_context, update_history, delete_chat
     initialize_schema()
     default_tools_dir = os.path.join(base_dir, "default_tools")
     for rel_path in tool_paths:

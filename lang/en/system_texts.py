@@ -210,6 +210,8 @@ warn_command_text_6 = "Command is inside markdown formatting (bold, italic, code
 
 warn_command_text_7 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
 
+warn_command_text_8 = 'Avaiable tools:'
+
 no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
 
 yes_no_instruction = """
@@ -343,6 +345,7 @@ class SystemTextContainer:
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
+        self.warn_command_text_8 = warn_command_text_8
         self.no_markdown_instruction = no_markdown_instruction
         self.yes_no_instruction = yes_no_instruction
         self.yes_word = yes_word

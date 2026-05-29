@@ -699,7 +699,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
                 "max_token_limit": "8192", "use_librarian": "1",
                 "recreate_agents": "0",
-                "skip_nested_images": "0"}
+                "skip_nested_images": "0",
+                "cut_wrong_command_history": "1"}
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
             widget_type_map = {
@@ -710,6 +711,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "use_librarian": "switch",
                 "recreate_agents": "switch",
                 "skip_nested_images": "switch",
+                "cut_wrong_command_history": "switch",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",}
             for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
@@ -1151,8 +1153,6 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.setup_main_ui()
             self._wraplength_update_pending = False
             self._last_available_width = 0
-            global initialize_work
-            from cross_gpt import initialize_work
         @staticmethod
         def add_label_context_menu(master, widget):
             menu = tk.Menu(master, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, relief="flat", borderwidth=0, font=(FONT_FAMILY, 8))
@@ -1565,6 +1565,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             output_queue = multiprocessing.Queue()
             log_queue = multiprocessing.Queue()
             current_passwords = encryption_utils.SESSION_PASSWORDS.copy()
+            from cross_gpt import initialize_work
             p = multiprocessing.Process(target=initialize_work, args=(get_base_dir(), chat_id, input_queue, output_queue, log_queue, current_passwords))
             p.start()
             self.chat_processes[chat_id] = p
@@ -1610,6 +1611,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             log_queue = self.log_queues.get(self.current_chat_id)
             if log_queue: log_win = LogWindow(self, self.current_chat_id, log_queue); self.log_windows[self.current_chat_id] = log_win
         def _on_message_container_resize(self, event=None):
+            if not hasattr(self, '_wraplength_update_pending'): return # Защита от вызова с неверным self (например, корневым окном)
             if self._wraplength_update_pending: return
             self._wraplength_update_pending = True
             self.after(50, self._update_message_wraplengths)
