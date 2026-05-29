@@ -74,22 +74,17 @@ def _rag_get_chat_context(chat_id: int, user_message=False) -> tuple[str, str]:
         # system_prompt возвращается как первый элемент, история — как второй.
         return (system_prompt, full_history_string)
 
-def _rag_update_history(chat_id: int, message_text: str, role: str): # Добавляет новое сообщение в 'rag_messages' И СРАЗУ векторизует его, добавляя в ChromaDB
+def _rag_update_history(chat_id: int, message_text: str, role: str, vector_id = ''): # Добавляет новое сообщение в 'rag_messages' И СРАЗУ векторизует его, добавляя в ChromaDB
     let_log(f"Updating RAG history for chat: {chat_id} with role: {role}")
     str_chat_id = str(chat_id)
-    set_common_save_id()
-    vector_id = str(get_common_save_id())
-    # 1. Добавляем в SQL, но c is_vectorized = True и vector_id
-    # (Мы считаем, что векторизация будет успешной)
-    sql_exec("INSERT INTO rag_messages (chat_id, role, full_text, is_vectorized, vector_id, relevance_score) VALUES (?, ?, ?, ?, ?, ?)", (str_chat_id, role, message_text, True, vector_id, 0))
-    try: # 2. Векторизуем и добавляем в ChromaDB
+    if vector_id == '':
+        set_common_save_id()
+        vector_id = str(get_common_save_id())
         embedding = get_embs(message_text)
         coll_exec(action="add", coll_name="rag_collection", ids=[vector_id], metadatas=[{'chat_id': str_chat_id, 'role': role, 'relevance_score': 0}], embeddings=[embedding])
-        let_log(f"Сообщение {vector_id} сразу векторизовано и добавлено в RAG.")
-        return vector_id
-    except Exception as e:
-        let_log(f"##### ОШИБКА: Не удалось векторизовать сообщение {vector_id} при сохранении: {e} #####")
-        sql_exec("UPDATE rag_messages SET is_vectorized = FALSE WHERE vector_id = ?", (vector_id,))
+        let_log(f"Сообщение {vector_id} векторизовано и добавлено в RAG")
+    sql_exec("INSERT INTO rag_messages (chat_id, role, full_text, is_vectorized, vector_id, relevance_score) VALUES (?, ?, ?, ?, ?, ?)", (str_chat_id, role, message_text, True, vector_id, 0))
+    return vector_id
 
 def _rag_delete_chat(chat_id: int): # Удаляет все данные, связанные с чатом, из всех таблиц RAG
     let_log(f"Deleting RAG chat and all related data: {chat_id}")

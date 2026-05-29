@@ -2263,17 +2263,15 @@ def _rag_agent_func(text, agent_number):
             msg_from = func_role_text
             global_state.dialog_ended = False
         else: msg_from = operator_role_text
+    update_history(sid, talk_prompt, msg_from, vector_id_out)
     while not global_state.stop_agent:
         let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}")
-        # 1. Сохраняем входящее сообщение от предыдущего агента в RAG-историю
-        vector_id_in = update_history(sid, talk_prompt, msg_from)
-        if global_state.wrong_command_messages_vector_ids != []: add_wrong_command_message_id(vector_id_in)
-        # 2. Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
+        # Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
-        # 3. Вызываем модель, добавив роль текущего агента для корректной генерации
+        # Вызываем модель, добавив роль текущего агента для корректной генерации
         talk_prompt = ask_model(final_prompt_for_model + you)
         talk_prompt = remove_commands_roles(talk_prompt)
-        # 4. Сохраняем ответ самой модели в RAG-историю
+        # Сохраняем ответ самой модели в RAG-историю
         vector_id_out = update_history(sid, talk_prompt, you)
         answer = tools_selector(talk_prompt, sid)
         if answer:
@@ -2281,6 +2279,9 @@ def _rag_agent_func(text, agent_number):
             talk_prompt = answer
             msg_from = func_role_text
         else: break
+        # Сохраняем входящее сообщение от предыдущего агента в RAG-историю
+        vector_id_in = update_history(sid, talk_prompt, msg_from)
+        if global_state.wrong_command_messages_vector_ids != []: add_wrong_command_message_id(vector_id_in)
     global_state.stop_agent = False
     return talk_prompt
 
