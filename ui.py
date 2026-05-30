@@ -1126,6 +1126,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     class ChatApp(CTk):
         def __init__(self, backend):
             super().__init__(fg_color=DARK_BG)
+            self.withdraw()
             self.backend = backend
             self.waiting_for_answer = {}
             self.current_chat_id = None
@@ -2126,6 +2127,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         app = ChatApp(backend)
         setup_icon(app)
         app.after(0, app.bring_to_front)
+        app.deiconify()
         app_ready_event.set()
         app.mainloop()
     except Exception as e:
