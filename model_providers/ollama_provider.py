@@ -33,6 +33,8 @@ emb_cpu = True
 offload_on_boot = False
 is_thinking = False
 default_num_ctx = None     # заданный в строке подключения контекст (если есть)
+filter_think_tag = False   # флаг фильтрации тегов <think>
+_last_think_content = None # последнее извлечённое содержимое think
 
 # Прошлые состояния для детекта изменений
 _last_llm_num_ctx = None
@@ -189,12 +191,13 @@ def connect(connection_string, timeout=30):
     Подключение к серверу Ollama API.
     Формат строки подключения:
     "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest;
-     llm_cpu=false; emb_cpu=true; offload_on_boot=false; is_thinking=false; num_ctx=..."
+     llm_cpu=false; emb_cpu=true; offload_on_boot=false; is_thinking=false; num_ctx=...; filter_think_tag=false"
     """
     global session, base_url, default_chat_model, token_limit, emb_token_limit
     global emb_model, do_chat_construct, native_func_call, tags, model_template_info
     global llm_cpu, emb_cpu, offload_on_boot, is_thinking, default_num_ctx
     global _last_llm_num_ctx, _last_think_value, _last_llm_cpu
+    global filter_think_tag
 
     # Параметры по умолчанию (только необходимые)
     params = {
@@ -208,6 +211,7 @@ def connect(connection_string, timeout=30):
         "emb_cpu": "true",
         "offload_on_boot": "false",
         "is_thinking": "false",
+        "filter_think_tag": "false",
     }
     # --- Разбор строки подключения ---
     for part in connection_string.split(";"):
@@ -231,6 +235,7 @@ def connect(connection_string, timeout=30):
     emb_cpu = params["emb_cpu"].lower().strip() == "true"
     offload_on_boot = params["offload_on_boot"].lower().strip() == "true"
     is_thinking = params["is_thinking"].lower().strip() == "true"
+    filter_think_tag = params["filter_think_tag"].lower().strip() == "true"
 
     # Обработка num_ctx
     num_ctx_str = params.get("num_ctx", "").strip()
@@ -375,6 +380,21 @@ def _check_and_reload_model():
             _last_think_value = is_thinking
             _last_llm_cpu = llm_cpu
 
+def _extract_think(text):
+    """
+    Извлекает содержимое между <think> и </think> и возвращает (очищенный_текст, think_содержимое).
+    Если теги не найдены, возвращает (исходный_текст, None).
+    """
+    if not text:
+        return text, None
+    pattern = re.compile(r'<think>(.*?)</think>', re.DOTALL | re.IGNORECASE)
+    match = pattern.search(text)
+    if match:
+        think_content = match.group(1).strip()
+        cleaned = pattern.sub('', text).strip()
+        return cleaned, think_content
+    return text, None
+
 def _request_with_backoff(api_url, json_payload):
     let_log(json_payload)
     """
@@ -484,6 +504,7 @@ def _request_with_backoff(api_url, json_payload):
     raise RuntimeError("Превышено максимальное количество попыток")
 
 def ask_model(generation_params):
+    global _last_think_content, filter_think_tag
     if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/generate"
     try:
@@ -533,11 +554,19 @@ def ask_model(generation_params):
         let_log(f"ask_model: Получен ответ, длина: {len(str(data))} символов")
         result = data.get("response", "").strip()
         let_log(f"ask_model: Результат: '{result[:100]}...'")
+
+        # Обработка think-тегов (фильтрация)
+        if filter_think_tag:
+            cleaned, think = _extract_think(result)
+            _last_think_content = think
+            result = cleaned
+
         return result
     except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
     except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
 
 def ask_model_chat(generation_params):
+    global filter_think_tag
     if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/chat"
     try:
@@ -585,9 +614,23 @@ def ask_model_chat(generation_params):
 
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model_chat: Получен ответ, длина: {len(str(data))} символов")
+
+        # Обработка think-тегов (фильтрация) для ответа чата
+        if filter_think_tag and 'message' in data and 'content' in data['message']:
+            original_content = data['message']['content']
+            cleaned_content, think_content = _extract_think(original_content)
+            data['message']['content'] = cleaned_content
+            data['think'] = think_content
+        elif filter_think_tag:
+            data['think'] = None
+
         return data
     except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
     except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
+
+def get_last_think():
+    """Возвращает последнее извлечённое think-содержимое (после вызова ask_model)."""
+    return _last_think_content
 
 def create_embeddings(text):
     global base_url, emb_model, session
