@@ -831,37 +831,104 @@ def get_token_limit(): return token_limit
 
 def get_text_tokens_coefficient(): return text_tokens_coefficient
 
-def _execute_with_cache_and_error_handling(generation_func): # Вспомогательная функция для обработки кэширования и ошибок при генерации
+# ========== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (добавить в начало файла) ==========
+
+def _retry_loop(get_response, is_valid, error_retry_delay=60, empty_retry_delay=2):
+    """
+    Универсальный цикл повторных попыток вызова провайдера.
+    
+    Аргументы:
+        get_response: функция без аргументов, возвращающая ответ от провайдера
+        is_valid: функция, принимающая ответ и возвращающая True, если ответ содержит контент
+        error_retry_delay: пауза после исключения (сбой провайдера)
+        empty_retry_delay: пауза после пустого/невалидного ответа
+    
+    Возвращает:
+        Валидный ответ от провайдера (в том же формате, что вернул get_response)
+    """
     start = time.time()
-    try: generated = generation_func()
-    except Exception as e:
-        if 'ContextOverflowError' in str(e): raise RuntimeError("ContextOverflowError")
-        let_log(e)
-        send_ui_no_cache(f'{error_in_provider}\n{e}')
-        while True:
-            time.sleep(60)
-            try:
-                start = time.time()
-                generated = generation_func()
-                send_ui_no_cache(success_in_provider)
-                break
-            except Exception as e:
-                if 'ContextOverflowError' in str(e): raise RuntimeError("ContextOverflowError")
-    elapsed = time.time() - start
-    send_log_to_ui(generated)
-    traceprint()
-    let_log(generated)
-    let_log(f'СГЕНЕРИРОВАНО {len(generated)} токенов за {elapsed:.2f}s')
-    let_log(f'Генерация заняла {elapsed:.2f}s, вывод {len(generated)} токенов')
-    return generated
+    had_error = False
+    while True:
+        try:
+            response = get_response()
+        except Exception as e:
+            if 'ContextOverflowError' in str(e):
+                raise RuntimeError("ContextOverflowError")
+            let_log(e)
+            send_ui_no_cache(f'{error_in_provider}\n{e}')
+            had_error = True
+            time.sleep(error_retry_delay)
+            continue
+
+        if not is_valid(response):
+            let_log("[WARN] Модель вернула пустой или невалидный ответ. Повторная попытка...")
+            send_ui_no_cache("Пустой ответ от модели, повторная попытка...", command='warning')
+            time.sleep(empty_retry_delay)
+            continue
+
+        # Успешный ответ
+        if had_error:
+            send_ui_no_cache(success_in_provider)
+        elapsed = time.time() - start
+        let_log(f'Успешный ответ получен за {elapsed:.2f}s')
+        return response
+
+def _call_chat_with_retry(generation_params):
+    """Для chat/completions: возвращает полный ответ провайдера (словарь) с проверкой наличия content или tool_calls."""
+    def is_valid_chat_response(resp):
+        # Проверка на наличие содержательного контента или вызова инструментов
+        if "choices" in resp and resp["choices"]:
+            choice = resp["choices"][0]
+            message = choice.get("message", {})
+            if message.get("tool_calls"):
+                return True
+            content = message.get("content", "")
+            if content and content.strip():
+                return True
+        elif "message" in resp:
+            msg = resp["message"]
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+                if content and content.strip():
+                    return True
+            elif isinstance(msg, str) and msg.strip():
+                return True
+        elif "response" in resp and resp["response"].strip():
+            return True
+        return False
+
+    return _retry_loop(lambda: ask_provider_model_chat(generation_params), is_valid_chat_response)
+
+def _call_completions_with_retry(generation_params):
+    """Для completions: возвращает текстовую строку."""
+    def is_valid_completions_response(resp):
+        if isinstance(resp, str):
+            return bool(resp.strip())
+        elif isinstance(resp, dict):
+            text = resp.get('response', '')
+            return bool(text.strip())
+        return False
+
+    raw_response = _retry_loop(lambda: ask_provider_model(generation_params), is_valid_completions_response)
+    # Извлекаем строку в зависимости от формата ответа
+    if isinstance(raw_response, str):
+        return raw_response
+    elif isinstance(raw_response, dict):
+        return raw_response.get('response', '')
+    return ''
+
+# ========== ПОЛНАЯ ФУНКЦИЯ ask_model ==========
 
 @cacher
 def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, **extra_params) -> str:
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
     # Проверка длины контекста
-    if len(prompt_text) * text_tokens_coefficient > token_limit - 1000: raise RuntimeError("ContextOverflowError")
-    if use_user: # --- Обработка пользовательского ввода ---
+    if len(prompt_text) * text_tokens_coefficient > token_limit - 1000:
+        raise RuntimeError("ContextOverflowError")
+    
+    if use_user:
+        # --- Обработка пользовательского ввода ---
         import tkinter as tk
         from tkinter import simpledialog
         root = tk.Tk()
@@ -870,40 +937,53 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         input_text = simpledialog.askstring("Ввод текста", "Пожалуйста, введите текст:", parent=root)
         root.destroy()
         if input_text is not None:
-            if input_text != "": return input_text
+            if input_text != "":
+                return input_text
         let_log("[Пользователь нажал Cancel, используется генерация моделью]")
+    
     # --- Обработка особых случаев (system_prompt и all_user) ---
-    # Особый случай 1: system_prompt
     if system_prompt:
         let_log("Режим (Особый случай): system_prompt -> chat/completions")
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt_text}]
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
-        for name, val in extra_params.items(): generation_params[name] = val
-        return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
-    if all_user: # Особый случай 2: all_user
+        generation_params.update(extra_params)
+        response = _call_chat_with_retry(generation_params)
+        return _process_chat_response(response)
+    
+    if all_user:
         let_log("Режим (Особый случай): all_user=True -> chat/completions")
         messages = [{"role": "user", "content": prompt_text}]
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
-        for name, val in extra_params.items(): generation_params[name] = val
-        return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
+        generation_params.update(extra_params)
+        response = _call_chat_with_retry(generation_params)
+        return _process_chat_response(response)
+    
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
-    if not do_chat_construct: # Режим 1: Подача строки (completions)
+    if not do_chat_construct:
+        # Режим 1: Подача строки (completions)
         let_log("Режим 1 (do_chat_construct=1): Подача строки -> completions")
-        if not native_func_call: parsed_msgs = _parse_roles_to_messages_no_functions(prompt_text)
-        else: parsed_msgs = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
+        if not native_func_call:
+            parsed_msgs = _parse_roles_to_messages_no_functions(prompt_text)
+        else:
+            parsed_msgs = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
         generation_params = {"prompt": _serialize_messages_to_prompt(parsed_msgs), "temperature": temperature, "max_tokens": limit or token_limit, "echo": False}
-        for name, val in extra_params.items(): generation_params[name] = val
-        return _execute_with_cache_and_error_handling(lambda: ask_provider_model(generation_params))
-    elif do_chat_construct and not native_func_call: # Режим 2: Парсинг чата БЕЗ function call
+        generation_params.update(extra_params)
+        return _call_completions_with_retry(generation_params)
+    
+    elif do_chat_construct and not native_func_call:
+        # Режим 2: Парсинг чата БЕЗ function call
         let_log("Режим 2 (do_chat_construct=2): Парсинг (без функций) -> chat/completions")
-        messages = _parse_roles_to_messages_no_functions(prompt_text) # Используем старый парсер
+        messages = _parse_roles_to_messages_no_functions(prompt_text)
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
-        for name, val in extra_params.items(): generation_params[name] = val
-        return _execute_with_cache_and_error_handling(lambda: _process_chat_response(ask_provider_model_chat(generation_params)))
-    elif do_chat_construct and native_func_call: # Режим 3: Парсинг чата С function call
+        generation_params.update(extra_params)
+        response = _call_chat_with_retry(generation_params)
+        return _process_chat_response(response)
+    
+    elif do_chat_construct and native_func_call:
+        # Режим 3: Парсинг чата С function call
         let_log("Режим 3 (do_chat_construct=3): Парсинг (С функциями) -> chat/completions")
         let_log(global_state.now_agent_id)
-        # 1. Парсим историю (как и раньше)
+        # 1. Парсим историю
         messages = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
         # 2. Получаем и форматируем доступные инструменты
         now_commands = global_state.tools_commands_dict.get(global_state.now_agent_id, {})
@@ -915,30 +995,24 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         if formatted_tools:
             let_log('ДОБАВЛЯЕМ ИНСТРУМЕНТЫ')
             generation_params["tools"] = formatted_tools
-            generation_params["tool_choice"] = "auto" # Позволяем модели решать, когда вызывать
-        for name, val in extra_params.items(): generation_params[name] = val
+            generation_params["tool_choice"] = "auto"
+        generation_params.update(extra_params)
         let_log(generation_params)
-        try: openai_response = ask_provider_model_chat(generation_params) # 4. Вызываем модель и получаем полный ответ
-        except Exception as e:
-            if 'ContextOverflowError' in str(e): raise RuntimeError("ContextOverflowError")
-            let_log(e)
-            send_ui_no_cache(f'{error_in_provider}\n{e}')
-            while True:
-                time.sleep(60)
-                try:
-                    openai_response = ask_provider_model_chat(generation_params)
-                    send_ui_no_cache(success_in_provider)
-                    break
-                except Exception as e:
-                    if 'ContextOverflowError' in str(e): raise RuntimeError("ContextOverflowError")
+        
+        # Вызов с бесконечными ретраями (включая пустые ответы)
+        response = _call_chat_with_retry(generation_params)
+        
         # 5. Обрабатываем ответ как словарь
-        let_log(openai_response)
+        let_log(response)
         # Извлекаем данные из ответа API
-        if "choices" not in openai_response or not openai_response["choices"]: let_log("ask_model: Некорректный формат ответа - нет choices"); raise RuntimeError("Некорректный формат ответа - нет choices")
-        choice = openai_response["choices"][0]
+        if "choices" not in response or not response["choices"]:
+            let_log("ask_model: Некорректный формат ответа - нет choices")
+            raise RuntimeError("Некорректный формат ответа - нет choices")
+        choice = response["choices"][0]
         message = choice.get("message", {})
         response_content = message.get("content", "") or ""
         tool_calls = message.get("tool_calls")
+        
         if tool_calls:
             for tool_call in tool_calls:
                 function_name = tool_call['function']['name']
@@ -947,12 +1021,14 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
                     args_dict = json.loads(arguments_json_str)
                     # Извлекаем значение по ключу 'arguments'
                     arguments_str = args_dict.get('arguments', '')
-                except Exception: arguments_str = arguments_json_str
+                except Exception:
+                    arguments_str = arguments_json_str
                 # Собираем маркер, который ожидает tools_selector
                 marker = f"\n!!!{function_name}!!!{arguments_str}"
                 response_content = marker + response_content
             return response_content
-        elif response_content: return response_content
+        elif response_content:
+            return response_content
         return response_content
 
 def _process_chat_response(api_response):
