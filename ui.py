@@ -692,6 +692,16 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'en')")
             providers = ProviderManager().get_providers()
             default_provider = list(providers.keys())[0] if providers else ""
+            # Изменение 1: проверка AVX2 на Linux для allow_ocr
+            if sys.platform.startswith("linux"):
+                try:
+                    import subprocess
+                    has_avx2 = subprocess.run(['grep', '-q', 'avx2', '/proc/cpuinfo'], capture_output=True).returncode == 0
+                    allow_ocr = "1" if has_avx2 else "0"
+                except:
+                    allow_ocr = "0"
+            else:
+                allow_ocr = "1"
             defaults = {
                 "token_limit": "8192", "model_provider_params": "",
                 "model_type": default_provider, "use_rag": "1",
@@ -700,7 +710,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "max_token_limit": "8192", "use_librarian": "1",
                 "recreate_agents": "0",
                 "skip_nested_images": "0",
-                "cut_wrong_command_history": "1"}
+                "cut_wrong_command_history": "1",
+                "allow_ocr": allow_ocr}
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
             widget_type_map = {
@@ -712,6 +723,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "recreate_agents": "switch",
                 "skip_nested_images": "switch",
                 "cut_wrong_command_history": "switch",
+                "allow_ocr": "switch",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",}
             for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
@@ -750,14 +762,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             while (Path(resource_path(os.path.join("data", "chats"))) / chat_id).exists(): chat_id = self.generate_id()
             chat_path = Path(resource_path(os.path.join("data", "chats"))) / chat_id
             chat_path.mkdir(parents=True, exist_ok=True)
+            # Изменение 2: всегда создаём папку files
+            (chat_path / "files").mkdir(exist_ok=True)
             new_chat = {"id": chat_id, "name": chat_name}
             updated_chats = [new_chat] + existing_chats
             self.cache.update_chats(updated_chats)
             default_mods = ModuleManager().get_default_modules()
-            create_file_mod = next((mod for mod in default_mods if mod['adress'] == 'create_file.py'), None)
-            if create_file_mod:
-                mod_enabled = settings_data.get('default_mods_config', {}).get(create_file_mod['id'], False)
-                if mod_enabled: (chat_path / "files").mkdir(exist_ok=True)
             cmd_mod = next((mod for mod in default_mods if mod['adress'].endswith('cmd.py')), None)
             if cmd_mod:
                 mod_enabled = settings_data.get('default_mods_config', {}).get(cmd_mod['id'], False)
@@ -1126,7 +1136,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     class ChatApp(CTk):
         def __init__(self, backend):
             super().__init__(fg_color=DARK_BG)
-            self.withdraw()
+            if sys.platform.startswith("linux"): self.withdraw()
             self.backend = backend
             self.waiting_for_answer = {}
             self.current_chat_id = None
@@ -2127,7 +2137,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         app = ChatApp(backend)
         setup_icon(app)
         app.after(0, app.bring_to_front)
-        app.deiconify()
+        if sys.platform.startswith("linux"): app.deiconify()
         app_ready_event.set()
         app.mainloop()
     except Exception as e:

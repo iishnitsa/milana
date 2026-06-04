@@ -20,6 +20,7 @@ import base64
 import inspect
 from multiprocessing import queues
 import shutil
+
 Empty = queues.Empty
 
 class GlobalState:
@@ -61,6 +62,7 @@ class GlobalState:
 global_state = GlobalState()
 
 chat_path = ''
+filesystem_project_path = ''
 vector_id_out = ''
 do_chat_construct = False
 native_func_call = False
@@ -125,6 +127,20 @@ unified_tags = {
     "tool_result_end": "",}
 use_user = False
 chunk_size = 1000 # TODO:
+
+pipeline = None
+get_dependency_report = None
+change_dir = None
+get_project_tree_json = None
+create_experiment_branch = None
+status_success = None
+status_failed = None
+status_forbidden = None
+resolve_workspace_path = None
+to_posix_rel = None
+allowed_actions = None
+normalize_action = None
+
 get_provider_embs = None
 ask_provider_model = None
 ask_provider_model_chat = None
@@ -2392,16 +2408,18 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global token_limit, emb_token_limit, chunk_size, left_cache_counter
     global client, milana_collection, user_collection, rag_collection
     global ui_conn
-    global cache_path, chat_path, memory_sql, folder_path, slash
+    global cache_path, chat_path, memory_sql, folder_path, slash, filesystem_project_path
     global ask_provider_model, ask_provider_model_chat, get_provider_embs
     global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
     global language
     global do_chat_construct, native_func_call
     global use_rag, agent_func, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history
+    global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
     # === Загружаем параметры чата ===
     chat_path = os.path.join(base_dir, "data", "chats", chat_id)
+    filesystem_project_path = os.path.join(base_dir, "data", "chats", chat_id, 'files')
     cache_path = os.path.join(chat_path, "cache.db")
     folder_path = base_dir # Обновляем пути для system_tools
     sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]
@@ -2508,6 +2526,21 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         if unified_tags.get('user_start') is not None: clean_variables_content.append(unified_tags.get('user_start'))
         filter_generations = True
     else: filter_generations = False
+
+    from filesystem import (
+        pipeline,
+        get_dependency_report,
+        change_dir,
+        get_project_tree_json,
+        create_experiment_branch,
+        status_success,
+        status_failed,
+        status_forbidden,
+        resolve_workspace_path,
+        to_posix_rel,
+        allowed_actions,
+        normalize_action)
+
     let_log(f"\n=== ЗАГРУЗКА СПЕЦИАЛЬНЫХ МОДУЛЕЙ (до системных) ===")
     special_files = {'web_search': None, 'ask_user': None}
     other_files = []
