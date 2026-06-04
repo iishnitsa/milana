@@ -58,7 +58,8 @@ class GlobalState:
         self.skip_tools_keys = []
         self.last_agent = None
         self.skip_nested_images = 0
-        self.d = []
+        self.allow_ocr = 1
+        self.wrong_command_messages_vector_ids = []
 global_state = GlobalState()
 
 chat_path = ''
@@ -2445,6 +2446,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     settings = load_chat_settings(chat_id)
     tool_paths = settings.get("another_tools", [])
     token_limit = int(settings.get("token_limit", 8192))
+    global_state.allow_ocr = int(settings.get("allow_ocr", 0)) == 1
     global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     global_state.write_results = int(settings.get("write_results", 0)) == 1

@@ -65,6 +65,7 @@ _IMAGE_MODELS_LOADED = False
 _IMAGE_MODELS_LOAD_FAILED = False
 
 def _load_image_models():
+    if not global_state.allow_ocr: raise RuntimeError('OCR not allowed')
     global _BLIP_PROCESSOR, _BLIP_MODEL, _OCR_INSTANCE
     global _IMAGE_MODELS_LOADED, _IMAGE_MODELS_LOAD_FAILED
     if _IMAGE_MODELS_LOADED: return True
