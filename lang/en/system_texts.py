@@ -48,8 +48,9 @@ gigo_make_plan_1 = '''The user will send you the thoughts of different entities 
 As soon as they send the thoughts of the last entity, immediately write a plan for solving the task with a length of 10-25 lines.
 Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
 The answer should not contain interrogative sentences.
-Just the plan.
+Just the plan\n
 '''
+gigo_make_plan_num = '\nThe points of the plan are necessary: '
 gigo_make_plan_2 = '\nEntities: '
 gigo_return_1 = 'Task:\n'
 gigo_return_2 = 'Plan:\n'
@@ -212,7 +213,7 @@ warn_command_text_7 = 'If you did NOT try to invoke a command, use !!!skip!!! at
 
 warn_command_text_8 = 'Avaiable tools:'
 
-no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
+no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -). Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
 
 yes_no_instruction = """
 You must answer only "Yes." or "No." Do not add any additional text, explanations, or punctuation other than a single period at the end. This is critically important for the system to parse your response correctly.
@@ -272,6 +273,7 @@ class SystemTextContainer:
         self.gigo_role_answer_1 = gigo_role_answer_1
         self.gigo_role_answer_2 = gigo_role_answer_2
         self.gigo_make_plan_1 = gigo_make_plan_1
+        self.gigo_make_plan_num = gigo_make_plan_num
         self.gigo_make_plan_2 = gigo_make_plan_2
         self.gigo_return_1 = gigo_return_1
         self.gigo_return_2 = gigo_return_2

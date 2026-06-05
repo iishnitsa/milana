@@ -711,7 +711,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "recreate_agents": "0",
                 "skip_nested_images": "0",
                 "cut_wrong_command_history": "1",
-                "allow_ocr": allow_ocr}
+                "allow_ocr": allow_ocr,
+                "number_of_plan_items": "0"}
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
             widget_type_map = {
@@ -725,7 +726,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "cut_wrong_command_history": "switch",
                 "allow_ocr": "switch",
                 "hierarchy_limit": "entry",
-                "max_critic_reactions": "entry",}
+                "max_critic_reactions": "entry",
+                "number_of_plan_items": "entry"}
             for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
         def _load_settings_metadata_from_db(self): # Возвращает список кортежей (key, widget_type) для всех записей settings.
             rows = self.sql_exec(self.db_path, "SELECT key, widget_type FROM settings", fetchall=True) or []

@@ -60,6 +60,7 @@ class GlobalState:
         self.skip_nested_images = 0
         self.allow_ocr = 1
         self.wrong_command_messages_vector_ids = []
+        self.number_of_plan_items = 0
 global_state = GlobalState()
 
 chat_path = ''
@@ -1859,7 +1860,8 @@ def gigo(base_task):
         else:
             minds_text += operator_role_text + gigo_next_role + role
             if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
-    try: plan = ask_model(system_role_text + gigo_make_plan_1 + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
+    num_plan_items = gigo_make_plan_num + global_state.number_of_plan_items if global_state.number_of_plan_items != 0 else ''
+    try: plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
     except RuntimeError as e:
         if 'ContextOverflowError' in str(e):
             minds_text = ''
@@ -1869,7 +1871,7 @@ def gigo(base_task):
                 else:
                     minds_text += operator_role_text + gigo_next_role + role
                     if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
-            plan = ask_model(system_role_text + gigo_make_plan_1 + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + text_cutter(additional_info) + minds_text)
+            plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + text_cutter(additional_info) + minds_text)
         else: raise
     return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
 
@@ -2524,8 +2526,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     token_limit = int(settings.get("token_limit", 8192))
     global_state.allow_ocr = int(settings.get("allow_ocr", 0)) == 1
     global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
-    global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     global_state.write_results = int(settings.get("write_results", 0)) == 1
+    global_state.number_of_plan_items = int(settings.get("number_of_plan_items", 0))
+    global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     global_state.skip_nested_images = int(settings.get("skip_nested_images", 0)) == 1
     use_rag = int(settings.get("use_rag", 1)) == 1
     is_save_log = int(settings.get("write_log", 1)) == 1
