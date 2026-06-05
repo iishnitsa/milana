@@ -674,7 +674,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 if mod_file.name.endswith("_lang.py"): return
                 mod_name_stem = mod_file.stem.lower()
                 if mod_name_stem in ['windows_cmd', 'linux_cmd', 'macos_cmd']:
-                    if not (system_os == 'windows' and mod_name_stem == 'windows_cmd') or (system_os == 'linux' and mod_name_stem == 'linux_cmd') or (system_os == 'darwin' and mod_name_stem == 'macos_cmd'): return
+                    if not ((system_os == 'windows' and mod_name_stem == 'windows_cmd')
+                            or (system_os == 'linux' and mod_name_stem == 'linux_cmd')
+                            or (system_os == 'darwin' and mod_name_stem == 'macos_cmd')):
+                        return
                 existing = self.sql_exec(db_path, "SELECT id FROM default_mods WHERE adress = ?", (relative_path_str,), fetchone=True)
                 if existing: return
                 valid, msg = ModuleValidator.validate_module(str(mod_file.resolve()))
