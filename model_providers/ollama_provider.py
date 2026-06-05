@@ -526,9 +526,11 @@ def ask_model(generation_params):
         ollama_params["options"]["num_ctx"] = ctx
 
         # Пробрасываем think, если модель это поддерживает
+        '''
         if is_thinking:
             think_value = generation_params.get("think", False)  # По умолчанию запрещаем думать
             ollama_params["think"] = think_value
+        '''
 
         # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
         if not _skip_num_predict and "max_tokens" in generation_params:
@@ -587,10 +589,12 @@ def ask_model_chat(generation_params):
         ctx = default_num_ctx if default_num_ctx else token_limit
         ollama_params["options"]["num_ctx"] = ctx
 
+        '''
         # Пробрасываем think, если модель это поддерживает
         if is_thinking:
             think_value = generation_params.get("think", False)  # По умолчанию запрещаем думать
             ollama_params["think"] = think_value
+        '''
 
         # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
         if not _skip_num_predict and "max_tokens" in generation_params:
