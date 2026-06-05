@@ -14,7 +14,7 @@ from pathlib import Path
 from cross_gpt import chat_path, global_state
 
 def delete_console_folder():
-    path = os.path.join(chat_path, 'console_folders', global_state.now_agent_id)
+    path = os.path.join(chat_path, 'files', global_state.now_agent_id)
     if os.path.exists(path): shutil.rmtree(path)
 
 def main(text: str) -> str:
@@ -44,7 +44,7 @@ def main(text: str) -> str:
         r'chmod\s+-R\s+777\s+/',     # chmod -R 777 /
     ]
     def get_agent_dir() -> Path:
-        relative = os.path.join(chat_path, 'console_folders', global_state.now_agent_id)
+        relative = os.path.join(chat_path, 'files', global_state.now_agent_id)
         return Path(relative).resolve()
     def is_command_banned(cmd: str) -> bool:
         cmd_lc = cmd.lower()

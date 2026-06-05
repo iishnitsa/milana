@@ -764,16 +764,11 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             while (Path(resource_path(os.path.join("data", "chats"))) / chat_id).exists(): chat_id = self.generate_id()
             chat_path = Path(resource_path(os.path.join("data", "chats"))) / chat_id
             chat_path.mkdir(parents=True, exist_ok=True)
-            # Изменение 2: всегда создаём папку files
             (chat_path / "files").mkdir(exist_ok=True)
             new_chat = {"id": chat_id, "name": chat_name}
             updated_chats = [new_chat] + existing_chats
             self.cache.update_chats(updated_chats)
             default_mods = ModuleManager().get_default_modules()
-            cmd_mod = next((mod for mod in default_mods if mod['adress'].endswith('cmd.py')), None)
-            if cmd_mod:
-                mod_enabled = settings_data.get('default_mods_config', {}).get(cmd_mod['id'], False)
-                if mod_enabled: (chat_path / "console_folders").mkdir(exist_ok=True)
             create_report_mod = next((mod for mod in default_mods if mod['adress'] == 'create_report.py'), None)
             if create_report_mod:
                 mod_enabled = settings_data.get('default_mods_config', {}).get(create_report_mod['id'], False)
@@ -1438,22 +1433,14 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 chat_button.bind("<Enter>", lambda e: setattr(e.widget, '_hover', True))
                 chat_button.bind("<Leave>", lambda e: setattr(e.widget, '_hover', False))
                 files_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "files")))
-                console_folders_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "console_folders")))
                 reports_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "reports")))
                 results_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "results")))
-                has_files = files_path.exists() and files_path.is_dir()
-                has_console_folders = console_folders_path.exists() and console_folders_path.is_dir()
                 has_reports = reports_path.exists() and reports_path.is_dir()
                 has_results = results_path.exists() and results_path.is_dir()
                 column_offset = 1
-                if has_files:
-                    files_button = CTkButton(row_frame, text="ƒ", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
-                    files_button.grid(row=0, column=column_offset, padx=(2, 0))
-                    column_offset += 1
-                if has_console_folders:
-                    console_button = CTkButton(row_frame, text=">_", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "console_folders"))
-                    console_button.grid(row=0, column=column_offset, padx=(2, 0))
-                    column_offset += 1
+                files_button = CTkButton(row_frame, text="ƒ", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "files"))
+                files_button.grid(row=0, column=column_offset, padx=(2, 0))
+                column_offset += 1
                 if has_reports:
                     reports_button = CTkButton(row_frame, text="📄", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
                     reports_button.grid(row=0, column=column_offset, padx=(2, 0))
