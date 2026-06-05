@@ -325,28 +325,6 @@ def write_cache(content):
         send_ui_no_cache(e)
         raise SystemExit(e)
 
-def rollback_cache(num_records): # TODO: left_cache_counter
-    global cache_counter
-    cache_conn = None
-    if num_records >= cache_counter: num_records = cache_counter - 1
-    if num_records == 0: return False
-    try:
-        cache_conn = connect(cache_path)
-        cache_cursor = cache_conn.cursor()
-        cache_cursor.execute('DELETE FROM cache WHERE id IN (SELECT id FROM cache ORDER BY id DESC LIMIT ?)', (num_records,))
-        cache_conn.commit()
-        cache_conn.close()
-        cache_conn = None
-        cache_counter -= num_records
-        let_log(f"Выполнен откат последних {num_records} записей.")
-        cache_can_write = True
-        return True
-    except Exception as e:
-        if cache_conn: cache_conn.close()
-        e = f'{e}'
-        send_ui_no_cache(e)
-        raise SystemExit(e)
-
 def send_ui_no_cache(t, attach=None, comm=''):
     message_data = {'text': t, 'attachments': attach, 'command': comm}
     try: ui_conn[1].put(message_data)
