@@ -6,6 +6,7 @@ Recommended if you want to record detailed results — for now, you'll find them
 '''
 
 import os
+import re
 from datetime import datetime
 from cross_gpt import chat_path, send_ui_no_cache
 
@@ -15,10 +16,29 @@ def main(text):
         main.confirmation_text = 'Report saved'
         main.report_created_text = 'Report created: '
         return
-    filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+
+    # Generate filename prefix from beginning of text
+    raw_prefix = text.strip()[:50]  # take first 50 characters
+    # Keep only alphanumeric, spaces, underscores; replace spaces with underscore
+    safe_prefix = re.sub(r'[^\w\s]', '', raw_prefix)  # remove punctuation etc.
+    safe_prefix = re.sub(r'\s+', '_', safe_prefix)    # replace spaces with underscore
+    safe_prefix = safe_prefix.strip('_')              # trim leading/trailing underscores
+    if not safe_prefix:
+        safe_prefix = "report"
+    else:
+        # limit length to 30 characters
+        safe_prefix = safe_prefix[:30]
+
+    filename = f"{safe_prefix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
     path = os.path.join(chat_path, "reports", filename)
+
     try:
-        with open(path, 'w', encoding='utf-8') as f: f.write(text.strip())
+        # Ensure reports directory exists
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text.strip())
         send_ui_no_cache(main.report_created_text + filename, attach=[path])
-    except Exception as e: print(f"Error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
+
     return main.confirmation_text
