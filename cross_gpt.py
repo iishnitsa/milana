@@ -1860,7 +1860,7 @@ def gigo(base_task):
         else:
             minds_text += operator_role_text + gigo_next_role + role
             if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
-    num_plan_items = gigo_make_plan_num + global_state.number_of_plan_items if global_state.number_of_plan_items != 0 else ''
+    num_plan_items = gigo_make_plan_num + global_state.number_of_plan_items if global_state.number_of_plan_items > 0 else ''
     try: plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
     except RuntimeError as e:
         if 'ContextOverflowError' in str(e):
