@@ -698,13 +698,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             # Изменение 1: проверка AVX2 на Linux для allow_ocr
             if sys.platform.startswith("linux"):
                 try:
-                    import subprocess
                     has_avx2 = subprocess.run(['grep', '-q', 'avx2', '/proc/cpuinfo'], capture_output=True).returncode == 0
                     allow_ocr = "1" if has_avx2 else "0"
-                except:
-                    allow_ocr = "0"
-            else:
-                allow_ocr = "1"
+                except: allow_ocr = "0"
+            else: allow_ocr = "1"
             defaults = {
                 "token_limit": "8192", "model_provider_params": "",
                 "model_type": default_provider, "use_rag": "1",
