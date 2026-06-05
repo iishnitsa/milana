@@ -153,6 +153,7 @@ user_collection = None
 rag_collection = None
 cache_counter = 1 # всегда начинается с 1
 left_cache_counter = 0 # остаток
+pending_write_cache_ids = []
 language = ''
 is_print_log = True
 is_save_log = True
@@ -233,6 +234,7 @@ def traceprint(*args, **kwargs):
 def read_cache():
     global cache_counter, left_cache_counter
     global cache_can_write
+    global pending_write_cache_ids
     cache_conn = None
     try:
         if left_cache_counter > 0:
@@ -241,25 +243,40 @@ def read_cache():
             let_log(f"Попытка чтения кэша с id: {cache_counter}")
             cache_cursor.execute('SELECT value FROM cache WHERE id = ?', (cache_counter,))
             result = cache_cursor.fetchone()
-            cache_conn.close()
-            cache_conn = None
             if result != None:
                 stored_data = result[0]
                 marker = stored_data[0:1]
                 data_part = stored_data[1:]
                 if marker == b'\x00': decompressed_bytes = data_part
-                elif marker == b'\x01': decompressed_bytes = gzip.decompress(data_part)
-                elif marker == b'\x02': decompressed_bytes = lzma.decompress(data_part)
+                elif marker == b'\x01': decompressed_bytes = lzma.decompress(data_part)
+                elif marker == b'\x02':
+                    let_log('маркер спуска')
+                    pending_write_cache_ids.append(cache_counter)
+                    cache_counter += 1
+                    left_cache_counter -= 1
+                    cache_conn.close()
+                    cache_conn = None
+                    return [False]
                 try: deserialized_value = pickle.loads(decompressed_bytes)
                 except Exception as pickle_error: raise
                 let_log(f"[CACHE READ] id={cache_counter}")
                 cache_counter += 1
                 left_cache_counter -= 1
                 let_log(deserialized_value)
+                cache_conn.close()
+                cache_conn = None
                 return [True, deserialized_value]
-        if cache_can_write: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
-        cache_can_write = True
-        let_log(f"Запись кэша с id {cache_counter} не найдена.")
+        if cache_can_write:
+            cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, b'\x02'))
+            cache_conn.commit()
+            cache_conn.close()
+            cache_conn = None
+            pending_write_cache_ids.append(cache_counter)
+            let_log(f'записан маркер {cache_counter}')
+            cache_counter += 1
+        else:
+            cache_can_write = True
+            let_log(f"Запись кэша с id {cache_counter} не найдена.")
         return [False]
     except Exception as e:
         if cache_conn: cache_conn.close()
@@ -267,22 +284,35 @@ def read_cache():
         send_ui_no_cache(error_msg)
         raise SystemExit(error_msg)
 
+def compres_to_cache(content):
+    pickled_bytes = pickle.dumps(content, protocol=pickle.HIGHEST_PROTOCOL)
+    raw_size = len(pickled_bytes)
+    compressed = lzma.compress(pickled_bytes, preset=9)
+    size_uncompressed = 1 + raw_size
+    size_compressed = 1 + len(compressed)
+    if size_compressed < size_uncompressed: final_data = b'\x01' + compressed
+    else: final_data = b'\x00' + pickled_bytes
+    return final_data
+
 def write_cache(content):
     global cache_counter
     global cache_can_write
+    global pending_write_cache_ids
     cache_conn = None
     try:
-        if not cache_can_write: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
         cache_conn = connect(cache_path)
         cache_cursor = cache_conn.cursor()
-        pickled_bytes = pickle.dumps(content, protocol=pickle.HIGHEST_PROTOCOL)
-        raw_size = len(pickled_bytes)
-        compressed = lzma.compress(pickled_bytes, preset=9)
-        size_uncompressed = 1 + raw_size
-        size_compressed = 1 + len(compressed)
-        if size_compressed < size_uncompressed: final_data = b'\x02' + compressed
-        else: final_data = b'\x00' + pickled_bytes
-        cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, final_data))
+        if not cache_can_write:
+            if pending_write_cache_ids == []: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
+            cache_cursor.execute('DELETE FROM cache WHERE id >= ?', (pending_write_cache_ids[-1],))
+            cache_counter = pending_write_cache_ids[-1]
+            cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, compres_to_cache(content)))
+            cache_conn.commit()
+            cache_conn.close()
+            cache_conn = None
+            del pending_write_cache_ids[-1]
+            return True
+        cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, compres_to_cache(content)))
         cache_conn.commit()
         cache_conn.close()
         cache_conn = None
