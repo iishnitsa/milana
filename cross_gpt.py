@@ -2339,7 +2339,7 @@ def _standard_agent_func(text, agent_number):
     return talk_prompt
 
 def _rag_agent_func(text, agent_number):
-    global vector_id_out
+    global vector_id_out, vector_id_in #?
     global_state.last_agent = agent_number
     global_state.stop_agent = False
     talk_prompt = text
@@ -2354,7 +2354,6 @@ def _rag_agent_func(text, agent_number):
             msg_from = func_role_text
             global_state.dialog_ended = False
         else: msg_from = operator_role_text
-    update_history(sid, talk_prompt, msg_from, vector_id_out)
     while not global_state.stop_agent:
         let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}")
         # Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
@@ -2363,15 +2362,23 @@ def _rag_agent_func(text, agent_number):
         talk_prompt = ask_model(final_prompt_for_model + you)
         talk_prompt = remove_commands_roles(talk_prompt)
         # Сохраняем ответ самой модели в RAG-историю
-        vector_id_out = update_history(sid, talk_prompt, you)
+        set_common_save_id()
+        vector_id_out = str(get_common_save_id())
+        embedding = get_embs(text)
+        coll_exec(action="add", coll_name="rag_collection", ids=[vector_id], metadatas=[{'chat_id': str_chat_id, 'role': you, 'relevance_score': 0}], embeddings=[embedding])
+        let_log(f"Сообщение {vector_id} векторизовано и добавлено в RAG")
         answer = tools_selector(talk_prompt, sid)
         if answer:
             let_log(global_state.stop_agent)
             talk_prompt = answer
             msg_from = func_role_text
+            update_history(sid, talk_prompt, you, vector_id=vector_id_out)
+            # посмотри как вектор айди ин работает, где создавать
+            vector_id_in = update_history(sid, talk_prompt, func_role_text)
+            # тут надо сохранять от функции но сначала от агента
         else: break
         # Сохраняем входящее сообщение от предыдущего агента в RAG-историю
-        vector_id_in = update_history(sid, talk_prompt, msg_from)
+        # а тут только исходящее от агента
         if global_state.wrong_command_messages_vector_ids != []: add_wrong_command_message_id(vector_id_in)
     global_state.stop_agent = False
     return talk_prompt

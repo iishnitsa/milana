@@ -30,22 +30,43 @@ def initialize_rag_database():
             global_summary TEXT DEFAULT NULL,   -- Глобальная сводка диалога (хранится в сообщении с максимальным ID, охваченным сводкой)
             recent_summary TEXT DEFAULT NULL    -- Сводка последней темы (хранится в сообщении с максимальным ID, охваченным сводкой
             );''')
+    sql_exec('''
+        CREATE TABLE IF NOT EXISTS system_prompts (
+            chat_id INTEGER;
+            system_promt TEXT);''')
     let_log("##### Таблицы базы данных RAG готовы. #####\n")
 
 def get_history(chat_id: str) -> list[dict]: # Получает историю всех сообщений для данного чата.
     query = "SELECT id, role, full_text, is_vectorized, relevance_score, vector_id, is_compressed, chat_id FROM rag_messages WHERE chat_id = ? ORDER BY id ASC"
     rows = sql_exec(query, (chat_id,), fetchall=True)
     if not rows: let_log(f"История не найдена для чата {chat_id}"); return []
-    history = [{
-        'id': r[0], 
-        'role': r[1], 
-        'full_text': r[2], 
-        'is_vectorized': r[3], 
-        'relevance_score': r[4], 
-        'vector_id': r[5],
-        'is_compressed': r[6],
-        'chat_id': r[7]
-    } for r in rows]
+    history = []
+    for r in rows:
+        msg = {
+            'id': r[0], 
+            'role': r[1], 
+            'full_text': r[2], 
+            'is_vectorized': r[3], 
+            'relevance_score': r[4], 
+            'vector_id': r[5],
+            'is_compressed': r[6],
+            'chat_id': r[7]
+        }
+        # Если текст пуст, пытаемся найти запись с текстом по тому же vector_id
+        if not msg['full_text'] and msg['vector_id']:
+            row_text = sql_exec(
+                "SELECT full_text, role, is_compressed, relevance_score FROM rag_messages WHERE vector_id = ? AND full_text IS NOT NULL AND full_text != '' LIMIT 1",
+                (msg['vector_id'],), fetchone=True
+            )
+            if row_text:
+                msg['full_text'] = row_text[0]
+                if row_text[1]:
+                    msg['role'] = row_text[1]
+                if row_text[2] is not None:
+                    msg['is_compressed'] = row_text[2]
+                if row_text[3] is not None:
+                    msg['relevance_score'] = row_text[3]
+        history.append(msg)
     let_log(f"Получена история для чата {chat_id}: {len(history)} сообщений")
     return history
 
@@ -104,7 +125,12 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
     let_log(f"Создано {len(chunks)} чанков для суммаризации")
     chunk_summaries = []
     for i, chunk in enumerate(chunks):
-        chunk_text = "\n".join([f"{msg['role']}{msg['full_text']}" for msg in chunk])
+        chunk_text = ""
+        for msg in chunk:
+            text = msg['full_text']
+            if not text and msg.get('vector_id'):
+                text = _get_text_by_vector_id(msg['vector_id'])
+            chunk_text += f"{msg['role']}{text}\n"
         let_log(f"##### Суммаризация чанка {i+1}/{len(chunks)} #####")
         let_log(f"Текст чанка: {chunk_text}...")
         chunk_summary = ask_model(chunk_text, system_prompt=prompt_chunk_summary + '\n' + no_markdown_instruction).strip()
@@ -140,23 +166,45 @@ def _compress_message_in_db(message: dict) -> dict | None:
     Сжимает ОДНО сообщение, обновляет его в БД и RAG, и возвращает обновленное сообщение.
     Вызывается из prompt_assembler при переполнении.
     """
-    if not message or message.get('is_compressed'): return message
-    msg_id = message['id']
+    if not message or message.get('is_compressed'):
+        return message
     vector_id = message.get('vector_id')
-    chat_id = message.get('chat_id')
-    let_log(f"##### Сжатие 'на лету' сообщения ID: {msg_id} #####")
-    compacted_text = text_cutter(message['full_text'], cut_message=True)
-    if not compacted_text or compacted_text == message['full_text']:
-        let_log(f"Сжатие не удалось или текст не изменился. Помечаем как 'is_compressed'.")
-        sql_exec("UPDATE rag_messages SET is_compressed = TRUE WHERE id = ?", (msg_id,))
+    if not vector_id:
+        return message
+    # Проверяем, есть ли у сообщения текст
+    if not message.get('full_text'):
+        # Ищем запись с текстом
+        row = sql_exec("SELECT id, full_text FROM rag_messages WHERE vector_id = ? AND full_text IS NOT NULL AND full_text != '' LIMIT 1", (vector_id,), fetchone=True)
+        if not row:
+            let_log(f"Не найдена запись с текстом для vector_id {vector_id}")
+            return message
+        text_id, full_text = row
+    else:
+        text_id = message['id']
+        full_text = message['full_text']
+    # Сжимаем текст
+    compacted_text = text_cutter(full_text, cut_message=True)
+    if not compacted_text or compacted_text == full_text:
+        # Помечаем все записи с этим vector_id как сжатые
+        sql_exec("UPDATE rag_messages SET is_compressed = TRUE WHERE vector_id = ?", (vector_id,))
         message['is_compressed'] = True
         return message
-    sql_exec("UPDATE rag_messages SET full_text = ?, is_compressed = TRUE WHERE id = ?", (compacted_text, msg_id))
+    # Обновляем текст в найденной записи
+    sql_exec("UPDATE rag_messages SET full_text = ?, is_compressed = TRUE WHERE id = ?", (compacted_text, text_id))
+    # Также помечаем все остальные записи с этим vector_id как сжатые
+    sql_exec("UPDATE rag_messages SET is_compressed = TRUE WHERE vector_id = ?", (vector_id,))
+    # Обновляем переданный словарь
     message['full_text'] = compacted_text
     message['is_compressed'] = True
     return message
 
 def _calculate_tokens(text): return int(len(text) * get_text_tokens_coefficient())
+
+def _get_text_by_vector_id(vector_id: str) -> str:
+    if not vector_id:
+        return ""
+    row = sql_exec("SELECT full_text FROM rag_messages WHERE vector_id = ? AND full_text IS NOT NULL AND full_text != '' LIMIT 1", (vector_id,), fetchone=True)
+    return row[0] if row else ""
 
 def _get_sum_tokens_since(chat_id, since_id): # Сумма токенов сообщений с id > since_id
     rows = sql_exec("SELECT full_text FROM rag_messages WHERE chat_id = ? AND id > ?", (chat_id, since_id), fetchall=True)
@@ -281,7 +329,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
         base_tokens_no_rag = _calculate_tokens(base_prompt_str_no_rag)
     # Теперь продолжаем сборку промпта как раньше, используя актуальные сводки
     RAG_RESERVE_TOKENS = int(token_limit * RAG_RESERVE_PERCENTAGE)
-    available_tokens_for_history = token_limit - base_tokens_no_rag - SAFETY_MARGIN - RAG_RESERVE_TOKENS
+    available_tokens_for_history = token_limit - base_tokens_no_rag - SAFETY_MARGEN - RAG_RESERVE_TOKENS
     let_log(f"##### [{chat_id}] Расчет лимитов для истории (резерв RAG: {RAG_RESERVE_TOKENS:.0f}) #####")
     let_log(f"Лимит токенов (общий): {token_limit}")
     let_log(f"Токены (База): {base_tokens_no_rag:.0f}")
@@ -330,7 +378,13 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
         if len(history) >= 2: recent_context = "\n".join([f"{msg.get('full_text')}" for msg in history[-2:]])
         expanded_query = f"{recent_context}\n{current_message}"
         query_embedding = get_embs(expanded_query)
-        rag_filters = {'chat_id': chat_id, '$nin': {'vector_id': history_included_vector_ids}}
+        rag_filters = {
+            '$or': [
+                {'chat_id_1': chat_id},
+                {'chat_id_2': chat_id}
+            ],
+            '$nin': {'vector_id': history_included_vector_ids}
+        }
         try: initial_results = coll_exec( action="query", coll_name="rag_collection", query_embeddings=[query_embedding], n_results=10, filters=rag_filters, fetch=["ids"])
         except Exception as e: let_log(f"Ошибка coll_exec RAG: {e}"); initial_results = None
         # Если есть ids, получаем тексты из SQLite

@@ -241,5 +241,5 @@ When stopping, you must prove impossibility:
             except: raise
     let_log(f"[DBG_HISTORY_WRITE] target_chat={global_state.conversations - 1}, current_conv={global_state.conversations}")
     update_history(global_state.conversations - 1, last_talk_prompt, func_role_text)
-    update_history(global_state.conversations - 1, talk_prompt, operator_role_text)
+    update_history(global_state.conversations - 1, talk_prompt, operator_role_text, local_message=False)
     return talk_prompt
