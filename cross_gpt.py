@@ -105,7 +105,12 @@ important_functions = [
     'send_output_message',
     'librarian',
     'send_log_to_ui',
-    'gigo']
+    'gigo',
+    'set_common_save_id',
+    'reset_common_save_id',
+    'down_hierarchy',
+    'up_hierarchy',
+    'next_executor',]
 # Список модулей, импорт которых считается важным
 important_modules = ['chat_manager']
 actual_handlers_names = {}
