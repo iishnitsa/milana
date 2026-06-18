@@ -14,7 +14,7 @@ import cv2
 import unicodedata
 from cross_gpt import (
     global_state,
-    cacher
+    cacher,
     err_image_process_text_infoloaders,
     text_on_image_prompt_infoloaders,
     err_image_process_pdf_infoloaders,
