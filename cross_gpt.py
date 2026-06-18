@@ -158,6 +158,22 @@ language = ''
 is_print_log = True
 is_save_log = True
 
+_cache_context_active = False
+
+def no_cache(func):
+    """Декоратор, запрещающий вызов функции внутри кэшируемой функции."""
+    func._no_cache = True
+    def wrapper(*args, **kwargs):
+        global _cache_context_active
+        if _cache_context_active:
+            raise RuntimeError(
+                f"Функция '{func.__name__}' помечена @no_cache и не может быть вызвана "
+                f"внутри кэшируемой функции (используйте @cacher без @no_cache внутри)."
+            )
+            sys.exit(1)
+        return func(*args, **kwargs)
+    return wrapper
+
 def cacher(func): # Декоратор для функций с кэшированием (ask_model, get_embs, coll_exec, sql_exec)
     def wrapper(*args, **kwargs):
         cached = read_cache()
@@ -165,13 +181,16 @@ def cacher(func): # Декоратор для функций с кэширова
             if isinstance(cached[1], dict) and '__exception__' in cached[1]: exc_data = cached[1]['__exception__']; exc = RuntimeError(exc_data['message']); raise exc
             let_log(f"[Используется кэшированный результат для {func.__name__}]")
             return cached[1]
+        global _cache_context_active
         try:
             result = func(*args, **kwargs)
             write_cache(result)
             return result
+            _cache_context_active = False
         except Exception as e: # Сохраняем исключение в кэше без traceback
             exc_data = {'__exception__': {'type': type(e).__name__, 'message': str(e), 'traceback_str': traceback.format_exc()}}
             write_cache(exc_data)
+            _cache_context_active = False
             raise
     return wrapper
 
@@ -1583,12 +1602,15 @@ def upload_user_data(files_list):
     except Exception as e: let_log(f"⚠ Ошибка при очистке ресурсов: {e}")
     return all_results
 
+@no_cache
 def set_common_save_id(): global_state.common_save_id += 1
 
 def get_common_save_id(): return str(global_state.common_save_id)
 
+@no_cache
 def reset_common_save_id(): global_state.common_save_id = 1
 
+@no_cache
 def down_hierarchy(): # Добавить новый уровень иерархии (делегирование)
     parts = global_state.now_try.strip('/').split('/')
     if not parts or parts[0] == '': new_level = 1 # Определяем номер нового уровня
@@ -1609,6 +1631,7 @@ def down_hierarchy(): # Добавить новый уровень иерарх�
     else: global_state.now_try += f"/{new_level}:0"
     let_log(f"[HIERARCHY] Down: {global_state.now_try}")
 
+@no_cache
 def up_hierarchy(): # Подняться на уровень выше
     if global_state.now_try == '/' or global_state.now_try == '': return  # Уже на корневом уровне
     parts = global_state.now_try.strip('/').split('/')
@@ -1619,6 +1642,7 @@ def up_hierarchy(): # Подняться на уровень выше
     else: global_state.now_try = '/'
     let_log(f"[HIERARCHY] Up: {global_state.now_try}")
 
+@no_cache
 def next_executor(): # Создать/пересоздать исполнителя на текущем уровне
     if global_state.now_try == '/' or global_state.now_try == '': global_state.now_try = f"/1:1"
     else:
