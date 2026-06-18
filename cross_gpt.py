@@ -2298,47 +2298,7 @@ def tools_selector(text, sid):
     let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
     return result
 
-def _standard_agent_func(text, agent_number):
-    # надо сокращать ещё когда превышен не лимит а какое-то количество ибо модель может начать писать бред
-    # нужно резать в первую очередь ответы инструментов ибо сторонние разработчики могут перегрузить модель
-    global_state.stop_agent = False
-    talk_prompt = text
-    sid = global_state.conversations - agent_number
-    global_state.now_agent_id = sid
-    if agent_number: # 1 - Милана
-        you = operator_role_text
-        msg_from = worker_role_text
-    else: # 0 - Иван
-        you = worker_role_text
-        if global_state.dialog_ended:
-            msg_from = func_role_text
-            global_state.dialog_ended = False
-        else: msg_from = operator_role_text
-    while not global_state.stop_agent:
-        let_log(f"[DEBUG-STD] agent_number={agent_number}, sid={sid}")
-        prompt, history = get_chat_context(sid)
-        last_talk_prompt = talk_prompt
-        try:
-            full_prompt = prompt + history + msg_from + talk_prompt + you
-            talk_prompt = ask_model(full_prompt)
-        except Exception as e:
-            let_log(f"Ошибка в _standard_agent_func: {e}")
-            history = start_dialog_history + text_cutter(history) + last_messages_marker
-            full_prompt = prompt + history + msg_from + talk_prompt + you
-            talk_prompt = ask_model(full_prompt)
-        talk_prompt = remove_commands_roles(talk_prompt)
-        # Сначала сообщение от предыдущего, потом ответ от текущего.
-        update_history(sid, last_talk_prompt, msg_from) # TODO: он историю резанную не сохраняет
-        update_history(sid, talk_prompt, you)
-        answer = tools_selector(talk_prompt, sid)
-        if answer:
-            talk_prompt = answer
-            msg_from = func_role_text
-        else: break
-    global_state.stop_agent = False
-    return talk_prompt
-
-def _rag_agent_func(text, agent_number):
+def agent_func(text, agent_number):
     global vector_id_out, vector_id_in #?
     global_state.last_agent = agent_number
     global_state.stop_agent = False
@@ -2504,10 +2464,10 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global ui_conn
     global cache_path, chat_path, memory_sql, folder_path, slash, filesystem_project_path
     global ask_provider_model, ask_provider_model_chat, get_provider_embs
-    global initialize_schema, create_chat, get_chat_context, update_history, delete_chat
+    global create_chat, get_chat_context, update_history, delete_chat
     global language
     global do_chat_construct, native_func_call
-    global use_rag, agent_func, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history
+    global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
@@ -2535,6 +2495,21 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     let_log(f"Database path: {db_path}")
     memory_sql = connect(db_path)
     sql_exec('''CREATE TABLE IF NOT EXISTS found_info (id INTEGER PRIMARY KEY AUTOINCREMENT, info TEXT NOT NULL)''')
+    let_log("##### Инициализация таблиц базы данных RAG... #####")
+    sql_exec('''
+        CREATE TABLE IF NOT EXISTS rag_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            full_text TEXT NOT NULL,
+            is_vectorized BOOLEAN DEFAULT FALSE,
+            vector_id TEXT UNIQUE,
+            relevance_score INTEGER DEFAULT 0,
+            is_compressed BOOLEAN DEFAULT FALSE,
+            global_summary TEXT DEFAULT NULL,
+            recent_summary TEXT DEFAULT NULL
+            );''')
+    sql_exec('CREATE TABLE IF NOT EXISTS system_prompts (chat_id INTEGER PRIMARY KEY, system_prompt TEXT)''')
     initial_text, fl = load_initial_data(chat_id)
     settings = load_chat_settings(chat_id)
     tool_paths = settings.get("another_tools", [])
@@ -2553,10 +2528,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 1)) == 1
     chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)
-    if use_rag: agent_func = _rag_agent_func
-    else: agent_func = _standard_agent_func
-    from chat_manager import initialize_schema, create_chat, get_chat_context, update_history, delete_chat
-    initialize_schema()
+    from chat_manager import create_chat, get_chat_context, update_history, delete_chat
     default_tools_dir = os.path.join(base_dir, "default_tools")
     for rel_path in tool_paths:
         if os.path.isabs(rel_path): full_path = rel_path
