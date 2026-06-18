@@ -13,6 +13,8 @@ import pandas as pd
 import cv2
 import unicodedata
 from cross_gpt import (
+    global_state,
+    cacher
     err_image_process_text_infoloaders,
     text_on_image_prompt_infoloaders,
     err_image_process_pdf_infoloaders,
@@ -35,7 +37,6 @@ from cross_gpt import (
     excel_cheet_error_text,
     excel_empty_text,
     excel_error_text)
-from cross_gpt import global_state   # ДОБАВЛЕНО
 
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'): return os.path.join(sys._MEIPASS, relative_path)
@@ -143,6 +144,7 @@ def decode_with_fallback(content):
         except: continue
     return content.decode('utf-8', errors='replace')
 
+@cacher
 def process_image(file_path_or_data, input_file_handlers):
     let_log('Обработка изображения')
     try: _load_image_models()
@@ -181,6 +183,7 @@ def cleanup_image_models():
     gc.collect()
     let_log("Модели очищены, сборщик мусора вызван")
 
+@cacher
 def process_pdf(file_path_or_data, input_file_handlers):
     let_log('пдф')
     try:
@@ -207,6 +210,7 @@ def process_pdf(file_path_or_data, input_file_handlers):
     pdf.close()
     return "\n".join(full_text)
 
+@cacher
 def process_docx(file_path_or_data, input_file_handlers):
     let_log('док икс')
     try: # Определяем тип входных данных
@@ -252,6 +256,7 @@ def process_docx(file_path_or_data, input_file_handlers):
                 except Exception as e: let_log(f"  Ошибка при поиске изображений в DOCX: {e}"); continue
     return "\n".join(full_text)
 
+@cacher
 def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0, max_depth=5):
     """
     Обрабатывает ZIP-архив с рекурсивной обработкой вложенных архивов
@@ -317,6 +322,7 @@ def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0
         return [{'filename': zip_archive_name_infoloaders, 'content': error_msg, 'type': 'error'}]
     return results
 
+@cacher
 def process_text(file_path_or_data, input_file_handlers):
     let_log('text')
     try:
@@ -339,6 +345,7 @@ def process_text(file_path_or_data, input_file_handlers):
         if isinstance(file_path_or_data, bytes): return file_path_or_data.decode('utf-8', errors='ignore')
         else: return file_path_or_data
 
+@cacher
 def process_excel(file_path_or_data, input_file_handlers):
     """
     Обрабатывает Excel файлы (xlsx, xls) - извлекает данные из всех листов
@@ -375,6 +382,7 @@ def process_excel(file_path_or_data, input_file_handlers):
         let_log(error_msg)
         return error_msg
 
+@cacher
 def process_unknown(file_path_or_data, input_file_handlers):
     """
     Обработчик для файлов с неизвестными расширениями.
