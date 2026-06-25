@@ -387,22 +387,60 @@ def send_output_message(text=None, attachments=None, command=None):
     return True
 
 @cacher
-def sql_exec(query, params=(), fetchone=False, fetchall=False):
+def global_trans_cache_exec(query, params=(), fetchone=False, fetchall=False, retries=3):
+    """
+    Выполняет SQL-запрос к глобальной БД settings.db.
+    При блокировке БД делает повторные попытки.
+    """
+    if not global_trans_db_path: raise RuntimeError("global_trans_db_path не установлен. Вызовите set_cache_settings(settings_path=...)")
+    conn = None
+    for attempt in range(retries):
+        try:
+            conn = sqlite3.connect(global_trans_db_path)
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS translation_cache (src_text TEXT NOT NULL, translation TEXT NOT NULL, to_lang TEXT NOT NULL)")
+            conn.commit()
+            cursor.execute(query, params)
+            if fetchone: result = cursor.fetchone()
+            elif fetchall: result = cursor.fetchall()
+            else: result = None
+            conn.commit()
+            conn.close()
+            return result
+        except sqlite3.OperationalError as e:
+            if conn: conn.close()
+            if "locked" in str(e) and attempt < retries - 1:
+                time.sleep(0.5)
+                continue
+            else: raise
+        except Exception:
+            if conn: conn.close()
+            raise
+    return None
+
+def sql_exec(query, params=(), fetchone=False, fetchall=False, executemany=False):
     let_log('ОЧЕРЕДЬ')
     let_log(query)
     try:
-        cursor = memory_sql.cursor()
-        cursor.execute(query, params)
+        cursor = memory_sql.cursor()  # TODO: тут коннект каждый раз не создаётся, но тогда почему каждый раз создаётся курсор
+        if executemany:
+            cursor.executemany(query, params) # params - список кортежей
+        else:
+            cursor.execute(query, params)
         memory_sql.commit()
         result = None
         if fetchone:
             result = cursor.fetchone()
-            if result and len(result) == 1: result = result[0]
-        elif fetchall: result = cursor.fetchall()
+            if result and len(result) == 1:
+                result = result[0]
+        elif fetchall:
+            result = cursor.fetchall()
         let_log('РЕЗУЛЬТАТ')
         let_log(result)
         return result
-    except Exception as e: let_log(f"Ошибка SQL-запроса: {query} с {params} — {e}"); raise; return None
+    except Exception as e:
+        let_log(f"Ошибка SQL-запроса: {query} с {params} — {e}")
+        raise
 
 @cacher
 def coll_exec(action, coll_name, *,
@@ -654,26 +692,94 @@ def load_initial_data(chat_id): # Загрузка начальных данны
 
 def globalize_language_packet(language):
     global container
-    try: # Динамическая загрузка языкового модуля
-        lang_module = __import__(f'lang.{language}.system_texts', fromlist=['system_text_container'])
+    # Определяем, какой язык загружать
+    lang_to_load = language
+    if do_translate and local_and_tools_translate:
+        # Пытаемся загрузить целевой язык, если он есть
+        try:
+            lang_module = __import__(f'lang.{target_lang}.system_texts', fromlist=['system_text_container'])
+            container = lang_module.system_text_container()
+            let_log(f"Загружена локализация для целевого языка '{target_lang}'")
+            # Экспортируем напрямую без перевода
+            for attr in dir(container):
+                if attr.startswith('__'):
+                    continue
+                value = getattr(container, attr)
+                if isinstance(value, str):
+                    try:
+                        setattr(container, attr, value)
+                    except Exception as e:
+                        let_log(f"Ошибка '{attr}': {e}")
+                        pass
+            for attr in dir(container):
+                if attr.startswith('__'):
+                    continue
+                value = getattr(container, attr)
+                globals()[attr] = value
+            let_log(f"Языковой пакет '{target_lang}' загружен и экспортирован")
+            return
+        except ImportError:
+            let_log(f"Локализация для '{target_lang}' не найдена, загружаем '{language}' и переводим")
+            lang_to_load = language
+    # Загружаем пакет для lang_to_load (родной язык или fallback)
+    try:
+        lang_module = __import__(f'lang.{lang_to_load}.system_texts', fromlist=['system_text_container'])
         container = lang_module.system_text_container()
     except ImportError as e:
-        let_log(f"Ошибка загрузки языкового модуля '{language}': {str(e)}")
-        # Запасной вариант: попробовать загрузить стандартный модуль
-        try: from lang.en.system_texts import system_text_container; container = system_text_container(); let_log(f"Используются тексты по умолчанию")
-        except ImportError: let_log("Критическая ошибка: не найден модуль с текстами!"); return
-    for attr in dir(container):
-        if attr.startswith('__'): continue
-        value = getattr(container, attr)
-        if isinstance(value, str):
-            try: setattr(container, attr, value)
-            except Exception as e: let_log(f"Ошибка '{attr}': {e}"); pass
-    # Экспортируем атрибуты контейнера в глобальную область видимости
-    for attr in dir(container):
-        if attr.startswith('__'): continue
-        value = getattr(container, attr)
-        globals()[attr] = value
-    let_log(f"Языковой пакет '{language}' загружен, переменные экспортированы")
+        let_log(f"Ошибка загрузки языкового модуля '{lang_to_load}': {str(e)}")
+        try:
+            from lang.en.system_texts import system_text_container
+            container = system_text_container()
+            let_log(f"Используются тексты по умолчанию (en)")
+            lang_to_load = 'en'
+        except ImportError:
+            let_log("Критическая ошибка: не найден модуль с текстами!")
+            return
+    # Если включён перевод и мы загрузили не целевой язык, переводим строки
+    if do_translate and local_and_tools_translate and lang_to_load != target_lang:
+        # Собираем все строки из контейнера
+        original_strings = {}
+        for attr in dir(container):
+            if attr.startswith('__'):
+                continue
+            value = getattr(container, attr)
+            if isinstance(value, str):
+                original_strings[attr] = value
+        if original_strings:
+            # Переводим все строки одним вызовом translate_texts
+            str_list = list(original_strings.values())
+            translated_list = translate_texts(str_list, target_lang, from_lang=lang_to_load)
+            # Обновляем контейнер и глобальные переменные
+            for attr, trans in zip(original_strings.keys(), translated_list):
+                setattr(container, attr, trans)
+                globals()[attr] = trans
+            let_log(f"Переведено {len(translated_list)} строк с '{lang_to_load}' на '{target_lang}'")
+        else:
+            # Если строк нет, просто экспортируем как есть
+            for attr in dir(container):
+                if attr.startswith('__'):
+                    continue
+                value = getattr(container, attr)
+                if isinstance(value, str):
+                    globals()[attr] = value
+    else:
+        # Без перевода - просто экспортируем
+        for attr in dir(container):
+            if attr.startswith('__'):
+                continue
+            value = getattr(container, attr)
+            if isinstance(value, str):
+                try:
+                    setattr(container, attr, value)
+                except Exception as e:
+                    let_log(f"Ошибка '{attr}': {e}")
+                    pass
+        for attr in dir(container):
+            if attr.startswith('__'):
+                continue
+            value = getattr(container, attr)
+            globals()[attr] = value
+    let_log(f"Языковой пакет '{lang_to_load}' загружен, переменные экспортированы")
 
 def _check_module_uses_cross_gpt(file_contents):
     """Проверяет, использует ли модуль важные функции из cross_gpt, которые требуют кэширования."""
@@ -956,12 +1062,18 @@ def _call_completions_with_retry(generation_params):
 def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, **extra_params) -> str:
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
+
+    # --- Перевод входных данных, если включен и не local_and_tools_translate ---
+    if do_translate and not local_and_tools_translate:
+        if system_prompt is not None:
+            system_prompt = translate_text(system_prompt, target_lang, from_lang=language)
+        prompt_text = translate_text(prompt_text, target_lang, from_lang=language)
+
     # Проверка длины контекста
     if len(prompt_text) * text_tokens_coefficient > token_limit - 1000:
         raise RuntimeError("ContextOverflowError")
     
     if use_user:
-        # --- Обработка пользовательского ввода ---
         import tkinter as tk
         from tkinter import simpledialog
         root = tk.Tk()
@@ -981,7 +1093,10 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         generation_params.update(extra_params)
         response = _call_chat_with_retry(generation_params)
-        return _process_chat_response(response)
+        result = _process_chat_response(response)
+        if do_translate and not local_and_tools_translate:
+            result = translate_text(result, language, from_lang=target_lang)
+        return result
     
     if all_user:
         let_log("Режим (Особый случай): all_user=True -> chat/completions")
@@ -989,7 +1104,10 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         generation_params.update(extra_params)
         response = _call_chat_with_retry(generation_params)
-        return _process_chat_response(response)
+        result = _process_chat_response(response)
+        if do_translate and not local_and_tools_translate:
+            result = translate_text(result, language, from_lang=target_lang)
+        return result
     
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
     if not do_chat_construct:
@@ -1001,7 +1119,10 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
             parsed_msgs = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
         generation_params = {"prompt": _serialize_messages_to_prompt(parsed_msgs), "temperature": temperature, "max_tokens": limit or token_limit, "echo": False}
         generation_params.update(extra_params)
-        return _call_completions_with_retry(generation_params)
+        result = _call_completions_with_retry(generation_params)
+        if do_translate and not local_and_tools_translate:
+            result = translate_text(result, language, from_lang=target_lang)
+        return result
     
     elif do_chat_construct and not native_func_call:
         # Режим 2: Парсинг чата БЕЗ function call
@@ -1010,7 +1131,10 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         generation_params.update(extra_params)
         response = _call_chat_with_retry(generation_params)
-        return _process_chat_response(response)
+        result = _process_chat_response(response)
+        if do_translate and not local_and_tools_translate:
+            result = translate_text(result, language, from_lang=target_lang)
+        return result
     
     elif do_chat_construct and native_func_call:
         # Режим 3: Парсинг чата С function call
@@ -1037,7 +1161,6 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         
         # 5. Обрабатываем ответ как словарь
         let_log(response)
-        # Извлекаем данные из ответа API
         if "choices" not in response or not response["choices"]:
             let_log("ask_model: Некорректный формат ответа - нет choices")
             raise RuntimeError("Некорректный формат ответа - нет choices")
@@ -1052,15 +1175,17 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
                 arguments_json_str = tool_call['function']['arguments']
                 try:
                     args_dict = json.loads(arguments_json_str)
-                    # Извлекаем значение по ключу 'arguments'
                     arguments_str = args_dict.get('arguments', '')
                 except Exception:
                     arguments_str = arguments_json_str
-                # Собираем маркер, который ожидает tools_selector
                 marker = f"\n!!!{function_name}!!!{arguments_str}"
                 response_content = marker + response_content
+            if do_translate and not local_and_tools_translate:
+                response_content = translate_text(response_content, language, from_lang=target_lang)
             return response_content
         elif response_content:
+            if do_translate and not local_and_tools_translate:
+                response_content = translate_text(response_content, language, from_lang=target_lang)
             return response_content
         return response_content
 
@@ -2226,6 +2351,7 @@ def tools_selector(text, sid):
     Вызывает инструменты, используя поиск маркеров и словарь команд в global_state.tools_commands_dict[sid].
     Возвращает результат выполнения команды или None.
     """
+    if do_translate and local_and_tools_translate: text = translate_text(text, language, from_lang=target_lang)
     let_log("=== [TOOLS_SELECTOR ЗАПУЩЕН (НОВАЯ ВЕРСИЯ)] ===")
     let_log(f"[TOOLS_SELECTOR] входной текст (начало 200):\n{text[:200]}")
     # 1) получить кэш
@@ -2325,6 +2451,7 @@ def tools_selector(text, sid):
             traceprint()
     except Exception: pass
     let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+    if do_translate and local_and_tools_translate: result = translate_text(result, target_lang)
     return result
 
 def agent_func(text, agent_number):
@@ -2373,12 +2500,22 @@ def agent_func(text, agent_number):
     return talk_prompt
 
 def get_user_feedback(current_task, dialog_result):
-    while True: # очищаем очередь ввода
+    while True:
         ims = get_input_message()
-        if ims == None: break # TODO:
-    send_output_message(text=dialog_result, command='end')
+        if ims == None: break
+    # --- Перевод финального ответа на язык пользователя (если local_and_tools_translate) ---
+    if do_translate and local_and_tools_translate:
+        dialog_result_to_user = translate_text(dialog_result, language, from_lang=target_lang)
+    else:
+        dialog_result_to_user = dialog_result
+    send_output_message(text=dialog_result_to_user, command='end')
     user_message = get_input_message(wait=True)
-    updated_task = current_task + user_review_text2 + dialog_result + user_review_text3 + user_message['text']
+    # --- Перевод текста пользователя на целевой язык (если local_and_tools_translate) ---
+    if do_translate and local_and_tools_translate:
+        user_text = translate_text(user_message['text'], target_lang, from_lang=language)
+    else:
+        user_text = user_message['text']
+    updated_task = current_task + user_review_text2 + dialog_result + user_review_text3 + user_text
     if user_message['attachments']:
         send_output_message(text=start_load_attachments_text)
         upload_user_data(user_message['attachments'])
@@ -2394,8 +2531,13 @@ def get_user_or_critic_feedback(rmt):
         let_log(f"[WORKER] Updating really_main_task after user feedback: {really_main_task[:100]}")
     return rmt
 
+# ===== ИЗМЕНЁННАЯ ФУНКЦИЯ worker (ПОЛНАЯ) =====
 def worker(really_main_task):
     let_log(f"[WORKER] START: really_main_task={really_main_task[:100]}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
+    # --- Перевод задачи на целевой язык (если local_and_tools_translate) ---
+    if do_translate and local_and_tools_translate:
+        really_main_task = translate_text(really_main_task, target_lang, from_lang=language)
+        let_log(f"[WORKER] Задача переведена на целевой язык: {really_main_task[:100]}")
     while True:
         global_state.retries = []
         global_state.conversations = 0
@@ -2416,22 +2558,22 @@ def worker(really_main_task):
             let_log(f"[WORKER] Main loop start. dialog_state={global_state.dialog_state}, conversations={global_state.conversations}, now_agent_id={global_state.now_agent_id}")
             if global_state.dialog_state:
                 let_log(f"[WORKER] Calling agent_func(0) with talk_prompt={talk_prompt[:100]}")
-                talk_prompt = agent_func(talk_prompt, 0) # ivan
+                talk_prompt = agent_func(talk_prompt, 0)
                 let_log(f"[WORKER] agent_func(0) returned talk_prompt={talk_prompt[:100]}, task_delegated={global_state.task_delegated}")
                 if global_state.task_delegated:
                     let_log(f"[WORKER] Task delegated, resetting flag and continue")
-                    global_state.task_delegated = False # а вот тут чезанах
+                    global_state.task_delegated = False
                     continue
             if global_state.dialog_state:
                 let_log(f"[WORKER] Calling agent_func(1) with talk_prompt={talk_prompt[:100]}")
-                talk_prompt = agent_func(talk_prompt, 1) # milana
+                talk_prompt = agent_func(talk_prompt, 1)
                 let_log(f"[WORKER] agent_func(1) returned talk_prompt={talk_prompt[:100]}")
             if not global_state.dialog_state:
                 let_log(f"[WORKER] Dialog state became false. tools_commands_dict={global_state.tools_commands_dict}, dialog_result={global_state.dialog_result[:100]}, conversations={global_state.conversations}")
                 print(global_state.tools_commands_dict)
                 let_log(global_state.dialog_result)
                 let_log(global_state.conversations)
-                if global_state.conversations <= 0: # нужно еще задачу в хрому записать
+                if global_state.conversations <= 0:
                     let_log(f"[WORKER] conversations<=0, handling user feedback/critic")
                     really_main_task = get_user_or_critic_feedback(really_main_task)
                     break
@@ -2441,7 +2583,7 @@ def worker(really_main_task):
                     if global_state.critic_wants_retry:
                         global_state.main_now_task = global_state.main_now_task + user_review_text2 + global_state.dialog_result + user_review_text4 + global_state.critic_comment
                         let_log(f"[WORKER] critic retry: updated main_now_task={global_state.main_now_task[:100]}")
-                        talk_prompt = start_dialog(global_state.main_now_task) # TODO: тут тоже может быть внезапное завершение
+                        talk_prompt = start_dialog(global_state.main_now_task)
                         let_log(f"[WORKER] after start_dialog (critic): talk_prompt={talk_prompt[:100]}, dialog_state={global_state.dialog_state}")
                     else:
                         talk_prompt = global_state.dialog_result
@@ -2491,10 +2633,10 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global token_limit, emb_token_limit, chunk_size, left_cache_counter
     global client, milana_collection, user_collection, rag_collection
     global ui_conn
-    global cache_path, chat_path, memory_sql, folder_path, slash, filesystem_project_path
+    global cache_path, chat_path, memory_sql, folder_path, slash, filesystem_project_path, global_trans_db_path
     global ask_provider_model, ask_provider_model_chat, get_provider_embs
     global create_chat, get_chat_context, update_history, delete_chat
-    global language
+    global language, do_translate, target_lang, local_and_tools_translate, use_local_cache, use_global_cache
     global do_chat_construct, native_func_call
     global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
@@ -2504,6 +2646,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     chat_path = os.path.join(base_dir, "data", "chats", chat_id)
     filesystem_project_path = os.path.join(base_dir, "data", "chats", chat_id, 'files')
     cache_path = os.path.join(chat_path, "cache.db")
+    global_trans_db_path = os.path.join(base_dir, "data", "settings.db")
     folder_path = base_dir # Обновляем пути для system_tools
     sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]
     sys.path.append(os.path.join(folder_path, 'system_tools'))
@@ -2555,6 +2698,13 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     recreate_agents = int(settings.get("recreate_agents", 0)) == 1
     filter_generations = int(settings.get("filter_generations", 0)) == 1
     cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 1)) == 1
+
+    do_translate = int(settings.get("do_translate", 0)) == 1
+    target_lang = settings.get("target_lang", "None")
+    local_and_tools_translate = int(settings.get("local_and_tools_translate", 0)) == 1
+    use_local_cache = int(settings.get("use_local_cache", 1)) == 1
+    use_global_cache = int(settings.get("use_global_cache", 0)) == 1
+
     chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)
     from chat_manager import create_chat, get_chat_context, update_history, delete_chat
@@ -2612,7 +2762,17 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         let_log(f"Ошибка инициализации модели: {str(e)}")
         traceback.print_exc()
         return
-    # === Загрузка модели и инструментов ===
+    # === Загрузка языка, модели и инструментов ===
+    if do_translate:
+        if use_local_cache:
+            sql_exec("CREATE TABLE translation_cache (src_text TEXT NOT NULL, translation TEXT NOT NULL, to_lang TEXT NOT NULL)")
+            # выгрузка из глобального с целевым языком (тогда можно и в модуль импортировать функцию работы с глобальными настройками (только на самом деле надо отдельный файл))
+            if use_global_cache:
+                global_cache_records = global_trans_cache_exec("SELECT src_text, translation FROM translation_cache WHERE to_lang IN (?, ?)", (target_lang, language), fetchall=True)
+                if global_cache_records:
+                    sql_exec("INSERT OR IGNORE INTO translation_cache (src_text, translation, to_lang) VALUES (?, ?, ?)", global_cache_records, executemany=True)
+                    print(f"Загружено {len(global_cache_records)} записей")
+        from simple_translator import translate_text, translate_texts
     language = settings.get("language", "ru")
     globalize_language_packet(language)
     chunk_size = provider_module.emb_token_limit * text_tokens_coefficient
