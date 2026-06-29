@@ -2166,6 +2166,7 @@ def critic(task: str, result: str) -> int | str:
     # Если блок выше раскомментирован, можно добавить librarian_context:
     # user_prompt3 += f"\n{librarian_context}"
     system_prompt3 = prompt_decision_1 + "\n" + prompt_decision_5
+    if use_magical_prompt: system_prompt3 += prompt_critic_principles
     try: decision_response = ask_model(user_prompt3, system_prompt=system_prompt3)
     except: user_prompt3_cut = text_cutter(user_prompt3); decision_response = ask_model(user_prompt3_cut, system_prompt=system_prompt3)
     if marker_decision_revise in decision_response:
@@ -2775,6 +2776,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     use_librarian = int(settings.get("use_librarian", 1)) == 1
     recreate_agents = int(settings.get("recreate_agents", 0)) == 1
     filter_generations = int(settings.get("filter_generations", 0)) == 1
+    use_magical_prompt = int(settings.get("use_magical_prompt", 0)) == 1
     cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 1)) == 1
 
     do_translate = int(settings.get("do_translate", 0)) == 1

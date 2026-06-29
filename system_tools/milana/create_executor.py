@@ -27,7 +27,8 @@ from cross_gpt import (
     get_level,
     prompt_evaluation_2,
     no_markdown_instruction,
-    write_shortly_prompt)
+    write_shortly_prompt,
+    use_magical_prompt,)
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -49,7 +50,8 @@ def main(text):
             'delegate_unavailable_for_executor',
             'need_info_example',
             'tasks_identical_text',
-            'exec_anti_loop_text')
+            'exec_anti_loop_text',
+            'exec_magical',)
         main.create_executor_param_1 = 'Are the tasks the same?'
         main.create_executor_param_2 = 'Task'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
@@ -131,6 +133,23 @@ Working with functions:
 Check whether the result matches the request.
 If a function returns incorrect, incomplete, disjointed, or meaningless output — do not repeat the same call unchanged.
 Try changing the request, using another function, or doing without. Do not get stuck on one function'''
+        main.exec_magical = """
+Execution principles:
+
+Never claim to have performed an action unless it has actually been performed.
+Never fabricate results, files, observations, or tool outputs.
+If you are uncertain about something, clearly distinguish assumptions from verified facts.
+
+If one approach fails, deliberately try a different one instead of repeating the same actions.
+
+Consider not only the intended use of available tools, but also unconventional uses, provided they comply with the system's rules and may help accomplish the task.
+
+If completing the task requires an action that only Milana or the user can perform, report it honestly and prepare everything necessary for the work to continue.
+
+If the task cannot be completed in full, try to complete the largest possible part of it or produce the most useful intermediate result.
+
+If several genuinely different approaches still produce no meaningful progress, explain to Milana what prevents further progress instead of pretending that the task has been completed.
+"""
         return
     if global_state.conversations % 2 == 0:
         return_text = main.create_executor_return_text_2
@@ -189,6 +208,7 @@ Try changing the request, using another function, or doing without. Do not get s
     if ivan_tools: prompt += selected_ivan_tools
     if not native_func_call: prompt += what_is_func_text + main.need_info_example
     prompt += main.exec_anti_loop_text
+    if use_magical_prompt: prompt += main.exec_magical
     global_state.tools_commands_dict[global_state.conversations] = ivan_tools
     let_log('ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ ИСПОЛНИТЕЛЯ:')
     for tool, (desc, _) in ivan_tools.items(): let_log(f"  {tool}: {desc}")

@@ -99,6 +99,25 @@ VERDICT: REVISE
 NEW TASK:
 Your previous attempt to solve the task "write a summation function" was almost successful, but it lacked handling of non-numeric data. Please revise this function by adding a try-except block.
 """
+prompt_critic_principles = """
+Evaluation principles:
+
+Evaluate only the result that was actually produced.
+
+Do not approve work simply because significant effort was invested.
+Do not reject work simply because it required several attempts.
+
+If the result successfully solves the user's task, even in an unexpected way, treat that as a strength rather than a weakness.
+
+The opportunity to request a revision is limited.
+Request another iteration only when one additional attempt is highly likely to produce a substantial improvement.
+
+Do not request a revision merely because the answer could be made slightly better.
+
+If you cannot confidently determine whether the result is correct, return the "unsure" verdict instead of guessing.
+
+Do not invent strengths or weaknesses that are not supported by the provided task and result.
+"""
 prompt_librarian_questions_1 = """
 You are a meticulous fact-checker. Based on the task, the result, and the evaluation report, formulate a list of questions to ask an external knowledge source ("the librarian") in order to verify facts, find best practices, or identify hidden errors.
 Task:"""
@@ -318,6 +337,7 @@ class SystemTextContainer:
         self.prompt_decision_3 = prompt_decision_3
         self.prompt_decision_4 = prompt_decision_4
         self.prompt_decision_5 = prompt_decision_5
+        self.prompt_critic_principles = prompt_critic_principles
         self.prompt_librarian_questions_1 = prompt_librarian_questions_1
         self.prompt_librarian_questions_2 = prompt_librarian_questions_2
         self.prompt_librarian_questions_3 = prompt_librarian_questions_3

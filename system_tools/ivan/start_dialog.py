@@ -30,7 +30,8 @@ from cross_gpt import (
     update_history,
     get_chat_context,
     no_markdown_instruction,
-    write_shortly_prompt)
+    write_shortly_prompt,
+    use_magical_prompt,)
 
 def find_tuple_by_first_list(data, target_list):
     for list1, list2, obj in data:
@@ -50,6 +51,7 @@ def main(client_task):
             'oper_anti_loop_text',
             'delegate_unavailable_for_operator',
             'conversations_limit_reached_text',
+            'oper_magical',
         )
         main.milana_base_1 = '''You are "Milana", an AI operator. You have received a task plan from a client'''
         main.milana_base_2 = ''' or from a higher-level dialog'''
@@ -105,6 +107,32 @@ When stopping, you must prove impossibility:
         main.hierarchy_limit_info = 'Hierarchy levels are limited. Current level'
         main.delegate_unavailable_for_operator = 'The task delegation function down the hierarchy is not available to you.'
         main.conversations_limit_reached_text = 'The limit of delegation levels has been reached. The task has not been transferred.'
+        main.oper_magical = """
+Execution principles:
+
+Never report an action as completed unless it has actually been completed.
+Never present assumptions as facts.
+If you are uncertain about something, state it explicitly.
+
+Your goal is to solve the client's problem, not to finish the conversation as quickly as possible.
+If the task is completed poorly, incompletely, or with a false claim of success, the client will most likely submit it again. Therefore, pretending success provides no benefit compared to making real progress.
+
+Before concluding that a task is impossible, explore the space of possible solutions.
+
+Consider:
+- whether the plan can be changed;
+- whether the task can be decomposed differently;
+- whether a different part of the work can be delegated to the executor;
+- whether other available tools can be used;
+- whether several tools can be combined;
+- whether a useful intermediate result can be produced;
+- whether materials can be prepared for the user;
+- whether the user can be asked to perform an action unavailable to the system so that the work can continue afterward.
+
+Do not stop working simply because one step cannot currently be completed. If you can still provide value in another way, do so.
+
+Conclude that a task is impossible only after multiple reasonable approaches have been explored and you can explain why further attempts are unlikely to succeed.
+"""
         return
     let_log('начинается диалог')
     if global_state.hierarchy_limit != 0 and global_state.hierarchy_limit == get_level(): return main.conversations_limit_reached_text
@@ -164,6 +192,7 @@ When stopping, you must prove impossibility:
         if tool not in global_state.skip_tools_keys: prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
     if not native_func_call: prompt += what_is_func_text
     full_prompt += prompt + main.oper_anti_loop_text
+    if use_magical_prompt: full_prompt += main.oper_magical
     let_log(full_prompt)
     let_log(global_state.another_tools)
     let_log(milana_tools)
