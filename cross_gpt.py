@@ -1996,46 +1996,124 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     let_log(f"Всего сохранено {len(all_groups)} групп сообщений для {doc_id}")
     let_log(f"{'='*60}")
 
-def gigo(base_task):
-    try: questions = ask_model(base_task + global_state.summ_attach, system_prompt=gigo_questions)
+def gigo(task: str, settings: dict = None) -> str:
+    if not use_gigo: return gigo_label_task + task
+    # 1. Анализ намерения
+    try: intention_text = ask_model(task, system_prompt=gigo_intention_prompt)
     except RuntimeError as e:
-        if 'ContextOverflowError' in str(e):
-            base_task = text_cutter(base_task)
-            questions = ask_model(text_cutter(base_task + global_state.summ_attach), system_prompt=gigo_questions)
+        if 'ContextOverflowError' in str(e): intention_text = ask_model(text_cutter(task), system_prompt=gigo_intention_prompt)
         else: raise
-    additional_info = librarian(questions)
-    if additional_info != found_info_1: additional_info = '\n' + gigo_found_info + '\n' + additional_info
-    else: additional_info = ''; let_log(found_info_1)
-    minds_text = ''
-    minds = []
-    roles = [gigo_dreamer, gigo_realist, gigo_critic]
-    ents_roles = ', '.join(roles) + '\n'
-    role_notes = [gigo_dreamer_note, gigo_realist_note, gigo_critic_note]
-    for role, role_note in zip(roles, role_notes):
-        try: minds.append(ask_model(base_task + additional_info, system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
+    # 2. Библиотекарь
+    library = ""
+    if gigo_use_librarian:
+        try: questions = ask_model(task + global_state.summ_attach, system_prompt=gigo_questions)
         except RuntimeError as e:
-            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
+            if 'ContextOverflowError' in str(e): questions = ask_model(text_cutter(task + global_state.summ_attach), system_prompt=gigo_questions)
             else: raise
-    for role, mind in zip(roles, minds):
-        minds_text += worker_role_text + mind
-        if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
-        else:
-            minds_text += operator_role_text + gigo_next_role + role
-            if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
-    num_plan_items = gigo_make_plan_num + global_state.number_of_plan_items if global_state.number_of_plan_items > 0 else ''
-    try: plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
+        if questions and questions.strip():
+            library = librarian(questions)
+            if library and library != found_info_1:
+                if len(library) > 3000: library = text_cutter(library)
+                library = gigo_found_info + '\n' + library
+            else: library = ""
+    # 3. Генерация идей
+    ideas = []
+    for _ in range(gigo_idea_count):
+        entropy = ""
+        if gigo_use_entropy: entropy = secrets.token_hex(32)
+        role = ""
+        if gigo_use_random_roles:
+            try: role = ask_model(task, system_prompt=gigo_role_generation_prompt).strip()
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e): role = ask_model(text_cutter(task), system_prompt=gigo_role_generation_prompt).strip()
+                else: raise
+        concept = ""
+        if gigo_use_concepts:
+            try: concept = ask_model(task, system_prompt=gigo_concept_generation_prompt).strip()
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e): concept = ask_model(text_cutter(task), system_prompt=gigo_concept_generation_prompt).strip()
+                else: raise
+        idea_prompt = gigo_idea_generation_prompt_1 + (role if role else 'expert') + gigo_idea_generation_prompt_2
+        if entropy: idea_prompt += '\n' + gigo_entropy_instruction + entropy
+        idea_input = gigo_label_task + task + '\n' + gigo_label_intention + intention_text + '\n'
+        if library: idea_input += gigo_label_additional_info + library + '\n'
+        if concept: idea_input += gigo_label_concept + concept + '\n'
+        try: idea = ask_model(idea_input, system_prompt=idea_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): idea = ask_model(text_cutter(idea_input), system_prompt=idea_prompt)
+            else: raise
+        ideas.append(idea)
+    # 4. Фильтрация
+    if gigo_use_filter and len(ideas) > 1:
+        ideas_text = ''
+        for idx, idea in enumerate(ideas): ideas_text += gigo_label_idea + str(idx+1) + gigo_label_colon + idea + '\n'
+        try: filter_response = ask_model(ideas_text, system_prompt=gigo_filter_ideas_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): filter_response = ask_model(text_cutter(ideas_text), system_prompt=gigo_filter_ideas_prompt)
+            else: raise
+        if filter_response.strip():
+            selected = []
+            for part in filter_response.split(','):
+                part = part.strip()
+                if part.isdigit():
+                    idx = int(part) - 1
+                    if 0 <= idx < len(ideas): selected.append(idx)
+            if selected: ideas = [ideas[i] for i in selected]
+    # 5. Развитие идей
+    developed_ideas = []
+    for idea in ideas:
+        versions = []
+        if gigo_use_dreamer:
+            try: dream = ask_model(idea, system_prompt=gigo_dreamer_prompt)
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e): dream = ask_model(text_cutter(idea), system_prompt=gigo_dreamer_prompt)
+                else: raise
+            versions.append((gigo_dreamer, dream))
+        if gigo_use_realist:
+            try: real = ask_model(idea, system_prompt=gigo_realist_prompt)
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e): real = ask_model(text_cutter(idea), system_prompt=gigo_realist_prompt)
+                else: raise
+            versions.append((gigo_realist, real))
+        if gigo_use_critic:
+            try: critic = ask_model(idea, system_prompt=gigo_critic_prompt)
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e): critic = ask_model(text_cutter(idea), system_prompt=gigo_critic_prompt)
+                else: raise
+            versions.append((gigo_critic, critic))
+        if not versions: developed_ideas.append(idea); continue
+        synthesis_input = gigo_label_original_idea + idea + '\n\n'
+        for name, text in versions: synthesis_input += name.capitalize() + ':\n' + text + '\n\n'
+        try: synthesis = ask_model(synthesis_input, system_prompt=gigo_synthesize_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): synthesis = ask_model(text_cutter(synthesis_input), system_prompt=gigo_synthesize_prompt)
+            else: raise
+        developed_ideas.append(synthesis)
+    # 6. Выбор лучшей
+    if len(developed_ideas) > 1:
+        ideas_text = ''
+        for idx, idea in enumerate(developed_ideas): ideas_text += gigo_label_idea + str(idx+1) + gigo_label_colon + idea + '\n'
+        try: choice_response = ask_model(ideas_text, system_prompt=gigo_choose_best_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): choice_response = ask_model(text_cutter(ideas_text), system_prompt=gigo_choose_best_prompt)
+            else: raise
+        best_idx = 0
+        if choice_response.strip().isdigit():
+            idx = int(choice_response.strip()) - 1
+            if 0 <= idx < len(developed_ideas): best_idx = idx
+        best_idea = developed_ideas[best_idx]
+    else: best_idea = developed_ideas[0] if developed_ideas else ""
+    # 7. Построение ответа
+    gigo_plan_items = int(settings.get("gigo_plan_items", 0))
+    if gigo_plan_items > 0: plan_items = gigo_plan_items
+    else: plan_items = global_state.number_of_plan_items if global_state.number_of_plan_items > 0 else 5
+    build_prompt = gigo_build_answer_prompt_1 + str(plan_items) + gigo_build_answer_prompt_2
+    answer_input = gigo_label_task + task + '\n' + gigo_label_intention + intention_text + '\n' + gigo_label_best_idea + best_idea
+    try: answer = ask_model(answer_input, system_prompt=build_prompt + '\n' + no_markdown_instruction)
     except RuntimeError as e:
-        if 'ContextOverflowError' in str(e):
-            minds_text = ''
-            for role, mind in zip(roles, minds):
-                minds_text += worker_role_text + text_cutter(mind)
-                if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
-                else:
-                    minds_text += operator_role_text + gigo_next_role + role
-                    if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
-            plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + text_cutter(additional_info) + minds_text)
+        if 'ContextOverflowError' in str(e): answer = ask_model(text_cutter(answer_input), system_prompt=build_prompt + '\n' + no_markdown_instruction)
         else: raise
-    return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
+    return answer
 
 def critic(task: str, result: str) -> int | str:
     """
@@ -2704,6 +2782,17 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     local_and_tools_translate = int(settings.get("local_and_tools_translate", 0)) == 1
     use_local_cache = int(settings.get("use_local_cache", 1)) == 1
     use_global_cache = int(settings.get("use_global_cache", 0)) == 1
+
+    use_gigo = int(settings.get("use_gigo", 1)) == 1
+    gigo_idea_count = int(settings.get("gigo_idea_count", 3))
+    gigo_use_entropy = int(settings.get("gigo_use_entropy", 1)) == 1
+    gigo_use_random_roles = int(settings.get("gigo_use_random_roles", 1)) == 1
+    gigo_use_concepts = int(settings.get("gigo_use_concepts", 1)) == 1
+    gigo_use_filter = int(settings.get("gigo_use_filter", 1)) == 1
+    gigo_use_dreamer = int(settings.get("gigo_use_dreamer", 1)) == 1
+    gigo_use_realist = int(settings.get("gigo_use_realist", 1)) == 1
+    gigo_use_critic = int(settings.get("gigo_use_critic", 1)) == 1
+    gigo_use_librarian = int(settings.get("gigo_use_librarian", 1)) == 1
 
     chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)

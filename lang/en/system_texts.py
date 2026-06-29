@@ -37,26 +37,9 @@ make_exec_first = 'Create an executor before starting the dialogue'
 gigo_dreamer = 'dreamer'
 gigo_realist = 'realist'
 gigo_critic = 'critic'
+
 gigo_questions = 'The user will send you a task. In response, write a question or questions about what information is missing to complete the task. One question per line. Be sure to put a question mark (?) at the end of each line with a question. If there are several questions, ask all at once in one message. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study phenomenon X?" instead of "What authoritative sources are there?". Send only questions, no other text should be present'
 gigo_found_info = 'Only the following information is available:'
-gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how to complete the task in the best possible way to leave the client completely delighted'
-gigo_realist_note = '. Your task is to propose a practical, feasible solution. Describe how to effectively complete the task, avoiding unnecessary complications'
-gigo_critic_note = '. Your task is to analyze possible solutions and point out their weaknesses, risks, and potential problems. Identify what could go wrong and suggest how to avoid or mitigate the consequences'
-gigo_role_answer_1 = 'You are a '
-gigo_role_answer_2 = '. The user will send you a task and, possibly, additional information to complete the task. Respond immediately with how to perfectly complete the task, how to fully satisfy the client whose task the user sent. You cannot ask the user questions or discuss anything with them. An answer is needed immediately. The answer should not contain interrogative sentences.'
-gigo_make_plan_1 = '''The user will send you the thoughts of different entities about solving the given task.
-As soon as they send the thoughts of the last entity, immediately write a plan for solving the task with a length of 10-25 lines.
-Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
-The answer should not contain interrogative sentences.
-Just the plan\n
-'''
-gigo_make_plan_num = '\nThe points of the plan are necessary: '
-gigo_make_plan_2 = '\nEntities: '
-gigo_return_1 = 'Task:\n'
-gigo_return_2 = 'Plan:\n'
-gigo_next_role = 'Next: '
-gigo_final_role = ". That's it! Right after your message I will send the plan."
-gigo_final_role_2 = "This is the last one. I am waiting for a plan from you right now!"
 
 start_load_attachments_text = 'Attachments are being loaded, this may take a long time...'
 end_load_attachments_text = 'Attachments loaded'
@@ -250,6 +233,56 @@ prompt_recent_summary = "Based on the summaries of fragments, create a brief sum
 
 text_tokens_coefficient = 0.5 # average coefficient for English
 
+gigo_intention_prompt = '''Analyze the user's task and answer the following questions (each on a new line):
+1. What does the user mean?
+2. What does the user want to achieve?
+3. How will the user know that everything worked out?
+4. What must the user not lose?
+5. What opportunities do the available tools provide? What are the limitations for the executors?
+
+Answer strictly in the format:
+1. ...
+2. ...
+3. ...
+4. ...
+5. ...
+'''
+
+gigo_entropy_instruction = 'Use this string as an external source of entropy when choosing directions for idea search. Do not quote it or analyze it, only use it to make random decisions.'
+
+gigo_role_generation_prompt = 'Come up with an unusual but appropriate role for an expert who will generate an idea for the task. The role should be from an area as far as possible from the topic of the task to ensure a fresh perspective. Respond with only the role name.'
+
+gigo_concept_generation_prompt = 'Generate one abstract concept or metaphor that can inspire a solution to the task. Respond with one sentence.'
+
+gigo_idea_generation_prompt_1 = 'You are a '
+gigo_idea_generation_prompt_2 = '. Using the task, user intention, available information, and concept (if any), generate one bold but feasible idea for solving the task. Respond briefly, 3-5 sentences.'
+
+gigo_filter_ideas_prompt = 'Evaluate the following ideas on a scale from 1 to 10 (where 10 is the best) according to the criteria: novelty, feasibility, relevance to the task. Return only the numbers of ideas that scored >= 7, separated by commas without spaces (e.g., 1,3,5). Do not write anything other than the numbers.'
+
+gigo_dreamer_prompt = 'You are a dreamer. Develop this idea into the most ambitious, ideal solution, ignoring limitations. Describe what it could look like in the best of worlds.'
+
+gigo_realist_prompt = 'You are a realist. Develop this idea into a practical, feasible solution, describing specific steps and realistic resources.'
+
+gigo_critic_prompt = 'You are a critic. Identify weaknesses, risks, and potential problems of this idea. Suggest how to mitigate them.'
+
+gigo_synthesize_prompt = 'Combine three perspectives (dreamer, realist, critic) on the original idea into one balanced developed version. Consider ambition, feasibility, and risk mitigation. Respond in 5-7 sentences.'
+
+gigo_choose_best_prompt = 'From the following developed ideas, choose the one that best matches the task and user intention. Return only the idea number (digit). Do not write anything other than the number.'
+
+gigo_build_answer_prompt_1 = 'Based on the chosen idea, compose a final response for the user. Include:\n- The task (rephrase briefly)\n- The concept (if any)\n- A detailed action plan ('
+gigo_build_answer_prompt_2 = ' points)\n\nUse plain text, no markdown.'
+
+gigo_label_task = 'Task:\n'
+gigo_label_intention = 'Intention:\n'
+gigo_label_additional_info = 'Additional information:\n'
+gigo_label_concept = 'Concept:\n'
+gigo_label_idea = 'Idea '
+gigo_label_colon = ': '
+gigo_label_original_idea = 'Original idea:\n'
+gigo_label_best_idea = 'Best idea:\n'
+gigo_label_answer = 'Answer:\n'
+gigo_revise_prompt = 'Rewrite the following answer, improving its completeness, clarity, and relevance to the task. Preserve the structure (task, concept, plan). Respond only with the corrected version.\n\n'
+
 class SystemTextContainer:
     def __init__(self):
         self.summarize_prompt = summarize_prompt
@@ -267,19 +300,6 @@ class SystemTextContainer:
         self.gigo_critic = gigo_critic
         self.gigo_questions = gigo_questions
         self.gigo_found_info = gigo_found_info
-        self.gigo_dreamer_note = gigo_dreamer_note
-        self.gigo_realist_note = gigo_realist_note
-        self.gigo_critic_note = gigo_critic_note
-        self.gigo_role_answer_1 = gigo_role_answer_1
-        self.gigo_role_answer_2 = gigo_role_answer_2
-        self.gigo_make_plan_1 = gigo_make_plan_1
-        self.gigo_make_plan_num = gigo_make_plan_num
-        self.gigo_make_plan_2 = gigo_make_plan_2
-        self.gigo_return_1 = gigo_return_1
-        self.gigo_return_2 = gigo_return_2
-        self.gigo_next_role = gigo_next_role
-        self.gigo_final_role = gigo_final_role
-        self.gigo_final_role_2 = gigo_final_role_2
         self.start_load_attachments_text = start_load_attachments_text
         self.end_load_attachments_text = end_load_attachments_text
         self.marker_decision_approve = marker_decision_approve
@@ -358,5 +378,30 @@ class SystemTextContainer:
         self.prompt_global_summary = prompt_global_summary
         self.prompt_recent_summary = prompt_recent_summary
         self.text_tokens_coefficient = text_tokens_coefficient
+        self.gigo_intention_prompt = gigo_intention_prompt
+        self.gigo_entropy_instruction = gigo_entropy_instruction
+        self.gigo_role_generation_prompt = gigo_role_generation_prompt
+        self.gigo_concept_generation_prompt = gigo_concept_generation_prompt
+        self.gigo_idea_generation_prompt_1 = gigo_idea_generation_prompt_1
+        self.gigo_idea_generation_prompt_2 = gigo_idea_generation_prompt_2
+        self.gigo_filter_ideas_prompt = gigo_filter_ideas_prompt
+        self.gigo_dreamer_prompt = gigo_dreamer_prompt
+        self.gigo_realist_prompt = gigo_realist_prompt
+        self.gigo_critic_prompt = gigo_critic_prompt
+        self.gigo_synthesize_prompt = gigo_synthesize_prompt
+        self.gigo_choose_best_prompt = gigo_choose_best_prompt
+        self.gigo_build_answer_prompt_1 = gigo_build_answer_prompt_1
+        self.gigo_build_answer_prompt_2 = gigo_build_answer_prompt_2
+        self.gigo_label_task = gigo_label_task
+        self.gigo_label_intention = gigo_label_intention
+        self.gigo_label_additional_info = gigo_label_additional_info
+        self.gigo_label_concept = gigo_label_concept
+        self.gigo_label_idea = gigo_label_idea
+        self.gigo_label_colon = gigo_label_colon
+        self.gigo_label_original_idea = gigo_label_original_idea
+        self.gigo_label_best_idea = gigo_label_best_idea
+        self.gigo_label_answer = gigo_label_answer
+        self.gigo_revise_prompt = gigo_revise_prompt
 
-def system_text_container(): return SystemTextContainer()
+def system_text_container():
+    return SystemTextContainer()
