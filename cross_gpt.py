@@ -61,6 +61,7 @@ class GlobalState:
         self.allow_ocr = 1
         self.wrong_command_messages_vector_ids = []
         self.number_of_plan_items = 0
+        self.psm_operator_person = {} # TODO: потом объедини с другими в словарь с чат айди и подсловарями, также имена пространств должны быть короткими, в районе 3 символов
 global_state = GlobalState()
 
 chat_path = ''
@@ -78,7 +79,7 @@ use_librarian = True
 recreate_agents = False
 cut_wrong_command_history = True
 
-default_handlers_names = { # это из настроек должно выгружаться
+default_handlers_names = { # это из настроек должно выгружаться, или лучше из документации хэндлеров которая внутри них
     'doc': 'process_docx',
     'docx': 'process_docx',
     'txt': 'process_text',
@@ -2717,7 +2718,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global create_chat, get_chat_context, update_history, delete_chat
     global language, do_translate, target_lang, local_and_tools_translate, use_local_cache, use_global_cache
     global do_chat_construct, native_func_call
-    global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history
+    global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history, use_psm
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
@@ -2772,6 +2773,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     global_state.skip_nested_images = int(settings.get("skip_nested_images", 0)) == 1
     use_rag = int(settings.get("use_rag", 1)) == 1
+    use_psm = int(settings.get("use_psm", 0)) == 1
     is_save_log = int(settings.get("write_log", 1)) == 1
     use_librarian = int(settings.get("use_librarian", 1)) == 1
     recreate_agents = int(settings.get("recreate_agents", 0)) == 1

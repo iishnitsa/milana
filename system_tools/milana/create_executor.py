@@ -28,7 +28,8 @@ from cross_gpt import (
     prompt_evaluation_2,
     no_markdown_instruction,
     write_shortly_prompt,
-    use_magical_prompt,)
+    use_magical_prompt,
+    use_psm,)
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -51,7 +52,9 @@ def main(text):
             'need_info_example',
             'tasks_identical_text',
             'exec_anti_loop_text',
-            'exec_magical',)
+            'exec_magical',
+            'exec_psm_prompt_1',
+            'exec_psm_prompt_2',)
         main.create_executor_param_1 = 'Are the tasks the same?'
         main.create_executor_param_2 = 'Task'
         main.create_executor_questions = 'Write questions, separating them with ; to search for additional information for this task:\n'
@@ -150,6 +153,39 @@ If the task cannot be completed in full, try to complete the largest possible pa
 
 If several genuinely different approaches still produce no meaningful progress, explain to Milana what prevents further progress instead of pretending that the task has been completed.
 """
+        main.exec_psm_prompt_1 = """
+Below are the user's task and the operator's personality.
+
+Describe, in a single short sentence, the personality of an executor who would form an effective team with the operator.
+
+The executor should not be a copy of the operator.
+
+Their personality and thinking style should differ enough that they notice what the other might overlook, naturally encourage each other toward higher-quality work, and explore the task from different perspectives without creating constant conflict.
+
+For example:
+- caution may complement experimentation;
+- thorough analysis may complement rapid hypothesis testing;
+- strategic thinking may complement practicality;
+- creativity may complement critical thinking;
+- skepticism may complement initiative.
+
+Describe only:
+- personality;
+- thinking style;
+- internal motivation.
+
+Do not describe skills, professions, or knowledge.
+Do not mention the task itself.
+Do not use names, famous people, or fictional characters.
+Do not describe appearance, age, biography, or speaking style.
+
+Return only one sentence of no more than 30 words.
+
+The task:
+"""
+        main.exec_psm_prompt_2 = """
+Personality:
+"""
         return
     if global_state.conversations % 2 == 0:
         return_text = main.create_executor_return_text_2
@@ -196,7 +232,9 @@ If several genuinely different approaches still produce no meaningful progress, 
     let_log(system_prompt_for_instructions)
     let_log("Генерация инструкций для исполнителя...")
     instructions = ask_model(user_content, system_prompt=system_prompt_for_instructions)
-    prompt = main.worker_base + no_markdown_instruction + write_shortly_prompt + '\n' + prompt_evaluation_2 + ' ' + text
+    prompt = main.worker_base
+    if use_psm: promt += ask_model(exec_psm_prompt_1 + text + exec_psm_prompt_2 + global_state.psm_operator_person[global_state.conversations - 1])
+    prompt += no_markdown_instruction + write_shortly_prompt + '\n' + prompt_evaluation_2 + ' ' + text
     if global_state.hierarchy_limit != 1: prompt += main.worker_delegation_part
     hierarchy_note = ""
     if global_state.hierarchy_limit > 1:

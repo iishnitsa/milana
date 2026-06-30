@@ -86,7 +86,7 @@ def delete_chat(chat_id: int):
     """Удаляет все данные, связанные с чатом: сообщения, системный промпт и векторы (если включён RAG)."""
     let_log(f"Deleting chat and all related data: {chat_id}")
     str_chat_id = str(chat_id)
-
+    global_state.psm_operator_person.pop(chat_id, None)
     # Удаляем из rag_messages
     sql_exec("DELETE FROM rag_messages WHERE chat_id = ?", (str_chat_id,))
     # Удаляем системный промпт
@@ -94,7 +94,7 @@ def delete_chat(chat_id: int):
 
     # Если use_rag включён, удаляем векторы из ChromaDB
     if use_rag:
-        if chat_id % 2 == 0:  # оператор – удаляем всё, где он фигурирует
+        if chat_id % 2 != 0:  # оператор – удаляем всё, где он фигурирует # TODO: проверь
             coll_exec(action="delete", coll_name="rag_collection", filters={'$or': [{'chat_id_1': str_chat_id}, {'chat_id_2': str_chat_id}]})
         else:  # исполнитель – удаляем только локальные (где chat_id_1 = исполнитель и нет chat_id_2)
             coll_exec(action="delete", coll_name="rag_collection", filters={'$and': [{'chat_id_1': str_chat_id}, {'chat_id_2': {'$exists': False}}]})

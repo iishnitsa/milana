@@ -31,7 +31,8 @@ from cross_gpt import (
     get_chat_context,
     no_markdown_instruction,
     write_shortly_prompt,
-    use_magical_prompt,)
+    use_magical_prompt,
+    use_psm,)
 
 def find_tuple_by_first_list(data, target_list):
     for list1, list2, obj in data:
@@ -52,10 +53,11 @@ def main(client_task):
             'delegate_unavailable_for_operator',
             'conversations_limit_reached_text',
             'oper_magical',
+            'oper_psm_prompt',
         )
         main.milana_base_1 = '''You are "Milana", an AI operator. You have received a task plan from a client'''
         main.milana_base_2 = ''' or from a higher-level dialog'''
-        main.milana_base_3 = '''.
+        main.milana_base_3 = '''
 Your workflow:
 1. CREATE ONE EXECUTOR — Use the command "!!!create_executor!!!" followed by the task description. This creates "Ivan", an AI executor who will handle the current subtask.
 CORRECT: "!!!create_executor!!! *current subtask*"
@@ -133,6 +135,29 @@ Do not stop working simply because one step cannot currently be completed. If yo
 
 Conclude that a task is impossible only after multiple reasonable approaches have been explored and you can explain why further attempts are unlikely to succeed.
 """
+        main.oper_psm_prompt = """
+Below is the user's task.
+
+Describe, in a single short sentence, the personality of an operator who would be best suited for solving this task.
+
+Describe only:
+- personality;
+- thinking style;
+- internal motivation.
+
+Do not describe skills, professions, or knowledge.
+Do not mention the task itself.
+Do not use names, famous people, or fictional characters.
+Do not describe appearance, age, biography, or speaking style.
+
+Create a natural and psychologically consistent personality that can later be effectively complemented by another team member.
+
+The personality should help organize the work, make good decisions, and guide the task toward the most useful achievable outcome.
+
+Return only one sentence of no more than 30 words.
+
+The task:
+"""
         return
     let_log('начинается диалог')
     if global_state.hierarchy_limit != 0 and global_state.hierarchy_limit == get_level(): return main.conversations_limit_reached_text
@@ -177,6 +202,10 @@ Conclude that a task is impossible only after multiple reasonable approaches hav
     # 1. Information that Ivan can delegate (added ALWAYS except when delegation is completely disabled - limit=1)
     if global_state.hierarchy_limit != 1:
         full_prompt += main.milana_base_2
+        if use_psm:
+            operator_personality = ask_model(main.oper_psm_prompt + client_task)
+            global_state.psm_operator_person[global_state.conversations + 1] = operator_personality
+            full_prompt += operator_personality
         full_prompt += main.milana_base_3
         full_prompt += main.milana_delegation_part
         full_prompt += f"\n{main.delegate_unavailable_for_operator}\n"
