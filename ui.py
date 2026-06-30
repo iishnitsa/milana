@@ -717,7 +717,15 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "target_lang": "None",
                 "local_and_tools_translate": "0",
                 "use_local_cache": "0",
-                "use_global_cache": "0",}
+                "use_global_cache": "0",
+                "use_psm": "0",
+                "use_magical_prompt": "0",
+                "use_gigo": "1",
+                "gigo_idea_count": "5",
+                "gigo_use_entropy": "1",
+                "gigo_use_concepts": "1",
+                "gigo_use_filter": "1",
+                "gigo_use_librarian": "0",}
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
             widget_type_map = {
@@ -734,10 +742,20 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "local_and_tools_translate": "switch",
                 "use_local_cache": "switch",
                 "use_global_cache": "switch",
+                "use_psm": "switch",
+                "use_magical_prompt": "switch",
+                "use_gigo": "switch",
+                "gigo_idea_count": "switch",
+                "gigo_use_entropy": "switch",
+                "gigo_use_concepts": "switch",
+                "gigo_use_filter": "switch",
+                "gigo_use_librarian": "switch",
                 "target_lang": "entry",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",
-                "number_of_plan_items": "entry",}
+                "number_of_plan_items": "entry",
+                "gigo_idea_count": "entry",
+                }
             for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
         def _load_settings_metadata_from_db(self): # Возвращает список кортежей (key, widget_type) для всех записей settings.
             rows = self.sql_exec(self.db_path, "SELECT key, widget_type FROM settings", fetchall=True) or []
@@ -880,6 +898,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     def build_chat_settings_ui(parent, settings_vars, metadata):
         """
         Строит виджеты для настроек чата на основе переданных метаданных.
+        Если для параметра существует ключ с суффиксом _desc в словаре TEXTS,
+        то добавляется спойлер с описанием, который можно развернуть кликом по заголовку.
         metadata: словарь {key: widget_type}
         settings_vars: словарь, где для каждого ключа уже должен быть создан tk.StringVar
         Возвращает словарь созданных виджетов (на случай, если понадобится дополнительная настройка)
@@ -890,22 +910,130 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         switch_items = [(k, v) for k, v in metadata.items() if v == 'switch']
         for key, wtype in entry_items + switch_items:
             # Пропускаем служебные ключи, которые не должны отображаться в настройках чата
-            if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name'): continue
+            if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name'):
+                continue
+            desc_key = key + "_desc"
+            has_desc = desc_key in Lang.texts  # наличие описания в текущем языке
+
             frame = create_styled_frame(parent)
             frame.pack(fill="x", pady=2)
-            frame.grid_columnconfigure(1, weight=1)
-            create_styled_label(frame, text=Lang.get(key, default=key)).grid(row=0, column=0, sticky="w", padx=(0, 10))
-            if wtype == 'switch':
-                # Создаем Switch
-                var = settings_vars[key]
-                switch = CTkSwitch(frame, text="", variable=var, onvalue="1", offvalue="0", switch_width=50, switch_height=25, progress_color=PURPLE_ACCENT, font=FONT_REGULAR)
-                switch.grid(row=0, column=1, sticky="e")
-                created_widgets[key] = switch
-            else: # 'entry' или любой другой тип, используем entry
-                entry = create_styled_entry(frame, textvariable=settings_vars[key])
-                entry.grid(row=0, column=1, sticky="ew")
-                created_widgets[key] = entry
+            frame.grid_columnconfigure(0, weight=1)
+            frame.grid_columnconfigure(1, weight=0)  # виджет справа не растягивается
+
+            if has_desc:
+                # Заголовок-кнопка со стрелкой и названием
+                btn_text = "╰ " + Lang.get(key, default=key) # TODO: это через функцию
+                btn = CTkButton(
+                    frame,
+                    text=btn_text,
+                    anchor="w",
+                    fg_color="transparent",
+                    hover_color=PURPLE_ACCENT,
+                    corner_radius=CORNER_RADIUS,
+                    font=FONT_REGULAR,
+                    height=27,
+                )
+                btn.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+
+                # Виджет управления (switch или entry)
+                if wtype == 'switch':
+                    var = settings_vars[key]
+                    switch = CTkSwitch(
+                        frame,
+                        text="",
+                        variable=var,
+                        onvalue="1",
+                        offvalue="0",
+                        switch_width=50,
+                        switch_height=25,
+                        progress_color=PURPLE_ACCENT,
+                        font=FONT_REGULAR
+                    )
+                    switch.grid(row=0, column=1, sticky="e")
+                    created_widgets[key] = switch
+                else:
+                    entry = create_styled_entry(frame, textvariable=settings_vars[key])
+                    entry.grid(row=0, column=1, sticky="ew")
+                    created_widgets[key] = entry
+
+                # Создаём спойлер (контейнер для описания)
+                desc_frame = create_styled_frame(frame, fg_color="transparent")
+                desc_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+
+                desc_label = create_styled_label(
+                    desc_frame,
+                    text=Lang.get(desc_key, default=""),
+                    wraplength=400,
+                    justify="left"
+                )
+                desc_label.pack(fill="x", padx=5, pady=2)
+
+                # Контекстное меню для копирования описания
+                menu = tk.Menu(desc_label, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, relief="flat", borderwidth=0, font=(FONT_FAMILY, 8))
+                def copy_description():
+                    try:
+                        text = desc_label.cget("text")
+                        if text:
+                            desc_label.clipboard_clear()
+                            desc_label.clipboard_append(text)
+                    except tk.TclError:
+                        pass
+                menu.add_command(label=Lang.get("copy"), command=copy_description)
+                def show_menu(event):
+                    menu.tk_popup(event.x_root, event.y_root)
+                desc_label.bind("<Button-3>", show_menu)
+                if sys.platform == "darwin":
+                    desc_label.bind("<Button-2>", show_menu)
+
+                # Функция переключения видимости спойлера
+                def make_toggle(btn, desc_frame, key):
+                    def toggle():
+                        if desc_frame.winfo_ismapped():
+                            desc_frame.grid_remove()
+                            btn.configure(text="╰ " + Lang.get(key, default=key))
+                        else:
+                            desc_frame.grid()
+                            btn.configure(text="╭ " + Lang.get(key, default=key))
+                    return toggle
+                toggle_cmd = make_toggle(btn, desc_frame, key)
+                btn.configure(command=toggle_cmd)
+                # По клику на описание тоже сворачиваем/разворачиваем
+                desc_label.bind("<Button-1>", lambda e: toggle_cmd())
+
+                # Скрываем спойлер по умолчанию
+                desc_frame.grid_remove()
+
+                # Динамическое обновление wraplength при изменении размера
+                def update_wraplength(event, label=desc_label, frame=frame):
+                    width = frame.winfo_width() - 20
+                    if width > 50:
+                        label.configure(wraplength=width)
+                frame.bind("<Configure>", update_wraplength)
+                frame.after(10, lambda: update_wraplength(None))
+            else:
+                # Без описания – стандартное отображение (лейбл + виджет)
+                create_styled_label(frame, text=Lang.get(key, default=key)).grid(row=0, column=0, sticky="w", padx=(0, 10))
+                if wtype == 'switch':
+                    var = settings_vars[key]
+                    switch = CTkSwitch(
+                        frame,
+                        text="",
+                        variable=var,
+                        onvalue="1",
+                        offvalue="0",
+                        switch_width=50,
+                        switch_height=25,
+                        progress_color=PURPLE_ACCENT,
+                        font=FONT_REGULAR
+                    )
+                    switch.grid(row=0, column=1, sticky="e")
+                    created_widgets[key] = switch
+                else:
+                    entry = create_styled_entry(frame, textvariable=settings_vars[key])
+                    entry.grid(row=0, column=1, sticky="ew")
+                    created_widgets[key] = entry
         return created_widgets
+
     class DynamicModelUI:
         def __init__(self):
             self.provider_param_full_paths = {}
@@ -1452,7 +1580,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 files_button.grid(row=0, column=column_offset, padx=(2, 0))
                 column_offset += 1
                 if has_reports:
-                    reports_button = CTkButton(row_frame, text="📄", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
+                    reports_button = CTkButton(row_frame, text="r", width=20, height=20, fg_color="transparent", hover_color=PURPLE_ACCENT, corner_radius=50, command=lambda c_id=chat["id"]: self.open_folder(c_id, "reports"))
                     reports_button.grid(row=0, column=column_offset, padx=(2, 0))
                     column_offset += 1
                 if has_results:

@@ -2064,24 +2064,21 @@ def gigo(task: str, settings: dict = None) -> str:
     developed_ideas = []
     for idea in ideas:
         versions = []
-        if gigo_use_dreamer:
-            try: dream = ask_model(idea, system_prompt=gigo_dreamer_prompt)
-            except RuntimeError as e:
-                if 'ContextOverflowError' in str(e): dream = ask_model(text_cutter(idea), system_prompt=gigo_dreamer_prompt)
-                else: raise
-            versions.append((gigo_dreamer, dream))
-        if gigo_use_realist:
-            try: real = ask_model(idea, system_prompt=gigo_realist_prompt)
-            except RuntimeError as e:
-                if 'ContextOverflowError' in str(e): real = ask_model(text_cutter(idea), system_prompt=gigo_realist_prompt)
-                else: raise
-            versions.append((gigo_realist, real))
-        if gigo_use_critic:
-            try: critic = ask_model(idea, system_prompt=gigo_critic_prompt)
-            except RuntimeError as e:
-                if 'ContextOverflowError' in str(e): critic = ask_model(text_cutter(idea), system_prompt=gigo_critic_prompt)
-                else: raise
-            versions.append((gigo_critic, critic))
+        try: dream = ask_model(idea, system_prompt=gigo_dreamer_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): dream = ask_model(text_cutter(idea), system_prompt=gigo_dreamer_prompt)
+            else: raise
+        versions.append((gigo_dreamer, dream))
+        try: real = ask_model(idea, system_prompt=gigo_realist_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): real = ask_model(text_cutter(idea), system_prompt=gigo_realist_prompt)
+            else: raise
+        versions.append((gigo_realist, real))
+        try: critic = ask_model(idea, system_prompt=gigo_critic_prompt)
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): critic = ask_model(text_cutter(idea), system_prompt=gigo_critic_prompt)
+            else: raise
+        versions.append((gigo_critic, critic))
         if not versions: developed_ideas.append(idea); continue
         synthesis_input = gigo_label_original_idea + idea + '\n\n'
         for name, text in versions: synthesis_input += name.capitalize() + ':\n' + text + '\n\n'
@@ -2793,9 +2790,6 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     gigo_use_random_roles = int(settings.get("gigo_use_random_roles", 1)) == 1
     gigo_use_concepts = int(settings.get("gigo_use_concepts", 1)) == 1
     gigo_use_filter = int(settings.get("gigo_use_filter", 1)) == 1
-    gigo_use_dreamer = int(settings.get("gigo_use_dreamer", 1)) == 1
-    gigo_use_realist = int(settings.get("gigo_use_realist", 1)) == 1
-    gigo_use_critic = int(settings.get("gigo_use_critic", 1)) == 1
     gigo_use_librarian = int(settings.get("gigo_use_librarian", 1)) == 1
 
     chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
