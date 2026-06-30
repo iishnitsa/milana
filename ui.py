@@ -1385,10 +1385,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             left_panel_container.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             left_panel_container.grid_rowconfigure(0, weight=1)
             left_panel_container.grid_rowconfigure(1, weight=0)
-            chats_bordered_frame = create_styled_frame(left_panel_container, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
-            chats_bordered_frame.grid(row=0, column=0, sticky="nsew")
-            self.chats_list_frame = CTkScrollableFrame(chats_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
-            self.chats_list_frame.pack(fill="both", expand=True, padx=10, pady=1.5)
+            self.chats_list_frame = CTkScrollableFrame(left_panel_container, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
+            self.chats_list_frame.grid(row=0, column=0, sticky="nsew", pady=1.5)
             if hasattr(self.chats_list_frame, '_scrollbar'):
                 self.chats_list_frame._scrollbar.configure(width=12)
                 try: self.chats_list_frame._scrollbar.configure(corner_radius=50)
@@ -1397,8 +1395,28 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.chats_list_frame._scrollbar_horizontal.configure(width=12)
                 try: self.chats_list_frame._scrollbar_horizontal.configure(corner_radius=50)
                 except: pass
+            # Добавляем скобу справа от списка чатов
+            left_panel_container.grid_columnconfigure(0, weight=1)
+            left_panel_container.grid_columnconfigure(1, weight=0)
+            self.chat_list_right_wall = tk.Canvas(left_panel_container, width=6, bg=DARK_BG, highlightthickness=0)
+            self.chat_list_right_wall.grid(row=0, column=1, sticky="ns")
+            def draw_right_wall(event=None):
+                self.chat_list_right_wall.delete("all")
+                h = self.chat_list_right_wall.winfo_height()
+                r = 6
+                color = WHITE
+                if h > r * 2:
+                    w = self.chat_list_right_wall.winfo_width() - 1 # Получаем ширину canvas
+                    # Закругления смотрят ВПРАВО
+                    # Верхняя дуга (справа)
+                    self.chat_list_right_wall.create_arc(w - r*2, 0, w, r*2, start=0, extent=90, style="arc", outline=color, width=1)
+                    # Вертикальная линия (справа)
+                    self.chat_list_right_wall.create_line(w, r, w, h - r, fill=color, width=1)
+                    # Нижняя дуга (справа)
+                    self.chat_list_right_wall.create_arc(w - r*2, h - r*2, w, h, start=270, extent=90, style="arc", outline=color, width=1)
+            self.chat_list_right_wall.bind("<Configure>", draw_right_wall)
             bottom_buttons_frame = create_styled_frame(left_panel_container)
-            bottom_buttons_frame.grid(row=1, column=0, sticky="ew", pady=(3,0))
+            bottom_buttons_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(3,0))
             self.settings_btn = create_styled_button(bottom_buttons_frame, text="☰", command=self.open_settings, width=20, height=20)
             self.settings_btn.pack(side=tk.LEFT, padx=(0, 2))
             self.new_chat_btn = create_styled_button(bottom_buttons_frame, text="+↑", command=self.create_chat_window_show, width=20, height=20)
@@ -1416,12 +1434,13 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             right_panel_container.grid_columnconfigure(0, weight=1)
             right_panel_container.grid_rowconfigure(0, weight=1)
             right_panel_container.grid_rowconfigure(1, weight=0)
-            self.messages_bordered_frame = create_styled_frame(right_panel_container, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
+            # Убираем рамку у сообщений
+            self.messages_bordered_frame = create_styled_frame(right_panel_container, fg_color=DARK_BG, border_width=0, corner_radius=0)
             self.messages_bordered_frame.grid(row=0, column=0, sticky="nsew", pady=(0,5))
             self.messages_bordered_frame.grid_rowconfigure(0, weight=1)
             self.messages_bordered_frame.grid_columnconfigure(0, weight=1)
             self.messages_frame = CTkScrollableFrame(self.messages_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
-            self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=1.5)
+            self.messages_frame.grid(row=0, column=0, sticky="nsew", pady=1.5)
             if hasattr(self.messages_frame, '_scrollbar'):
                 self.messages_frame._scrollbar.configure(width=12)
                 try: self.messages_frame._scrollbar.configure(corner_radius=50)
@@ -1647,7 +1666,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     att_frame.pack(fill=tk.X, pady=1, anchor='w')
                     create_styled_label(att_frame, text=Path(att).name).pack(side=tk.LEFT)
                     hover_color = PURPLE_ACCENT if is_my else DARK_BG
-                    CTkButton(att_frame, text="📂", font=FONT_REGULAR, width=25, height=25, fg_color="transparent", hover_color=hover_color, command=lambda a=att: self.open_attachment(a)).pack(side=tk.RIGHT)
+                    CTkButton(att_frame, text="f", font=FONT_REGULAR, width=25, height=25, fg_color="transparent", hover_color=hover_color, command=lambda a=att: self.open_attachment(a)).pack(side=tk.RIGHT)
             self.messages_frame.update_idletasks()
             if hasattr(self.messages_frame, '_parent_canvas'): self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
             self.after(0, lambda: self.messages_frame._parent_canvas.yview_moveto(1.0))
