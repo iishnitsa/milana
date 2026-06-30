@@ -785,6 +785,21 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             for key, value in settings.items(): self.sql_exec(self.db_path, "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
             self.cache.update_global_settings({**self.cache.get_global_settings(self), **settings})
             return True
+        # ====== НОВЫЙ МЕТОД ДЛЯ ОБНОВЛЕНИЯ ИМЕНИ ЧАТА ======
+        def update_chat_name(self, chat_id, new_name):
+            db_path = Path(resource_path(os.path.join("data", "chats", chat_id, "chatsettings.db")))
+            if not db_path.exists():
+                return False
+            self.sql_exec(str(db_path), "UPDATE settings SET value = ? WHERE key = 'chat_name'", (new_name,))
+            # Обновляем кэш
+            chats = self.cache.get_chats(self)
+            for chat in chats:
+                if chat['id'] == chat_id:
+                    chat['name'] = new_name
+                    break
+            self.cache.update_chats(chats)
+            return True
+        # ====================================================
         def create_chat(self, chat_name, settings_data):
             existing_chats = self.cache.get_chats(self)
             if any(chat['name'].lower() == chat_name.lower() for chat in existing_chats): return None
@@ -1680,19 +1695,39 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def send_message(self):
             text = self.input_text.get("1.0", "end-1c").strip()
             if not text and not self.attachments: return
-            if not self.current_chat_id: self.create_chat_window_show(); return
+            if not self.current_chat_id:
+                self.create_chat_window_show()
+                return
+
             attachments_paths = [str(a.resolve()) for a in self.attachments] if self.attachments else []
-            if self.waiting_for_answer.get(self.current_chat_id): self.waiting_for_answer[self.current_chat_id] = False
+            if self.waiting_for_answer.get(self.current_chat_id):
+                self.waiting_for_answer[self.current_chat_id] = False
+
             if self.backend.add_message(self.current_chat_id, text, True, attachments_paths):
+                # ====== НОВЫЙ БЛОК: Автоматическое переименование чата ======
+                if self.current_chat_id:
+                    chats = self.backend.get_chats()
+                    chat = next((c for c in chats if c['id'] == self.current_chat_id), None)
+                    if chat and chat['name'] == "—":
+                        new_name = text.strip()[:12] if text.strip() else None
+                        if new_name:
+                            self.backend.update_chat_name(self.current_chat_id, new_name)
+                            self.load_chats()  # обновить список чатов
+                # ========================================================
+
                 self.attachments.clear()
                 self.show_attachments()
                 self.add_message_to_ui(text, True, attachments=attachments_paths)
                 self.input_text.delete("1.0", "end")
                 self.adjust_input_height()
+
                 message_data = {'text': text, 'attachments': attachments_paths or None, 'command': 'answer_user' if self.waiting_for_answer.get(self.current_chat_id) else None}
-                if self.current_chat_id in self.input_queues: self.input_queues[self.current_chat_id].put(message_data)
-                if self.current_chat_id not in self.chat_processes: self.resume_chat()
-                else: self.update_chat_controls()
+                if self.current_chat_id in self.input_queues:
+                    self.input_queues[self.current_chat_id].put(message_data)
+                if self.current_chat_id not in self.chat_processes:
+                    self.resume_chat()
+                else:
+                    self.update_chat_controls()
         def start_chat_process(self, chat_id):
             chat_settings = self.backend.get_chat_settings(chat_id)
             params_str = chat_settings.get('model_provider_params', '')
@@ -2133,55 +2168,66 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             except queue.Empty: pass
             except Exception as e: print(f"Ошибка в check_log_queue: {e}")
             if self.winfo_exists(): self.after(250, self.check_log_queue)
+
     class CreateChatWindow(BaseSettingsWindow):
         def __init__(self, master, backend):
             super().__init__(master, backend, "create_chat_title", "500x550")
             self.bind("<Control-o>", self.add_new_local_mod)
             if sys.platform == "darwin": self.bind("<Command-o>", self.add_new_local_mod)
+
             module_manager = ModuleManager()
             self.custom_mods_for_chat = module_manager.get_custom_modules().copy()
             self.newly_added_mods = []
             self.max_tokens = int(self.backend.get_global_settings().get("token_limit", 8192))
             self.validated = True
             self.settings_vars = self._get_default_settings()
+            # Устанавливаем имя по умолчанию — длинное тире
+            self.settings_vars['chat_name'].set("—")
+
             self.original_model_type = self.settings_vars['model_type'].get()
             self.original_connection_string = self.settings_vars['model_provider_params'].get()
+
             self.grid_columnconfigure(0, weight=1)
-            self.grid_rowconfigure(1, weight=1)
-            top_frame = create_styled_frame(self)
-            top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-            create_styled_label(top_frame, text=Lang.get("chat_name")).pack(side='left', padx=(0,10))
-            e = create_styled_entry(top_frame, textvariable=self.settings_vars['chat_name'])
-            e.pack(fill='x', expand=True)
+            self.grid_rowconfigure(0, weight=1)   # tabview теперь на row=0
+
             tabview = CTkTabview(self, **TAB_VIEW_THEME)
-            tabview.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
+            tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=2)
+
             model_tab = tabview.add(Lang.get("tab_model"))
             chat_tab = tabview.add(Lang.get("tab_chat_settings"))
             mods_tab = tabview.add(Lang.get("tab_modules"))
+
             self.setup_model_tab(model_tab)
             self.setup_chat_settings_tab(chat_tab)
             self.setup_mods_tab(mods_tab)
+
             bottom_frame = create_styled_frame(self)
-            bottom_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(5, 5))
+            bottom_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(5, 5))
+
             self.create_btn = create_styled_button(bottom_frame, text=Lang.get("create"), command=self.create_chat_finalize)
             self.create_btn.pack(side='left')
             create_styled_button(bottom_frame, text=Lang.get("validate_model"), command=self.validate_model).pack(side='left', padx=5)
             create_styled_button(bottom_frame, text=Lang.get("cancel"), command=self.destroy).pack(side='left', padx=5)
+
             self._load_provider_params_from_string()
+
         def _get_default_settings(self):
             settings = self.backend.get_global_settings()
             s_vars = {key: tk.StringVar(value=val) for key, val in settings.items()}
-            s_vars['chat_name'] = tk.StringVar(value=self.backend.generate_id(4))
+            # Используем длинное тире вместо случайной генерации
+            s_vars['chat_name'] = tk.StringVar(value="—")
             module_manager = ModuleManager()
             default_mods = module_manager.get_default_modules()
             s_vars['default_mods'] = { mod['id']: tk.BooleanVar(value=mod['enabled']) for mod in default_mods }
             return s_vars
+
         def setup_mods_tab(self, parent):
             parent.grid_rowconfigure(0, weight=1)
             parent.grid_columnconfigure(0, weight=1)
             self.mods_scrollable_frame = create_scrollable_frame(parent, fg_color="transparent")
             self.mods_scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             self.rebuild_mods_list()
+
         def rebuild_mods_list(self):
             for widget in self.mods_scrollable_frame.winfo_children(): widget.destroy()
             self.mods_scrollable_frame.grid_columnconfigure(0, weight=1)
@@ -2199,6 +2245,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             create_styled_button(header_frame, text="+", width=30, command=self.add_new_local_mod).pack(side='left', padx=5)
             if self.newly_added_mods:
                 for mod in self.newly_added_mods: self.create_mod_ui(self.mods_scrollable_frame, mod, "new_custom")
+
         def create_mod_ui(self, parent, mod_data, mod_type):
             if mod_type == "default":
                 enabled_var = self.settings_vars['default_mods'][mod_data["id"]]
@@ -2208,7 +2255,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     if mod_type == "global_custom": self.remove_mod_from_chat_list(mod_data["id"], self.custom_mods_for_chat)
                     elif mod_type == "new_custom": self.remove_mod_from_chat_list(mod_data["id"], self.newly_added_mods)
                 create_module_ui_item(parent, mod_data, mod_type, on_remove=remove_callback, show_checkbox=False)
+
         def remove_mod_from_chat_list(self, mod_id_to_remove, mod_list): mod_list[:] = [m for m in mod_list if m.get("id") != mod_id_to_remove]; self.rebuild_mods_list()
+
         def add_new_local_mod(self, event=None):
             path_str = filedialog.askopenfilename(filetypes=[(Lang.get("python_files"), "*.py")])
             if not path_str: return
@@ -2219,6 +2268,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             new_mod = {"id": self.backend.generate_id(6), "name": name, "description": description, "adress": path}
             self.newly_added_mods.append(new_mod)
             self.rebuild_mods_list()
+
         def create_chat_finalize(self):
             chat_name = self.settings_vars['chat_name'].get().strip()
             if not chat_name: showerror(self, Lang.get("error"), Lang.get("enter_chat_name")); return
