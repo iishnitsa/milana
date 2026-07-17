@@ -167,10 +167,16 @@ def _get_text_by_vector_id(vector_id: str) -> str:
     return row[0] if row else ""
 
 def _get_sum_tokens_since(chat_id, since_id):
-    rows = sql_exec("SELECT full_text FROM rag_messages WHERE chat_id = ? AND id > ?", (chat_id, since_id), fetchall=True)
+    rows = sql_exec(
+        "SELECT full_text, vector_id FROM rag_messages WHERE chat_id = ? AND id > ?",
+        (chat_id, since_id), fetchall=True)
     total = 0
-    for (text,) in rows:
-        total += _calculate_tokens(text)
+    for full_text, vector_id in rows:
+        if full_text:
+            total += _calculate_tokens(full_text)
+        elif vector_id:
+            text = _get_text_by_vector_id(vector_id)
+            total += _calculate_tokens(text)
     return total
 
 def _get_last_messages_by_tokens(chat_id: str, token_threshold: int, after_id: int = 0) -> list[dict]:
@@ -370,7 +376,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
         let_log(f"Удалено самое старое сообщение для сохранения нечетности: {removed[:100]}...")
 
     history_final_str = "".join(history_strings_list)
-
+    global_state.current_agent_history_for_filesystem = history_final_str
     # RAG-часть (только если use_rag включён и история была усечена)
     rag_prompt_part = ""
     if use_rag and history_was_truncated:
@@ -433,7 +439,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
                 let_log("RAG поиск не дал результатов или тексты не найдены")
     else:
         if use_rag:
-            let_log(f"##### [{chat_id}] RAG НЕ АКТИВИРОВАН. Условие: (Усечение: {history_was_truncated}, Доступно места: {available_tokens_for_rag_actual > 0}) #####")
+            let_log(f"##### [{chat_id}] RAG НЕ АКТИВИРОВАН. Условие: (Усечение: {history_was_truncated}) #####")
         else:
             let_log(f"##### [{chat_id}] RAG отключён (use_rag=False) #####")
 

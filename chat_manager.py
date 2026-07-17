@@ -41,19 +41,21 @@ def update_history(chat_id: int, message_text: str, role: str, vector_id='', loc
     str_chat_id = str(chat_id)
 
     # Генерация вектора, если включён RAG и вектор не передан
-    if use_rag and not vector_id:
-        set_common_save_id()
-        vector_id = str(get_common_save_id())
+    #if use_rag and not vector_id:
+    if use_rag:
+        if not vector_id:
+            set_common_save_id()
+            vector_id = str(get_common_save_id())
         embedding = get_embs(message_text)
         # Формируем метаданные в зависимости от local_message
         if not local_message:
             # Для парных чатов (оператор/исполнитель)
             if chat_id % 2 == 0:
-                oper_id = chat_id
-                exec_id = chat_id - 1
-            else:
-                oper_id = chat_id + 1
+                oper_id = chat_id - 1
                 exec_id = chat_id
+            else:
+                oper_id = chat_id
+                exec_id = chat_id + 1
             metadatas = [{'chat_id_1': str(oper_id), 'chat_id_2': str(exec_id), 'role': role, 'relevance_score': 0}]
         else:
             metadatas = [{'chat_id_1': str_chat_id, 'role': role, 'relevance_score': 0}]
@@ -68,11 +70,11 @@ def update_history(chat_id: int, message_text: str, role: str, vector_id='', loc
     if not local_message:
         # Для парных чатов: одна запись с полным текстом, другая — только связь через vector_id
         if chat_id % 2 == 0:
-            oper_id = chat_id
-            exec_id = chat_id - 1
-        else:
-            oper_id = chat_id + 1
+            oper_id = chat_id - 1
             exec_id = chat_id
+        else:
+            oper_id = chat_id
+            exec_id = chat_id + 1
         sql_exec("INSERT INTO rag_messages (chat_id, role, full_text, is_vectorized, vector_id, relevance_score) VALUES (?, ?, ?, ?, ?, ?)",
                  (str(oper_id), role, message_text, bool(use_rag), vector_id, 0))
         sql_exec("INSERT INTO rag_messages (chat_id, vector_id) VALUES (?, ?)", (str(exec_id), vector_id))

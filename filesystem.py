@@ -22,8 +22,10 @@ from cross_gpt import (
     get_token_limit,
     get_text_tokens_coefficient,
     text_cutter,
-    current_agent_prompt,
+    global_state,
     last_messages_marker,
+    global_summary_marker,
+    recent_summary_marker,
 )
 
 # -----------------------------------------------------------------------------
@@ -917,7 +919,7 @@ def determine_intention(action, prompt_text=None, global_summary=None, recent_su
         action = "edit"
 
     if prompt_text is None:
-        full_prompt = str(current_agent_prompt or "")
+        full_prompt = str(global_state.current_agent_history_for_filesystem or "")
         marker = str(last_messages_marker or "")
         if marker and marker in full_prompt:
             prompt_text = full_prompt.split(marker, 1)[1]
@@ -932,6 +934,13 @@ def determine_intention(action, prompt_text=None, global_summary=None, recent_su
     prompts = intention_prompts.get(action) or intention_prompts["edit"]
     keys = list(prompts.keys())
 
+    agent_intention_prompt_1 = """Ты анализируешь намерения агента для файловой операции.
+Ответь для каждого пункта одной строкой и по порядку.
+Без нумерации, без markdown, без лишнего текста.
+Учитывай контекст:
+История:
+"""
+    # global_summary_marker
     system_prompt = (
         "Ты анализируешь намерения агента для файловой операции.\n"
         "Ответь для каждого пункта одной строкой и по порядку.\n"

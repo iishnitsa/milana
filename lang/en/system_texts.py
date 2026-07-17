@@ -267,11 +267,10 @@ Answer strictly in the format:
 5. ...
 '''
 
-gigo_entropy_instruction = 'Use this string as an external source of entropy when choosing directions for idea search. Do not quote it or analyze it, only use it to make random decisions.'
+gigo_entropy_instruction = "Use this line as an external source of entropy when choosing directions for finding ideas. The idea should not deviate from the client's task, do not invent something that is not in the task, the idea should not exceed the task. Don't quote, analyze, or mention her in the reply. By its very existence, it will allow you to generate a random idea:"
 
-gigo_role_generation_prompt = 'Come up with an unusual but appropriate role for an expert who will generate an idea for the task. The role should be from an area as far as possible from the topic of the task to ensure a fresh perspective. Respond with only the role name.'
-
-gigo_concept_generation_prompt = 'Generate one abstract concept or metaphor that can inspire a solution to the task. Respond with one sentence.'
+#gigo_role_generation_prompt = 'Come up with an unusual but appropriate role for an expert who will generate an idea for the task. The role should be from an area as far as possible from the topic of the task to ensure a fresh perspective. Respond with only the role name.'
+gigo_role_generation_prompt = 'Come up with a role for an expert who will generate an idea for the task. Respond with only the role name.'
 
 gigo_idea_generation_prompt_1 = 'You are a '
 gigo_idea_generation_prompt_2 = '. Using the task, user intention, available information, and concept (if any), generate one bold but feasible idea for solving the task. Respond briefly, 3-5 sentences.'
@@ -401,7 +400,6 @@ class SystemTextContainer:
         self.gigo_intention_prompt = gigo_intention_prompt
         self.gigo_entropy_instruction = gigo_entropy_instruction
         self.gigo_role_generation_prompt = gigo_role_generation_prompt
-        self.gigo_concept_generation_prompt = gigo_concept_generation_prompt
         self.gigo_idea_generation_prompt_1 = gigo_idea_generation_prompt_1
         self.gigo_idea_generation_prompt_2 = gigo_idea_generation_prompt_2
         self.gigo_filter_ideas_prompt = gigo_filter_ideas_prompt

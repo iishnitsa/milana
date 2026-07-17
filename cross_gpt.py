@@ -20,6 +20,7 @@ import base64
 import inspect
 from multiprocessing import queues
 import shutil
+import secrets
 
 Empty = queues.Empty
 
@@ -62,6 +63,7 @@ class GlobalState:
         self.wrong_command_messages_vector_ids = []
         self.number_of_plan_items = 0
         self.psm_operator_person = {} # TODO: потом объедини с другими в словарь с чат айди и подсловарями, также имена пространств должны быть короткими, в районе 3 символов
+        self.current_agent_history_for_filesystem = ""
 global_state = GlobalState()
 
 chat_path = ''
@@ -244,7 +246,7 @@ def let_log(t):
     if is_print_log: print(full_message)
     if is_save_log:
         if left_cache_counter == 0: lname = 'log.txt'
-        else: return
+        else: return#lname = 'log1.txt'
         log_file = os.path.join(chat_path, lname)
         with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
 
@@ -419,6 +421,7 @@ def global_trans_cache_exec(query, params=(), fetchone=False, fetchall=False, re
             raise
     return None
 
+@cacher
 def sql_exec(query, params=(), fetchone=False, fetchall=False, executemany=False):
     let_log('ОЧЕРЕДЬ')
     let_log(query)
@@ -427,6 +430,8 @@ def sql_exec(query, params=(), fetchone=False, fetchall=False, executemany=False
         if executemany:
             cursor.executemany(query, params) # params - список кортежей
         else:
+            print(query)
+            print(params)
             cursor.execute(query, params)
         memory_sql.commit()
         result = None
@@ -1002,7 +1007,7 @@ def _retry_loop(get_response, is_valid, error_retry_delay=60, empty_retry_delay=
 
         if not is_valid(response):
             let_log("[WARN] Модель вернула пустой или невалидный ответ. Повторная попытка...")
-            send_ui_no_cache("Пустой ответ от модели, повторная попытка...", command='warning')
+            send_ui_no_cache("Пустой ответ от модели, повторная попытка...")
             time.sleep(empty_retry_delay)
             continue
 
@@ -1059,10 +1064,14 @@ def _call_completions_with_retry(generation_params):
 
 # ========== ПОЛНАЯ ФУНКЦИЯ ask_model ==========
 
+# TODO: убрать температуру
 @cacher
 def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, **extra_params) -> str:
+    let_log(system_prompt)
     let_log(prompt_text)
     let_log(f'ВХОД {len(prompt_text)} токенов')
+    try: let_log(f'ПРОМПТ {len(system_prompt)} токенов')
+    except: pass
 
     # --- Перевод входных данных, если включен и не local_and_tools_translate ---
     if do_translate and not local_and_tools_translate:
@@ -1073,7 +1082,7 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
     # Проверка длины контекста
     if len(prompt_text) * text_tokens_coefficient > token_limit - 1000:
         raise RuntimeError("ContextOverflowError")
-    
+    '''
     if use_user:
         import tkinter as tk
         from tkinter import simpledialog
@@ -1086,7 +1095,24 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
             if input_text != "":
                 return input_text
         let_log("[Пользователь нажал Cancel, используется генерация моделью]")
-    
+    '''
+    if use_user:
+        # Очищаем очередь перед отправкой запроса
+        try:
+            while True: ui_conn[0].get_nowait()
+        except Empty: pass
+        except Exception as e: let_log(f"Ошибка очистки очереди: {e}")
+        # Отправляем запрос пользователю
+        try: ui_conn[1].put({'text': "Пожалуйста, введите текст:", 'command': 'ask_user'})
+        except Exception as e: let_log(f"Ошибка отправки запроса: {e}")
+        # Ждём первое сообщение из очереди
+        try:
+            msg = ui_conn[0].get(timeout=None)
+            if msg and msg.get('text') and msg.get('text').strip() != '###': return msg.get('text')
+        except Empty: let_log("Очередь пуста, пользователь не ответил")
+        except Exception as e: let_log(f"Ошибка получения ввода: {e}")
+        let_log("[Пользователь не ввел текст, используется генерация моделью]")
+
     # --- Обработка особых случаев (system_prompt и all_user) ---
     if system_prompt:
         let_log("Режим (Особый случай): system_prompt -> chat/completions")
@@ -1097,6 +1123,7 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         result = _process_chat_response(response)
         if do_translate and not local_and_tools_translate:
             result = translate_text(result, language, from_lang=target_lang)
+        send_log_to_ui(result)
         return result
     
     if all_user:
@@ -1108,6 +1135,7 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         result = _process_chat_response(response)
         if do_translate and not local_and_tools_translate:
             result = translate_text(result, language, from_lang=target_lang)
+        send_log_to_ui(result)
         return result
     
     # --- Определение режима работы на основе do_chat_construct (1, 2, 3) ---
@@ -1123,6 +1151,7 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         result = _call_completions_with_retry(generation_params)
         if do_translate and not local_and_tools_translate:
             result = translate_text(result, language, from_lang=target_lang)
+        send_log_to_ui(result)
         return result
     
     elif do_chat_construct and not native_func_call:
@@ -1135,6 +1164,7 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
         result = _process_chat_response(response)
         if do_translate and not local_and_tools_translate:
             result = translate_text(result, language, from_lang=target_lang)
+        send_log_to_ui(result)
         return result
     
     elif do_chat_construct and native_func_call:
@@ -1183,11 +1213,14 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
                 response_content = marker + response_content
             if do_translate and not local_and_tools_translate:
                 response_content = translate_text(response_content, language, from_lang=target_lang)
+            send_log_to_ui(result)
             return response_content
         elif response_content:
             if do_translate and not local_and_tools_translate:
                 response_content = translate_text(response_content, language, from_lang=target_lang)
+            send_log_to_ui(result)
             return response_content
+        send_log_to_ui(result)
         return response_content
 
 def _process_chat_response(api_response):
@@ -1997,10 +2030,11 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     let_log(f"Всего сохранено {len(all_groups)} групп сообщений для {doc_id}")
     let_log(f"{'='*60}")
 
+@cacher
 def gigo(task: str, settings: dict = None) -> str:
     if not use_gigo: return gigo_label_task + task
     # 1. Анализ намерения
-    try: intention_text = ask_model(task, system_prompt=gigo_intention_prompt)
+    try: intention_text = ask_model(task, system_prompt=gigo_intention_prompt + '\n' + warn_command_text_8 + '\n' + global_state.tools_str)
     except RuntimeError as e:
         if 'ContextOverflowError' in str(e): intention_text = ask_model(text_cutter(task), system_prompt=gigo_intention_prompt)
         else: raise
@@ -2018,27 +2052,22 @@ def gigo(task: str, settings: dict = None) -> str:
                 library = gigo_found_info + '\n' + library
             else: library = ""
     # 3. Генерация идей
+    role = ""
+    if gigo_use_random_roles: # TODO: опционально случайная строка для множества ролей
+        try: role = ask_model(task, system_prompt=gigo_role_generation_prompt).strip()
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): role = ask_model(text_cutter(task), system_prompt=gigo_role_generation_prompt).strip()
+            else: raise
     ideas = []
     for _ in range(gigo_idea_count):
         entropy = ""
         if gigo_use_entropy: entropy = secrets.token_hex(32)
-        role = ""
-        if gigo_use_random_roles:
-            try: role = ask_model(task, system_prompt=gigo_role_generation_prompt).strip()
-            except RuntimeError as e:
-                if 'ContextOverflowError' in str(e): role = ask_model(text_cutter(task), system_prompt=gigo_role_generation_prompt).strip()
-                else: raise
-        concept = ""
-        if gigo_use_concepts:
-            try: concept = ask_model(task, system_prompt=gigo_concept_generation_prompt).strip()
-            except RuntimeError as e:
-                if 'ContextOverflowError' in str(e): concept = ask_model(text_cutter(task), system_prompt=gigo_concept_generation_prompt).strip()
-                else: raise
+        
+        # нужна переработка фантазии в реализм иначе будет получаться бред
         idea_prompt = gigo_idea_generation_prompt_1 + (role if role else 'expert') + gigo_idea_generation_prompt_2
-        if entropy: idea_prompt += '\n' + gigo_entropy_instruction + entropy
+        if entropy: idea_prompt += '\n' + gigo_entropy_instruction + ' ' + entropy
         idea_input = gigo_label_task + task + '\n' + gigo_label_intention + intention_text + '\n'
         if library: idea_input += gigo_label_additional_info + library + '\n'
-        if concept: idea_input += gigo_label_concept + concept + '\n'
         try: idea = ask_model(idea_input, system_prompt=idea_prompt)
         except RuntimeError as e:
             if 'ContextOverflowError' in str(e): idea = ask_model(text_cutter(idea_input), system_prompt=idea_prompt)
@@ -2062,7 +2091,7 @@ def gigo(task: str, settings: dict = None) -> str:
             if selected: ideas = [ideas[i] for i in selected]
     # 5. Развитие идей
     developed_ideas = []
-    for idea in ideas:
+    for idea in ideas: # TODO: верни старую последовательность сообщений
         versions = []
         try: dream = ask_model(idea, system_prompt=gigo_dreamer_prompt)
         except RuntimeError as e:
@@ -2101,8 +2130,7 @@ def gigo(task: str, settings: dict = None) -> str:
             if 0 <= idx < len(developed_ideas): best_idx = idx
         best_idea = developed_ideas[best_idx]
     else: best_idea = developed_ideas[0] if developed_ideas else ""
-    # 7. Построение ответа
-    gigo_plan_items = int(settings.get("gigo_plan_items", 0))
+    # 7. Построение ответа)
     if gigo_plan_items > 0: plan_items = gigo_plan_items
     else: plan_items = global_state.number_of_plan_items if global_state.number_of_plan_items > 0 else 5
     build_prompt = gigo_build_answer_prompt_1 + str(plan_items) + gigo_build_answer_prompt_2
@@ -2113,6 +2141,7 @@ def gigo(task: str, settings: dict = None) -> str:
         else: raise
     return answer
 
+@cacher
 def critic(task: str, result: str) -> int | str:
     """
     Оценивает результат.
@@ -2343,8 +2372,8 @@ def _find_any_markers(text):
 
 def remove_wrong_command_messages():
     if global_state.wrong_command_messages_vector_ids != []:
-        sql_exec("DELETE FROM rag_messages WHERE vector_id IN ({})".format(','.join('?' * len(wrong_command_messages_vector_ids))), wrong_command_messages_vector_ids)
-        coll_exec(action="delete", coll_name="rag_collection", ids=wrong_command_messages_vector_ids)
+        sql_exec("DELETE FROM rag_messages WHERE vector_id IN ({})".format(','.join('?' * len(global_state.wrong_command_messages_vector_ids))), global_state.wrong_command_messages_vector_ids)
+        coll_exec(action="delete", coll_name="rag_collection", ids=global_state.wrong_command_messages_vector_ids)
         global_state.wrong_command_messages_vector_ids = []
 
 def add_wrong_command_message_id(vid):
@@ -2455,7 +2484,7 @@ def tools_selector(text, sid):
         if is_warn != None:
             let_log(is_warn)
             write_cache([False, is_warn])
-            let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
+            let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН С ИНФОРМАЦИЕЙ ОБ ОШИБКЕ] ===")
             return is_warn
         write_cache([False, False])
         let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
@@ -2519,7 +2548,7 @@ def tools_selector(text, sid):
     remove_wrong_command_messages()
     try: result = func_callable(content)
     except Exception as e: result = "__TOOL_ERROR__: " + str(e)
-    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR')
+    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR'); sys.exit(1)
     let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
     try: # 10) кэшировать результат если не системная команда
         if not is_system:
@@ -2558,8 +2587,9 @@ def agent_func(text, agent_number):
         set_common_save_id()
         vector_id_out = str(get_common_save_id())
         embedding = get_embs(text)
-        coll_exec(action="add", coll_name="rag_collection", ids=[vector_id], metadatas=[{'chat_id': str_chat_id, 'role': you, 'relevance_score': 0}], embeddings=[embedding])
-        let_log(f"Сообщение {vector_id} векторизовано и добавлено в RAG")
+        #coll_exec(action="add", coll_name="rag_collection", ids=[vector_id_out], metadatas=[{'chat_id': str(sid), 'role': you, 'relevance_score': 0}], embeddings=[embedding])
+        # TODO: вот тут локал мессадж
+        #let_log(f"Сообщение {vector_id_out} векторизовано и добавлено в RAG")
         answer = tools_selector(talk_prompt, sid)
         if answer:
             let_log(global_state.stop_agent)
@@ -2569,7 +2599,9 @@ def agent_func(text, agent_number):
             # посмотри как вектор айди ин работает, где создавать
             vector_id_in = update_history(sid, talk_prompt, func_role_text)
             # тут надо сохранять от функции но сначала от агента
-        else: break
+        else:
+            update_history(sid, talk_prompt, you, vector_id=vector_id_out, local_message=False)
+            break
         # Сохраняем входящее сообщение от предыдущего агента в RAG-историю
         # а тут только исходящее от агента
         if global_state.wrong_command_messages_vector_ids != []: add_wrong_command_message_id(vector_id_in)
@@ -2717,6 +2749,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global do_chat_construct, native_func_call
     global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history, use_psm
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
+    global use_magical_prompt, use_gigo, gigo_idea_count, gigo_plan_items, gigo_use_entropy, gigo_use_random_roles, gigo_use_filter, gigo_use_librarian
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
     # === Загружаем параметры чата ===
@@ -2748,11 +2781,11 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     sql_exec('''
         CREATE TABLE IF NOT EXISTS rag_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            full_text TEXT NOT NULL,
+            chat_id TEXT,
+            role TEXT,
+            full_text TEXT,
             is_vectorized BOOLEAN DEFAULT FALSE,
-            vector_id TEXT UNIQUE,
+            vector_id TEXT,
             relevance_score INTEGER DEFAULT 0,
             is_compressed BOOLEAN DEFAULT FALSE,
             global_summary TEXT DEFAULT NULL,
@@ -2785,10 +2818,10 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     use_global_cache = int(settings.get("use_global_cache", 0)) == 1
 
     use_gigo = int(settings.get("use_gigo", 1)) == 1
-    gigo_idea_count = int(settings.get("gigo_idea_count", 3))
-    gigo_use_entropy = int(settings.get("gigo_use_entropy", 1)) == 1
+    gigo_idea_count = int(settings.get("gigo_idea_count", 2))
+    gigo_plan_items = int(settings.get("gigo_plan_items", 10))
+    gigo_use_entropy = int(settings.get("gigo_use_entropy", 0)) == 1
     gigo_use_random_roles = int(settings.get("gigo_use_random_roles", 1)) == 1
-    gigo_use_concepts = int(settings.get("gigo_use_concepts", 1)) == 1
     gigo_use_filter = int(settings.get("gigo_use_filter", 1)) == 1
     gigo_use_librarian = int(settings.get("gigo_use_librarian", 1)) == 1
 
@@ -2877,9 +2910,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         change_dir,
         get_project_tree_json,
         create_experiment_branch,
-        status_success,
-        status_failed,
-        status_forbidden,
+        #status_success,
+        #status_failed,
+        #status_forbidden,
         resolve_workspace_path,
         to_posix_rel,
         allowed_actions,

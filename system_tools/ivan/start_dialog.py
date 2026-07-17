@@ -203,9 +203,9 @@ The task:
     if global_state.hierarchy_limit != 1:
         full_prompt += main.milana_base_2
         if use_psm:
-            operator_personality = ask_model(main.oper_psm_prompt + client_task)
+            operator_personality = ask_model(main.oper_psm_prompt + client_task, all_user=True)
             global_state.psm_operator_person[global_state.conversations + 1] = operator_personality
-            full_prompt += operator_personality
+            full_prompt += ' ' + operator_personality
         full_prompt += main.milana_base_3
         full_prompt += main.milana_delegation_part
         full_prompt += f"\n{main.delegate_unavailable_for_operator}\n"
@@ -217,7 +217,7 @@ The task:
     let_log(milana_tools)
     prompt += only_one_func_text
     # Add tool descriptions, excluding skip commands
-    for tool in milana_tools:
+    for tool in milana_tools: # ВЫНЕСИ TODO:
         if tool not in global_state.skip_tools_keys: prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
     if not native_func_call: prompt += what_is_func_text
     full_prompt += prompt + main.oper_anti_loop_text
@@ -258,7 +258,7 @@ The task:
     answer = tools_selector(talk_prompt_for_tools, global_state.conversations)
     global_state.now_agent_id = global_state.conversations
     if answer != wrong_command and global_state.dialog_state and answer != None: talk_prompt = answer
-    elif global_state.dialog_state: let_log('СОЗДАНИЕ НОВОГО СПЕЦИАЛИСТА...'); talk_prompt = create_executor(talk_prompt)
+    elif global_state.dialog_state: let_log('СОЗДАНИЕ НОВОГО ИСПОЛНИТЕЛЯ...'); talk_prompt = create_executor(talk_prompt)
     else: return answer
     let_log("ОТВЕТ ПОСЛЕ ОБРАБОТКИ:")
     let_log(talk_prompt)

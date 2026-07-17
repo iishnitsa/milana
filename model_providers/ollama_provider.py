@@ -395,6 +395,8 @@ def _extract_think(text):
         return cleaned, think_content
     return text, None
 
+import traceback
+
 def _request_with_backoff(api_url, json_payload):
     let_log(json_payload)
     """
@@ -403,104 +405,155 @@ def _request_with_backoff(api_url, json_payload):
     """
     global _skip_num_predict
     start_time = time.time()
-    last_exception = None
-    # Если флаг уже установлен, сразу удаляем num_predict, чтобы не тратить попытки
     if _skip_num_predict and 'options' in json_payload and 'num_predict' in json_payload['options']:
         del json_payload['options']['num_predict']
         let_log("Костыль: num_predict удалён из запроса (по флагу _skip_num_predict).")
+
     for attempt in range(1, MAX_RETRIES + 1):
-        # Проверка общего времени выполнения
         elapsed = time.time() - start_time
-        if elapsed > MAX_WAIT_TOTAL: raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
+        if elapsed > MAX_WAIT_TOTAL:
+            raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
+
         try:
-            response = session.post(api_url, json=json_payload) # Обработка HTTP 400 — отдельно, для возможного исключения num_predict
+            response = session.post(api_url, json=json_payload)
+
+            # Обработка HTTP 400 — отдельно, для возможного исключения num_predict
             if response.status_code == 400:
-                if 'options' in json_payload and 'num_predict' in json_payload['options']:# Убираем num_predict и пробуем снова
+                if 'options' in json_payload and 'num_predict' in json_payload['options']:
                     del json_payload['options']['num_predict']
                     let_log("Обнаружена ошибка 400. Убираем num_predict и пробуем снова.")
                     _skip_num_predict = True
-                    continue  # повторить запрос (счётчик попыток не сбрасываем, но прогресс идёт)
-                else: response.raise_for_status()
+                    continue
+                else:
+                    response.raise_for_status()
+
             # Обработка HTTP ошибок с повторными попытками
-            if response.status_code == 429:  # Пытаемся определить, является ли ошибка квотной (сессионный/недельный лимит)
+            if response.status_code == 429:
                 retry_after = response.headers.get('Retry-After')
                 wait_time = None
-                if retry_after and retry_after.isdigit(): wait_time = int(retry_after)
-                else: # Пытаемся извлечь из текста ошибки
+                if retry_after and retry_after.isdigit():
+                    wait_time = int(retry_after)
+                else:
                     try:
                         err_data = response.json()
                         err_msg = err_data.get('error', '').lower()
-                        if 'session limit' in err_msg: wait_time = 5 * 60 * 60 # 5 часов
-                        elif 'weekly limit' in err_msg: wait_time = 7 * 24 * 60 * 60  # 7 дней
-                        elif 'insufficient_quota' in err_msg: raise RuntimeError("balance end")
-                    except: pass
+                        if 'session limit' in err_msg:
+                            wait_time = 5 * 60 * 60
+                        elif 'weekly limit' in err_msg:
+                            wait_time = 7 * 24 * 60 * 60
+                        elif 'insufficient_quota' in err_msg:
+                            raise RuntimeError("balance end")
+                    except:
+                        pass
+
                 if wait_time is not None:
-                    # ИЗМЕНЕНИЕ: если время ожидания больше 5 часов (18000 секунд) – сразу исключение
-                    MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
-                    if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
-                    # Дополнительная проверка на общий лимит MAX_WAIT_TOTAL (420с) – для квотных ошибок она обычно не сработает,
-                    # но оставим для безопасности
-                    if wait_time > MAX_WAIT_TOTAL: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
+                    MAX_QUOTA_WAIT = 5 * 60 * 60
+                    if wait_time > MAX_QUOTA_WAIT:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                    if wait_time > MAX_WAIT_TOTAL:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
                     let_log(f"Обнаружен лимит квоты (429). Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
-                    continue # повторяем запрос после ожидания
-                # Иначе это обычный rate limit - используем экспоненциальный backoff
+                    continue
+
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining: wait_time = remaining
-                    if wait_time < 0.1: wait_time = 0.1
+                    if wait_time > remaining:
+                        wait_time = remaining
+                    if wait_time < 0.1:
+                        wait_time = 0.1
                     let_log(f"HTTP 429 (Rate Limit) на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     continue
-                else: response.raise_for_status()
+                else:
+                    response.raise_for_status()
+
             if response.status_code in (500, 502, 503, 504):
-                # Временные серверные ошибки - используем экспоненциальный backoff
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining: wait_time = remaining
-                    if wait_time < 0.1: wait_time = 0.1
+                    if wait_time > remaining:
+                        wait_time = remaining
+                    if wait_time < 0.1:
+                        wait_time = 0.1
                     let_log(f"HTTP {response.status_code} на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     continue
-                else: response.raise_for_status()
-            # Для других статусов сразу вызываем исключение, если код не 2xx
+                else:
+                    response.raise_for_status()
+
             response.raise_for_status()
             return response.json()
+
+        # --- Обработка специфических сетевых ошибок ---
         except requests.exceptions.ConnectionError as e:
-            # Ошибка соединения – повторяем с экспоненциальной задержкой
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining: wait_time = remaining
-                if wait_time < 0.1: wait_time = 0.1
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
                 let_log(f"Ошибка соединения на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else: raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
+            else:
+                raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
+
         except requests.exceptions.Timeout as e:
-            # Таймаут запроса – повторяем
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining: wait_time = remaining
-                if wait_time < 0.1: wait_time = 0.1
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
                 let_log(f"Таймаут на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else: raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
+            else:
+                raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
+
         except requests.exceptions.RequestException as e:
-            # Другие ошибки сети
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining: wait_time = remaining
-                if wait_time < 0.1: wait_time = 0.1
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
                 let_log(f"Сетевая ошибка на попытке {attempt}: {e}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else: raise RuntimeError(f"Сетевая ошибка после {MAX_RETRIES} попыток: {e}")
+            else:
+                raise RuntimeError(f"Сетевая ошибка после {MAX_RETRIES} попыток: {e}")
+
+        # --- НОВЫЙ БЛОК: специальная обработка AssertionError (баг HTTP/2 в urllib3) ---
+        except AssertionError as e:
+            # Это ошибка urllib3 при попытке использовать HTTP/2 с http://
+            let_log(f"AssertionError (HTTP/2) на попытке {attempt}: {e}. Повторяем сразу без задержки.")
+            # Микро-пауза, чтобы не грузить процессор
+            time.sleep(0.05)
+            # continue – переходим к следующей итерации (счётчик увеличится, но задержка минимальна)
+            continue
+
+        # --- Общий перехват любых других неожиданных ошибок ---
+        except Exception as e:
+            let_log(f"Неизвестная ошибка на попытке {attempt}: {type(e).__name__}: {e}")
+            if attempt < MAX_RETRIES:
+                wait_time = BASE_BACKOFF ** attempt
+                remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
+                let_log(f"Повтор через {wait_time:.2f} с...")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise RuntimeError(f"Необработанная ошибка после {MAX_RETRIES} попыток: {e}")
+
     raise RuntimeError("Превышено максимальное количество попыток")
 
 def ask_model(generation_params):
@@ -569,7 +622,8 @@ def ask_model(generation_params):
 
 def ask_model_chat(generation_params):
     global filter_think_tag
-    if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
+    if not session or not base_url or not default_chat_model:
+        raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/chat"
     try:
         let_log(f"ask_model_chat: Отправка запроса на {api_url}")
@@ -583,7 +637,8 @@ def ask_model_chat(generation_params):
             "messages": generation_params.get("messages", []),
             "stream": False,
             "keep_alive": "1.5m",  # время жизни модели 1.5 минуты
-            "options": {}}
+            "options": {}
+        }
 
         # Устанавливаем контекст
         ctx = default_num_ctx if default_num_ctx else token_limit
@@ -607,7 +662,8 @@ def ask_model_chat(generation_params):
             "top_p": "top_p",
             "top_k": "top_k",
             "repeat_penalty": "repeat_penalty",
-            "stop": "stop"}
+            "stop": "stop"
+        }
         for param, value in generation_params.items():
             if param in ["messages", "model", "max_tokens", "think"]:
                 continue
@@ -616,7 +672,13 @@ def ask_model_chat(generation_params):
             else:
                 ollama_params["options"][param] = value
 
-        data = _request_with_backoff(api_url, ollama_params)
+        # --- ВЫЗОВ _request_with_backoff С ЛОГИРОВАНИЕМ ---
+        try:
+            data = _request_with_backoff(api_url, ollama_params)
+        except Exception as e:
+            let_log(f"ask_model_chat: _request_with_backoff выбросил исключение: {type(e).__name__}: {e}")
+            raise  # пробрасываем дальше
+
         let_log(f"ask_model_chat: Получен ответ, длина: {len(str(data))} символов")
 
         # Обработка think-тегов (фильтрация) для ответа чата
@@ -629,8 +691,14 @@ def ask_model_chat(generation_params):
             data['think'] = None
 
         return data
-    except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
-    except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
+
+    except requests.exceptions.RequestException as e:
+        let_log(f"ask_model_chat: Ошибка сети: {e}")
+        raise RuntimeError(f"Ошибка сети: {e}")
+    except Exception as e:
+        # Здесь мы перехватим любую ошибку, которая возникла после _request_with_backoff
+        let_log(f"ask_model_chat: НЕОЖИДАННАЯ ОШИБКА: {type(e).__name__}: {e}")
+        raise RuntimeError(f"Неожиданная ошибка: {e}")
 
 def get_last_think():
     """Возвращает последнее извлечённое think-содержимое (после вызова ask_model)."""

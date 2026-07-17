@@ -233,7 +233,7 @@ Personality:
     let_log("Генерация инструкций для исполнителя...")
     instructions = ask_model(user_content, system_prompt=system_prompt_for_instructions)
     prompt = main.worker_base
-    if use_psm: promt += ask_model(exec_psm_prompt_1 + text + exec_psm_prompt_2 + global_state.psm_operator_person[global_state.conversations - 1])
+    if use_psm: prompt += ' ' + ask_model(main.exec_psm_prompt_1 + text + main.exec_psm_prompt_2 + global_state.psm_operator_person[global_state.conversations - 1], all_user=True)
     prompt += no_markdown_instruction + write_shortly_prompt + '\n' + prompt_evaluation_2 + ' ' + text
     if global_state.hierarchy_limit != 1: prompt += main.worker_delegation_part
     hierarchy_note = ""

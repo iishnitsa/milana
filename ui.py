@@ -707,7 +707,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "model_type": default_provider, "use_rag": "1",
                 "filter_generations": "0", "hierarchy_limit": "0",
                 "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
-                "max_token_limit": "8192", "use_librarian": "1",
+                "max_token_limit": "8192", "use_librarian": "0",
                 "recreate_agents": "0",
                 "skip_nested_images": "0",
                 "cut_wrong_command_history": "1",
@@ -721,9 +721,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "use_psm": "0",
                 "use_magical_prompt": "0",
                 "use_gigo": "1",
-                "gigo_idea_count": "5",
-                "gigo_use_entropy": "1",
-                "gigo_use_concepts": "1",
+                "gigo_idea_count": "2",
+                "gigo_plan_items": "10",
+                "gigo_use_entropy": "0",
                 "gigo_use_filter": "1",
                 "gigo_use_librarian": "0",}
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -747,10 +747,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "use_gigo": "switch",
                 "gigo_idea_count": "switch",
                 "gigo_use_entropy": "switch",
-                "gigo_use_concepts": "switch",
                 "gigo_use_filter": "switch",
                 "gigo_use_librarian": "switch",
                 "target_lang": "entry",
+                "gigo_plan_items": "entry",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",
                 "number_of_plan_items": "entry",
@@ -1709,7 +1709,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     chats = self.backend.get_chats()
                     chat = next((c for c in chats if c['id'] == self.current_chat_id), None)
                     if chat and chat['name'] == "—":
-                        new_name = text.strip()[:12] if text.strip() else None
+                        new_name = text.strip()[:9] if text.strip() else None
                         if new_name:
                             self.backend.update_chat_name(self.current_chat_id, new_name)
                             self.load_chats()  # обновить список чатов
