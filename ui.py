@@ -2254,33 +2254,31 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             except Exception:
                 pass
             self.destroy()
-            # 3) Тяжёлую работу — после закрытия UI
-            def _do_heavy():
-                try:
-                    if do_migrate:
-                        ok, msg = backend.migrate_chats_dir(old_chats_root, new_chats_root)
-                        if not ok and master.winfo_exists():
-                            showerror(master, Lang.get("error"), Lang.get("chats_dir_migrate_failed", e=msg))
-                    try:
-                        os.makedirs(new_chats_root, exist_ok=True)
-                    except OSError as e:
-                        if master.winfo_exists():
-                            showerror(master, Lang.get("error"), str(e))
-                    backend.update_global_settings(settings_to_save)
-                    for mod_id, enabled in pending_mods.items():
-                        backend.update_default_mod_enabled(mod_id, enabled)
-                    if new_language != original_language:
-                        Lang.load_language(new_language)
-                    ModuleManager().load_modules(backend, reload_m=True)
-                    if master.winfo_exists() and hasattr(master, 'load_chats'):
-                        backend.cache.update_chats(backend._load_chats_from_db())
-                        master.load_chats()
-                finally:
-                    _set_main_btns("normal")
+            # Дать UI закрыть окно, затем тяжёлая работа по очереди (без after)
             if master.winfo_exists():
-                master.after(1, _do_heavy)
-            else:
-                _do_heavy()
+                try: master.update_idletasks()
+                except tk.TclError: pass
+            try:
+                if do_migrate:
+                    ok, msg = backend.migrate_chats_dir(old_chats_root, new_chats_root)
+                    if not ok and master.winfo_exists():
+                        showerror(master, Lang.get("error"), Lang.get("chats_dir_migrate_failed", e=msg))
+                try:
+                    os.makedirs(new_chats_root, exist_ok=True)
+                except OSError as e:
+                    if master.winfo_exists():
+                        showerror(master, Lang.get("error"), str(e))
+                backend.update_global_settings(settings_to_save)
+                for mod_id, enabled in pending_mods.items():
+                    backend.update_default_mod_enabled(mod_id, enabled)
+                if new_language != original_language:
+                    Lang.load_language(new_language)
+                ModuleManager().load_modules(backend, reload_m=True)
+                if master.winfo_exists() and hasattr(master, 'load_chats'):
+                    backend.cache.update_chats(backend._load_chats_from_db())
+                    master.load_chats()
+            finally:
+                _set_main_btns("normal")
         def reset_settings(self):
             if askyesno(self, Lang.get("reset_settings_confirm_title"), Lang.get("reset_settings_confirm_message")):
                 db_path = Path(self.backend.db_path)
@@ -2548,26 +2546,24 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             except Exception:
                 pass
             self.destroy()
-            def _do_create():
-                try:
-                    chat_data = backend.create_chat(chat_name, settings_bundle)
-                    if not chat_data:
-                        if master.winfo_exists():
-                            showerror(master, Lang.get("error"), Lang.get("chat_name_exists"))
-                        return
-                    if valid_password:
-                        encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = valid_password
-                    elif model_config['model_type'] in encryption_utils.SESSION_PASSWORDS:
-                        encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = encryption_utils.SESSION_PASSWORDS[model_config['model_type']]
-                    if master.winfo_exists():
-                        master.load_chats()
-                        master.on_chat_select(chat_data["id"])
-                finally:
-                    _set_main_btns("normal")
             if master.winfo_exists():
-                master.after(1, _do_create)
-            else:
-                _do_create()
+                try: master.update_idletasks()
+                except tk.TclError: pass
+            try:
+                chat_data = backend.create_chat(chat_name, settings_bundle)
+                if not chat_data:
+                    if master.winfo_exists():
+                        showerror(master, Lang.get("error"), Lang.get("chat_name_exists"))
+                    return
+                if valid_password:
+                    encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = valid_password
+                elif model_config['model_type'] in encryption_utils.SESSION_PASSWORDS:
+                    encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = encryption_utils.SESSION_PASSWORDS[model_config['model_type']]
+                if master.winfo_exists():
+                    master.load_chats()
+                    master.on_chat_select(chat_data["id"])
+            finally:
+                _set_main_btns("normal")
     # ------------------------------------------------------------
     # 5. Инициализация приложения
     # ------------------------------------------------------------
