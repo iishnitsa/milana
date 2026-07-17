@@ -29,7 +29,8 @@ from cross_gpt import (
     no_markdown_instruction,
     write_shortly_prompt,
     use_magical_prompt,
-    use_psm,)
+    use_psm,
+    give_all_tools,)
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -214,14 +215,19 @@ Personality:
     else: delegation_allowed = current_level < global_state.hierarchy_limit
     if global_state.hierarchy_limit == 1 and global_state.start_dialog_command_name in ivan_tools: del ivan_tools[global_state.start_dialog_command_name]; let_log("Удалена команда делегирования из инструментов исполнителя")
     if global_state.module_tools_keys:
-        need_tools_raw = ask_model(text, system_prompt=main.create_executor_select_tools_1 + global_state.tools_str + main.create_executor_select_tools_2)
-        let_log('Результат выбора инструментов:')
-        let_log(need_tools_raw)
-        tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
-        let_log(f"Найдены инструменты: {tools_names}")
-        for name in tools_names:
+        if give_all_tools:
             for tool_tokens, tool_desc, tool_func in global_state.another_tools:
-                if name == tool_tokens: ivan_tools[tool_tokens] = (tool_desc, tool_func); let_log(f"Добавлен инструмент: {tool_tokens}"); break
+                ivan_tools[tool_tokens] = (tool_desc, tool_func)
+            let_log('[give_all_tools] все модули отданы исполнителю')
+        else:
+            need_tools_raw = ask_model(text, system_prompt=main.create_executor_select_tools_1 + global_state.tools_str + main.create_executor_select_tools_2)
+            let_log('Результат выбора инструментов:')
+            let_log(need_tools_raw)
+            tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
+            let_log(f"Найдены инструменты: {tools_names}")
+            for name in tools_names:
+                for tool_tokens, tool_desc, tool_func in global_state.another_tools:
+                    if name == tool_tokens: ivan_tools[tool_tokens] = (tool_desc, tool_func); let_log(f"Добавлен инструмент: {tool_tokens}"); break
     selected_ivan_tools = ''
     for tool in ivan_tools:
         if tool not in global_state.skip_tools_keys: selected_ivan_tools += tool + ' (' + ivan_tools[tool][0] + ')\n'

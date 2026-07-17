@@ -37,6 +37,12 @@ def main(text):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             f.write(text.strip())
+        # Маркер «для пользователя» — sidecar .for_user рядом с файлом
+        try:
+            with open(path + '.for_user', 'w', encoding='utf-8') as mf:
+                mf.write('for_user=1\n')
+        except Exception:
+            pass
         send_ui_no_cache(main.report_created_text + filename, attach=[path])
     except Exception as e:
         print(f"Error: {e}")

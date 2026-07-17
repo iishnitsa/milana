@@ -90,6 +90,11 @@ if False:
     from ddgs import DDGS
     from bs4 import BeautifulSoup
     import cryptography
+    import secrets
+    import dulwich
+    import translators
+    import sympy
+    import mpmath
 
 def run_as_interpreter(): # Режим исполнения ui.py внутри среды лаунчера
     if len(sys.argv) < 2: return

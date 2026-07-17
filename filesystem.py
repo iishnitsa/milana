@@ -913,10 +913,22 @@ def ask_llm_batch(items, system_prompt):
     return out
 
 
+# Кэш one-shot intention/permission (опция one_shot_intention_permission)
+_fs_intention_cache = {}
+_fs_permission_cache = {}
+
 def determine_intention(action, prompt_text=None, global_summary=None, recent_summary=None):
     action = normalize_action(action)
     if action not in intention_prompts:
         action = "edit"
+
+    # Разовая генерация намерения (default off) — кэш на задачу/action
+    try:
+        from cross_gpt import one_shot_intention_permission
+        if one_shot_intention_permission and action in _fs_intention_cache:
+            return dict(_fs_intention_cache[action])
+    except Exception:
+        pass
 
     if prompt_text is None:
         full_prompt = str(global_state.current_agent_history_for_filesystem or "")
@@ -969,6 +981,13 @@ def determine_intention(action, prompt_text=None, global_summary=None, recent_su
         result["self_risk"] = "50"
     if "criticality" not in result or not str(result.get("criticality", "")).strip():
         result["criticality"] = "50"
+
+    try:
+        from cross_gpt import one_shot_intention_permission
+        if one_shot_intention_permission:
+            _fs_intention_cache[action] = dict(result)
+    except Exception:
+        pass
 
     return result
 

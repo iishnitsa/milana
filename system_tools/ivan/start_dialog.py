@@ -21,6 +21,10 @@ from cross_gpt import (
     ask_model,
     text_cutter,
     gigo,
+    gigo_adv,
+    use_old_gigo,
+    give_all_tools,
+    module_hints_for_operator,
     tools_selector,
     create_executor,
     down_hierarchy,
@@ -138,6 +142,8 @@ Conclude that a task is impossible only after multiple reasonable approaches hav
         main.oper_psm_prompt = """
 Below is the user's task.
 
+Write the personality as a role line starting with "You are..." (or "Ты..." if the target language is Russian).
+
 Describe, in a single short sentence, the personality of an operator who would be best suited for solving this task.
 
 Describe only:
@@ -170,8 +176,9 @@ The task:
             let_log('Сохранили оператора как delegated')
             if global_state.conversations % 2 == 0 and global_state.conversations != 0: save_emb_dialog('delegated', 'executor'); let_log('Сохранили исполнителя как delegated')
     global_state.stop_agent = True
-    if client_task == '': prompt = gigo(global_state.main_now_task); global_state.retries = False
-    else: global_state.main_now_task = client_task; prompt = gigo(client_task)
+    _gigo_fn = gigo if use_old_gigo else gigo_adv
+    if client_task == '': prompt = _gigo_fn(global_state.main_now_task); global_state.retries = False
+    else: global_state.main_now_task = client_task; prompt = _gigo_fn(client_task)
     if global_state.summ_attach != global_state.summ_attach: prompt += global_state.summ_attach; global_state.summ_attach = ''
     # === DELEGATION: add a new level ===
     down_hierarchy()
@@ -182,17 +189,23 @@ The task:
     # Tool selection for Milana
     milana_tools = global_state.milana_module_tools.copy()
     if global_state.module_tools_keys:
-        need_tools_raw = ask_model(prompt, system_prompt=main.start_dialog_tool_text_1 + global_state.tools_str + main.start_dialog_tool_text_2)
-        let_log(need_tools_raw)
-        tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
-        # Remove delegation command from selected tools if it accidentally got in
-        if not ivan_can_delegate and global_state.start_dialog_command_name in tools_names:
-            tools_names.remove(global_state.start_dialog_command_name)
-            let_log(f"Удалена команда делегирования из выбранных инструментов")
-        for name in tools_names:
+        if give_all_tools:
+            # Опция: не выбирать подмножество — отдать все модули
             for tool_tokens, tool_desc, tool_func in global_state.another_tools:
-                if name == tool_tokens: milana_tools[tool_tokens] = (tool_desc, tool_func); break
-        let_log('ошибки нет')
+                milana_tools[tool_tokens] = (tool_desc, tool_func)
+            let_log('[give_all_tools] все модули отданы оператору')
+        else:
+            need_tools_raw = ask_model(prompt, system_prompt=main.start_dialog_tool_text_1 + global_state.tools_str + main.start_dialog_tool_text_2)
+            let_log(need_tools_raw)
+            tools_names = find_all_commands(need_tools_raw, global_state.module_tools_keys)
+            # Remove delegation command from selected tools if it accidentally got in
+            if not ivan_can_delegate and global_state.start_dialog_command_name in tools_names:
+                tools_names.remove(global_state.start_dialog_command_name)
+                let_log(f"Удалена команда делегирования из выбранных инструментов")
+            for name in tools_names:
+                for tool_tokens, tool_desc, tool_func in global_state.another_tools:
+                    if name == tool_tokens: milana_tools[tool_tokens] = (tool_desc, tool_func); break
+            let_log('ошибки нет')
     # Remove delegation command from Milana's tools if the next level is unavailable
     if not ivan_can_delegate and global_state.start_dialog_command_name in milana_tools:
         del milana_tools[global_state.start_dialog_command_name]
@@ -220,6 +233,13 @@ The task:
     for tool in milana_tools: # ВЫНЕСИ TODO:
         if tool not in global_state.skip_tools_keys: prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
     if not native_func_call: prompt += what_is_func_text
+    # Опционально: расширенные подсказки по модулям и оператору
+    if module_hints_for_operator and global_state.another_tools:
+        hints = '\n'.join(
+            f"- {tok}: {desc}" for tok, desc, _ in global_state.another_tools
+            if tok not in global_state.skip_tools_keys)
+        if hints:
+            prompt += '\nModule hints:\n' + hints + '\n'
     full_prompt += prompt + main.oper_anti_loop_text
     if use_magical_prompt: full_prompt += main.oper_magical
     let_log(full_prompt)

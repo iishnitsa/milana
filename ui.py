@@ -11,6 +11,24 @@ def get_base_dir():
 
 def resource_path(relative_path): return os.path.join(get_base_dir(), relative_path)
 
+def suggest_default_chats_dir():
+    """Windows: D:/Milana/chats если D: есть; иначе data/chats. Mac/Linux: data/chats."""
+    default_local = resource_path(os.path.join("data", "chats"))
+    if sys.platform == "win32":
+        for drive in ("D:\\", "D:/"):
+            if os.path.exists(drive):
+                return os.path.join(drive, "Milana", "chats")
+    return default_local
+
+def normalize_chats_dir(path_value):
+    """Нормализует путь к корню чатов; пустой → suggest_default_chats_dir()."""
+    if path_value is None or str(path_value).strip() == "":
+        return suggest_default_chats_dir()
+    p = os.path.expanduser(str(path_value).strip())
+    if not os.path.isabs(p):
+        p = resource_path(p)
+    return os.path.normpath(p)
+
 # ====== ЗАСТАВКА (использует только лёгкие модули) ======
 def show_splash(app_ready_event: multiprocessing.Event):
     if sys.platform.startswith("win32"):
@@ -110,7 +128,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     DARK_SECONDARY = "#2a2a2a"
     DARK_BORDER = "#333333"
     PURPLE_ACCENT = "#5200ff"
-    ACTIVE_CHAT_COLOR = "#ff9900"
+    ACTIVE_CHAT_COLOR = "#5200ff"  # мигание: чередование с DARK_BG (чёрный)
+    BLINK_CHAT_COLOR_OFF = "#000000"
     WHITE = "#c7c7c7"
     DARK_TEXT_SECONDARY = "#b0b0b0"
     CORNER_RADIUS = 12
@@ -164,6 +183,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         if "height" not in default_kwargs: default_kwargs["height"] = 0
         return CTkLabel(parent, text=text, **default_kwargs)
     def create_param_widget(parent, param_info, settings_vars_dict, path_vars_dict, on_change_callback=None):
+        """Параметры провайдера — только имя + поле (описания не показываем: провайдеры могут быть пользовательскими)."""
         param_name = param_info['name']
         default_val = param_info.get('default')
         is_file = param_info['is_file']
@@ -211,12 +231,15 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             remove_btn = CTkButton(frame, text="X", width=25, height=25, fg_color="transparent", hover_color=PURPLE_ACCENT, text_color=WHITE, command=on_remove)
             remove_btn.grid(row=0, column=2, rowspan=1, padx=10)
         return frame
-    def create_chat_message_bubble(parent, text, is_my, attachments=None, is_question=False):
+    def create_chat_message_bubble(parent, text, is_my, attachments=None, is_question=False, timestamp=None, show_datetime=False):
         row_frame = create_styled_frame(parent)
         row_frame.pack(fill=tk.X, pady=2, padx=10, anchor="center")
         if is_my: bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=DARK_BG)
         else: bubble = create_styled_frame(row_frame, border_width=0, corner_radius=CORNER_RADIUS, fg_color=PURPLE_ACCENT)
         bubble.pack(expand=False, anchor="center")
+        if show_datetime and timestamp:
+            ts_label = CTkLabel(bubble, text=str(timestamp), justify="left", anchor="w", fg_color="transparent", text_color=DARK_TEXT_SECONDARY, font=(FONT_FAMILY, 9), height=0)
+            ts_label.pack(fill=tk.X, expand=True, padx=8, pady=(4, 0))
         msg_text_widget = CTkLabel(bubble, text=text, justify="left", anchor="w", fg_color="transparent", text_color=WHITE, font=FONT_REGULAR, height=0)
         if is_question and not is_my: msg_text_widget.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 8), pady=6)
         else: msg_text_widget.pack(fill=tk.X, expand=True, padx=8, pady=6)
@@ -343,6 +366,13 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             widget.bind("<Command-v>", paste_action)
             widget.bind("<Command-a>", select_all)
         menu = tk.Menu(widget, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, relief="flat", borderwidth=0, font=(FONT_FAMILY, 8))
+        # Индексы, а не локализованные labels — иначе после смены языка entryconfigure падает
+        MENU_IDX_CUT, MENU_IDX_COPY, MENU_IDX_PASTE, MENU_IDX_SELECT = 0, 1, 2, 4
+        menu.add_command(label=Lang.get("cut"), command=lambda: cut_action(None))
+        menu.add_command(label=Lang.get("copy"), command=lambda: copy_action(None))
+        menu.add_command(label=Lang.get("paste"), command=lambda: paste_action(None))
+        menu.add_separator()
+        menu.add_command(label=Lang.get("select_all"), command=lambda: select_all(None))
         def show_menu(event):
             has_selection = False
             try:
@@ -354,16 +384,14 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 if widget.clipboard_get(): has_clipboard = True
             except tk.TclError: pass
             is_disabled = hasattr(widget, '_state') and widget._state == 'disabled'
-            menu.entryconfigure(Lang.get("cut"), state="normal" if has_selection and not is_disabled else "disabled")
-            menu.entryconfigure(Lang.get("copy"), state="normal" if has_selection else "disabled")
-            menu.entryconfigure(Lang.get("paste"), state="normal" if has_clipboard and not is_disabled else "disabled")
-            menu.entryconfigure(Lang.get("select_all"), state="normal")
+            try:
+                menu.entryconfigure(MENU_IDX_CUT, label=Lang.get("cut"), state="normal" if has_selection and not is_disabled else "disabled")
+                menu.entryconfigure(MENU_IDX_COPY, label=Lang.get("copy"), state="normal" if has_selection else "disabled")
+                menu.entryconfigure(MENU_IDX_PASTE, label=Lang.get("paste"), state="normal" if has_clipboard and not is_disabled else "disabled")
+                menu.entryconfigure(MENU_IDX_SELECT, label=Lang.get("select_all"), state="normal")
+            except tk.TclError:
+                pass
             menu.tk_popup(event.x_root, event.y_root)
-        menu.add_command(label=Lang.get("cut"), command=lambda: cut_action(None))
-        menu.add_command(label=Lang.get("copy"), command=lambda: copy_action(None))
-        menu.add_command(label=Lang.get("paste"), command=lambda: paste_action(None))
-        menu.add_separator()
-        menu.add_command(label=Lang.get("select_all"), command=lambda: select_all(None))
         widget.bind("<Button-3>", show_menu)
         if sys.platform == "darwin": widget.bind("<Button-2>", show_menu)
     def set_windows_dark_titlebar(window):
@@ -721,11 +749,20 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "use_psm": "0",
                 "use_magical_prompt": "0",
                 "use_gigo": "1",
+                "use_old_gigo": "1",
                 "gigo_idea_count": "2",
                 "gigo_plan_items": "10",
                 "gigo_use_entropy": "0",
                 "gigo_use_filter": "1",
-                "gigo_use_librarian": "0",}
+                "gigo_use_librarian": "0",
+                "show_message_datetime": "0",
+                "chats_dir": suggest_default_chats_dir(),
+                "librarian_use_models": "0",
+                "module_hints_for_operator": "0",
+                "give_all_tools": "0",
+                "critic_reuse_dialog": "1",
+                "one_shot_intention_permission": "0",
+                }
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
             widget_type_map = {
@@ -745,16 +782,23 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "use_psm": "switch",
                 "use_magical_prompt": "switch",
                 "use_gigo": "switch",
-                "gigo_idea_count": "switch",
+                "use_old_gigo": "switch",
                 "gigo_use_entropy": "switch",
                 "gigo_use_filter": "switch",
                 "gigo_use_librarian": "switch",
+                "show_message_datetime": "switch",
+                "librarian_use_models": "switch",
+                "module_hints_for_operator": "switch",
+                "give_all_tools": "switch",
+                "critic_reuse_dialog": "switch",
+                "one_shot_intention_permission": "switch",
                 "target_lang": "entry",
                 "gigo_plan_items": "entry",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",
                 "number_of_plan_items": "entry",
                 "gigo_idea_count": "entry",
+                "chats_dir": "entry",
                 }
             for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
         def _load_settings_metadata_from_db(self): # Возвращает список кортежей (key, widget_type) для всех записей settings.
@@ -762,11 +806,43 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             return {row[0]: row[1] for row in rows}
         def get_settings_metadata(self): return self.cache.get_settings_metadata(self)
         def generate_id(self, length=12): return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+        def get_chats_root(self):
+            """Корень хранения чатов (id = имя подпапки)."""
+            settings = self.get_global_settings()
+            root = normalize_chats_dir(settings.get("chats_dir", ""))
+            try: os.makedirs(root, exist_ok=True)
+            except OSError: pass
+            return root
+        def chat_folder(self, chat_id):
+            return Path(self.get_chats_root()) / chat_id
+        def migrate_chats_dir(self, old_root, new_root):
+            """Переносит папки чатов из old_root в new_root. Возвращает (ok, message)."""
+            old_root = normalize_chats_dir(old_root)
+            new_root = normalize_chats_dir(new_root)
+            if os.path.normpath(old_root) == os.path.normpath(new_root):
+                return True, "same"
+            if not os.path.isdir(old_root):
+                try: os.makedirs(new_root, exist_ok=True)
+                except OSError as e: return False, str(e)
+                return True, "empty"
+            try:
+                os.makedirs(new_root, exist_ok=True)
+                moved = 0
+                for name in os.listdir(old_root):
+                    src = os.path.join(old_root, name)
+                    dst = os.path.join(new_root, name)
+                    if not os.path.isdir(src): continue
+                    if os.path.exists(dst):
+                        continue
+                    shutil.move(src, dst)
+                    moved += 1
+                return True, f"moved:{moved}"
+            except Exception as e:
+                return False, str(e)
         def _load_chats_from_db(self):
             result = []
-            chats_dir = resource_path(os.path.join("data", "chats"))
-            if not os.path.exists(chats_dir): return []
-            chats_dir = Path(chats_dir)
+            chats_dir = Path(self.get_chats_root())
+            if not chats_dir.exists(): return []
             for folder in sorted(chats_dir.iterdir(), key=os.path.getmtime, reverse=True):
                 if folder.is_dir():
                     settings_db = folder / "chatsettings.db"
@@ -787,7 +863,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             return True
         # ====== НОВЫЙ МЕТОД ДЛЯ ОБНОВЛЕНИЯ ИМЕНИ ЧАТА ======
         def update_chat_name(self, chat_id, new_name):
-            db_path = Path(resource_path(os.path.join("data", "chats", chat_id, "chatsettings.db")))
+            db_path = self.chat_folder(chat_id) / "chatsettings.db"
             if not db_path.exists():
                 return False
             self.sql_exec(str(db_path), "UPDATE settings SET value = ? WHERE key = 'chat_name'", (new_name,))
@@ -801,11 +877,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             return True
         # ====================================================
         def create_chat(self, chat_name, settings_data):
+            # Имя может совпадать с другими; id = уникальная папка
             existing_chats = self.cache.get_chats(self)
-            if any(chat['name'].lower() == chat_name.lower() for chat in existing_chats): return None
             chat_id = self.generate_id()
-            while (Path(resource_path(os.path.join("data", "chats"))) / chat_id).exists(): chat_id = self.generate_id()
-            chat_path = Path(resource_path(os.path.join("data", "chats"))) / chat_id
+            root = Path(self.get_chats_root())
+            while (root / chat_id).exists(): chat_id = self.generate_id()
+            chat_path = root / chat_id
             chat_path.mkdir(parents=True, exist_ok=True)
             (chat_path / "files").mkdir(exist_ok=True)
             new_chat = {"id": chat_id, "name": chat_name}
@@ -834,7 +911,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.sql_exec(dialog_db, "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, is_my INTEGER, attachments TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
             return new_chat
         def delete_chat(self, chat_id):
-            chat_path = Path(resource_path(os.path.join("data", "chats"))) / chat_id
+            chat_path = self.chat_folder(chat_id)
             if not chat_path.exists(): return False
             shutil.rmtree(chat_path)
             existing_chats = self.cache.get_chats(self)
@@ -842,18 +919,18 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.cache.update_chats(updated_chats)
             return True
         def get_messages(self, chat_id):
-            db = Path(resource_path(os.path.join("data", "chats", chat_id, "chatsettings.db")))
+            db = self.chat_folder(chat_id) / "chatsettings.db"
             if not db.exists(): return []
-            rows = self.sql_exec(str(db), "SELECT text, is_my, attachments FROM messages ORDER BY timestamp", fetchall=True) or []
-            return [{"text": r[0], "isMy": bool(r[1]), "attachments": json.loads(r[2]) if r[2] else []} for r in rows]
+            rows = self.sql_exec(str(db), "SELECT text, is_my, attachments, timestamp FROM messages ORDER BY timestamp", fetchall=True) or []
+            return [{"text": r[0], "isMy": bool(r[1]), "attachments": json.loads(r[2]) if r[2] else [], "timestamp": r[3]} for r in rows]
         def add_message(self, chat_id, text, is_my, attachments=None):
-            db = Path(resource_path(os.path.join("data", "chats", chat_id, "chatsettings.db")))
+            db = self.chat_folder(chat_id) / "chatsettings.db"
             if not db.exists(): return False
             attachments_str = json.dumps([str(a) for a in attachments]) if attachments else None
             self.sql_exec(str(db), "INSERT INTO messages (text, is_my, attachments) VALUES (?, ?, ?)", (text, int(is_my), attachments_str))
             return True
         def get_chat_settings(self, chat_id):
-            db = Path(resource_path(os.path.join("data", "chats", chat_id, "chatsettings.db")))
+            db = self.chat_folder(chat_id) / "chatsettings.db"
             if not db.exists(): return {}
             rows = self.sql_exec(str(db), "SELECT key, value FROM settings", fetchall=True) or []
             return {k: v for k, v in rows}
@@ -925,7 +1002,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         switch_items = [(k, v) for k, v in metadata.items() if v == 'switch']
         for key, wtype in entry_items + switch_items:
             # Пропускаем служебные ключи, которые не должны отображаться в настройках чата
-            if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name'):
+            if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name', 'chats_dir'):
                 continue
             desc_key = key + "_desc"
             has_desc = desc_key in Lang.texts  # наличие описания в текущем языке
@@ -933,11 +1010,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             frame = create_styled_frame(parent)
             frame.pack(fill="x", pady=2)
             frame.grid_columnconfigure(0, weight=1)
-            frame.grid_columnconfigure(1, weight=0)  # виджет справа не растягивается
+            frame.grid_columnconfigure(1, weight=0)
 
             if has_desc:
-                # Заголовок-кнопка со стрелкой и названием
-                btn_text = "╰ " + Lang.get(key, default=key) # TODO: это через функцию
+                btn_text = "╰ " + Lang.get(key, default=key)
                 btn = CTkButton(
                     frame,
                     text=btn_text,
@@ -950,7 +1026,6 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 )
                 btn.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
-                # Виджет управления (switch или entry)
                 if wtype == 'switch':
                     var = settings_vars[key]
                     switch = CTkSwitch(
@@ -971,7 +1046,6 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     entry.grid(row=0, column=1, sticky="ew")
                     created_widgets[key] = entry
 
-                # Создаём спойлер (контейнер для описания)
                 desc_frame = create_styled_frame(frame, fg_color="transparent")
                 desc_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
 
@@ -983,24 +1057,26 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 )
                 desc_label.pack(fill="x", padx=5, pady=2)
 
-                # Контекстное меню для копирования описания
                 menu = tk.Menu(desc_label, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, relief="flat", borderwidth=0, font=(FONT_FAMILY, 8))
-                def copy_description():
+                def copy_description(label=desc_label):
                     try:
-                        text = desc_label.cget("text")
+                        text = label.cget("text")
                         if text:
-                            desc_label.clipboard_clear()
-                            desc_label.clipboard_append(text)
+                            label.clipboard_clear()
+                            label.clipboard_append(text)
                     except tk.TclError:
                         pass
                 menu.add_command(label=Lang.get("copy"), command=copy_description)
-                def show_menu(event):
-                    menu.tk_popup(event.x_root, event.y_root)
+                def show_menu(event, m=menu):
+                    try:
+                        m.entryconfigure(0, label=Lang.get("copy"))
+                    except tk.TclError:
+                        pass
+                    m.tk_popup(event.x_root, event.y_root)
                 desc_label.bind("<Button-3>", show_menu)
                 if sys.platform == "darwin":
                     desc_label.bind("<Button-2>", show_menu)
 
-                # Функция переключения видимости спойлера
                 def make_toggle(btn, desc_frame, key):
                     def toggle():
                         if desc_frame.winfo_ismapped():
@@ -1012,21 +1088,17 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     return toggle
                 toggle_cmd = make_toggle(btn, desc_frame, key)
                 btn.configure(command=toggle_cmd)
-                # По клику на описание тоже сворачиваем/разворачиваем
-                desc_label.bind("<Button-1>", lambda e: toggle_cmd())
+                desc_label.bind("<Button-1>", lambda e, t=toggle_cmd: t())
 
-                # Скрываем спойлер по умолчанию
                 desc_frame.grid_remove()
 
-                # Динамическое обновление wraplength при изменении размера
-                def update_wraplength(event, label=desc_label, frame=frame):
-                    width = frame.winfo_width() - 20
+                def update_wraplength(event, label=desc_label, fr=frame):
+                    width = fr.winfo_width() - 20
                     if width > 50:
                         label.configure(wraplength=width)
                 frame.bind("<Configure>", update_wraplength)
                 frame.after(10, lambda: update_wraplength(None))
             else:
-                # Без описания – стандартное отображение (лейбл + виджет)
                 create_styled_label(frame, text=Lang.get(key, default=key)).grid(row=0, column=0, sticky="w", padx=(0, 10))
                 if wtype == 'switch':
                     var = settings_vars[key]
@@ -1201,6 +1273,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     if name == selected_type and frame.winfo_exists(): frame.pack(fill="x", padx=5, pady=5)
                     elif frame.winfo_exists(): frame.pack_forget()
                 except (tk.TclError, AttributeError): continue
+            # wrap уже pack'ается в _create_specific_model_frames; здесь только show/hide
             self._load_provider_params_from_string()
         def update_max_token_label(self):
             if hasattr(self, 'max_token_label') and self.max_token_label.winfo_exists():
@@ -1245,10 +1318,46 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             scrollable_frame = create_scrollable_frame(parent, fg_color="transparent")
             scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
             scrollable_frame.grid_columnconfigure(0, weight=1)
-            # Получаем метаданные из кэша
+            # Выбор папки чатов — только в главных настройках (SettingsWindow), не при создании чата
+            if getattr(self, '_show_chats_dir_picker', False):
+                self._build_chats_dir_picker(scrollable_frame)
             metadata = self.backend.get_settings_metadata()
-            # Строим UI динамически
             build_chat_settings_ui(scrollable_frame, self.settings_vars, metadata)
+        def _build_chats_dir_picker(self, parent):
+            if 'chats_dir' not in self.settings_vars:
+                self.settings_vars['chats_dir'] = tk.StringVar(value=self.backend.get_chats_root())
+            frame = create_styled_frame(parent)
+            frame.pack(fill="x", pady=4)
+            frame.grid_columnconfigure(0, weight=1)
+            btn_text = "╰ " + Lang.get("chats_dir", default="chats_dir")
+            title_btn = CTkButton(
+                frame, text=btn_text, anchor="w", fg_color="transparent",
+                hover_color=PURPLE_ACCENT, corner_radius=CORNER_RADIUS, font=FONT_REGULAR, height=27)
+            title_btn.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+            path_row = create_styled_frame(frame)
+            path_row.grid(row=0, column=1, sticky="ew")
+            path_row.grid_columnconfigure(0, weight=1)
+            entry = create_styled_entry(path_row, textvariable=self.settings_vars['chats_dir'])
+            entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+            def browse():
+                chosen = filedialog.askdirectory(initialdir=self.settings_vars['chats_dir'].get() or suggest_default_chats_dir())
+                if chosen:
+                    self.settings_vars['chats_dir'].set(chosen)
+            create_styled_button(path_row, text=Lang.get("browse"), width=80, command=browse).grid(row=0, column=1)
+            desc_frame = create_styled_frame(frame, fg_color="transparent")
+            desc_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+            desc_label = create_styled_label(desc_frame, text=Lang.get("chats_dir_desc", default=""), wraplength=400, justify="left")
+            desc_label.pack(fill="x", padx=5, pady=2)
+            def toggle():
+                if desc_frame.winfo_ismapped():
+                    desc_frame.grid_remove()
+                    title_btn.configure(text="╰ " + Lang.get("chats_dir", default="chats_dir"))
+                else:
+                    desc_frame.grid()
+                    title_btn.configure(text="╭ " + Lang.get("chats_dir", default="chats_dir"))
+            title_btn.configure(command=toggle)
+            desc_label.bind("<Button-1>", lambda e: toggle())
+            desc_frame.grid_remove()
         def validate_model(self):
             model_type = self.settings_vars['model_type'].get()
             connection_string = self._build_connection_string()
@@ -1382,11 +1491,17 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 chat_button = row_frame.winfo_children()[0]
                 chat_id = getattr(chat_button, "chat_id", None)
                 if not chat_id: continue
-                if hasattr(chat_button, '_hover') and chat_button._hover: continue
                 is_blinking = self.chat_blink_states.get(chat_id, False)
-                if self.current_chat_id == chat_id: color = PURPLE_ACCENT
-                elif is_blinking: color = ACTIVE_CHAT_COLOR
-                else: color = "transparent"
+                is_hover = bool(getattr(chat_button, '_hover', False))
+                if is_hover:
+                    color = PURPLE_ACCENT
+                elif self.current_chat_id == chat_id:
+                    color = PURPLE_ACCENT
+                elif chat_id in self.chat_blink_states:
+                    # мигание: чёрный ↔ фиолетовый
+                    color = ACTIVE_CHAT_COLOR if is_blinking else BLINK_CHAT_COLOR_OFF
+                else:
+                    color = "transparent"
                 chat_button.configure(fg_color=color)
         def show_initial_settings(self): self.withdraw(); InitialSettingsWindow(self, self.backend)
         def setup_main_ui(self):
@@ -1602,11 +1717,19 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 chat_button.grid(row=0, column=0, sticky="ew")
                 setattr(chat_button, "chat_id", chat["id"])
                 chat_button._hover = False
-                chat_button.bind("<Enter>", lambda e: setattr(e.widget, '_hover', True))
-                chat_button.bind("<Leave>", lambda e: setattr(e.widget, '_hover', False))
-                files_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "files")))
-                reports_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "reports")))
-                results_path = Path(resource_path(os.path.join("data", "chats", chat["id"], "results")))
+                def _on_chat_enter(e, btn=chat_button):
+                    btn._hover = True
+                    try: btn.configure(fg_color=PURPLE_ACCENT)
+                    except tk.TclError: pass
+                def _on_chat_leave(e, btn=chat_button):
+                    btn._hover = False
+                    self.update_chat_list_colors()
+                chat_button.bind("<Enter>", _on_chat_enter)
+                chat_button.bind("<Leave>", _on_chat_leave)
+                chat_root = self.backend.chat_folder(chat["id"])
+                files_path = chat_root / "files"
+                reports_path = chat_root / "reports"
+                results_path = chat_root / "results"
                 has_reports = reports_path.exists() and reports_path.is_dir()
                 has_results = results_path.exists() and results_path.is_dir()
                 column_offset = 1
@@ -1629,7 +1752,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             if current_selection not in chat_ids: self.on_chat_select(first_chat_id) if first_chat_id else self.clear_chat_view()
             self.update_chat_list_colors()
         def open_folder(self, chat_id, folder_name):
-            folder_path = Path(resource_path(os.path.join("data", "chats", chat_id, folder_name)))
+            folder_path = self.backend.chat_folder(chat_id) / folder_name
             if not folder_path.exists(): showinfo(self, Lang.get("info"), Lang.get("folder_not_found", folder_name=folder_name)); return
             try:
                 if platform.system() == "Windows": os.startfile(str(folder_path))
@@ -1657,17 +1780,46 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.update_chat_list_colors()
         def clear_messages(self):
             for widget in self.messages_frame.winfo_children(): widget.destroy()
+            # Сброс scrollregion при пустом/новом чате (иначе остаётся высота предыдущего)
+            if hasattr(self.messages_frame, '_parent_canvas'):
+                try:
+                    self.messages_frame._parent_canvas.configure(scrollregion=(0, 0, 0, 0))
+                    self.messages_frame._parent_canvas.yview_moveto(0)
+                except tk.TclError:
+                    pass
+        def _scroll_messages_to_bottom(self):
+            if not hasattr(self, 'messages_frame') or not self.messages_frame.winfo_exists(): return
+            if not hasattr(self.messages_frame, '_parent_canvas'): return
+            try:
+                self.messages_frame.update_idletasks()
+                canvas = self.messages_frame._parent_canvas
+                canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, 0, 0))
+                canvas.yview_moveto(1.0)
+            except tk.TclError:
+                pass
         def load_chat_messages(self):
             self.clear_messages()
             if not self.current_chat_id: return
-            self.messages_frame.update_idletasks()
             messages = self.backend.get_messages(self.current_chat_id)
-            for msg in messages: self.add_message_to_ui(msg["text"], msg["isMy"], attachments=msg.get("attachments", []))
-            if hasattr(self.messages_frame, '_parent_canvas'): self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
-            self.after(0, lambda: self.messages_frame._parent_canvas.yview_moveto(1))
+            if not messages:
+                self.after_idle(self._scroll_messages_to_bottom)
+                return
+            show_dt = self.backend.get_global_settings().get("show_message_datetime", "0") == "1"
+            # Пакетная отрисовка: без scroll на каждое сообщение
+            for msg in messages:
+                self.add_message_to_ui(
+                    msg["text"], msg["isMy"],
+                    attachments=msg.get("attachments", []),
+                    timestamp=msg.get("timestamp"),
+                    show_datetime=show_dt,
+                    scroll=False)
+            self.after_idle(self._scroll_messages_to_bottom)
+            self._update_message_wraplengths(force=True)
         def copy_text_to_clipboard(self, text): self.clipboard_clear(); self.clipboard_append(text)
-        def add_message_to_ui(self, text, is_my, is_question=False, attachments=None):
-            bubble, msg_text_widget = create_chat_message_bubble(self.messages_frame, text, is_my, attachments, is_question)
+        def add_message_to_ui(self, text, is_my, is_question=False, attachments=None, timestamp=None, show_datetime=False, scroll=True):
+            bubble, msg_text_widget = create_chat_message_bubble(
+                self.messages_frame, text, is_my, attachments, is_question,
+                timestamp=timestamp, show_datetime=show_datetime)
             def create_context_menu(event):
                 menu = tk.Menu(self, tearoff=0, bg=DARK_SECONDARY, fg=WHITE, font=(FONT_FAMILY, 8))
                 menu.add_command(label=Lang.get("copy"), command=lambda: self.copy_text_to_clipboard(text))
@@ -1682,10 +1834,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     create_styled_label(att_frame, text=Path(att).name).pack(side=tk.LEFT)
                     hover_color = PURPLE_ACCENT if is_my else DARK_BG
                     CTkButton(att_frame, text="f", font=FONT_REGULAR, width=25, height=25, fg_color="transparent", hover_color=hover_color, command=lambda a=att: self.open_attachment(a)).pack(side=tk.RIGHT)
-            self.messages_frame.update_idletasks()
-            if hasattr(self.messages_frame, '_parent_canvas'): self.messages_frame._parent_canvas.configure(scrollregion=self.messages_frame._parent_canvas.bbox("all"))
-            self.after(0, lambda: self.messages_frame._parent_canvas.yview_moveto(1.0))
-            self._update_message_wraplengths(force=True)
+            if scroll:
+                self.after_idle(self._scroll_messages_to_bottom)
+                self._update_message_wraplengths(force=True)
         def open_attachment(self, file_path):
             try:
                 if sys.platform == "win32": os.startfile(file_path)
@@ -1758,8 +1909,16 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             log_queue = multiprocessing.Queue()
             current_passwords = encryption_utils.SESSION_PASSWORDS.copy()
             from cross_gpt import initialize_work
-            p = multiprocessing.Process(target=initialize_work, args=(get_base_dir(), chat_id, input_queue, output_queue, log_queue, current_passwords))
+            # Первый запуск процесса: передаём settings dict, чтобы не читать БД повторно
+            is_first_start = chat_id not in getattr(self, '_chat_process_started', set())
+            settings_override = dict(chat_settings) if is_first_start else None
+            p = multiprocessing.Process(
+                target=initialize_work,
+                args=(get_base_dir(), chat_id, input_queue, output_queue, log_queue, current_passwords, settings_override))
             p.start()
+            if not hasattr(self, '_chat_process_started'):
+                self._chat_process_started = set()
+            self._chat_process_started.add(chat_id)
             self.chat_processes[chat_id] = p
             self.input_queues[chat_id] = input_queue
             self.output_queues[chat_id] = output_queue
@@ -1781,8 +1940,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                         attachments = None
                         is_question = False
                     if not message_text: continue
-                    self.backend.add_message(chat_id, message_text, False, attachments)
-                    if chat_id == self.current_chat_id: self.add_message_to_ui(message_text, False, is_question=is_question, attachments=attachments)
+                    # Убираем из UI сырые маркеры команд (ask_user и т.п.), command остаётся для is_question
+                    import re as _re
+                    display_text = _re.sub(r'!{2,4}\s*[\w\-]+\s*!{2,4}', '', message_text)
+                    display_text = _re.sub(r'\n{3,}', '\n\n', display_text).strip() or message_text
+                    self.backend.add_message(chat_id, display_text, False, attachments)
+                    if chat_id == self.current_chat_id: self.add_message_to_ui(display_text, False, is_question=is_question, attachments=attachments)
                     else: self.chat_blink_states[chat_id] = True
                     if not self.focus_get(): self.flash_window()
             except queue.Empty: pass
@@ -1906,11 +2069,28 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             main_frame = create_styled_frame(self)
             main_frame.pack(fill="both", expand=True, padx=20, pady=20)
             self._create_model_ui(main_frame)
+            # Выбор папки чатов при первом запуске
+            chats_block = create_styled_frame(main_frame, fg_color="transparent")
+            chats_block.pack(fill="x", pady=(10, 0))
+            if 'chats_dir' not in self.settings_vars:
+                self.settings_vars['chats_dir'] = tk.StringVar(value=suggest_default_chats_dir())
+            create_styled_label(chats_block, text=Lang.get("chats_dir", default="chats_dir")).pack(anchor="w")
+            path_row = create_styled_frame(chats_block, fg_color="transparent")
+            path_row.pack(fill="x", pady=4)
+            path_row.grid_columnconfigure(0, weight=1)
+            create_styled_entry(path_row, textvariable=self.settings_vars['chats_dir']).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+            def browse_chats():
+                chosen = filedialog.askdirectory(initialdir=self.settings_vars['chats_dir'].get() or suggest_default_chats_dir())
+                if chosen: self.settings_vars['chats_dir'].set(chosen)
+            create_styled_button(path_row, text=Lang.get("browse"), width=80, command=browse_chats).grid(row=0, column=1)
+            create_styled_label(chats_block, text=Lang.get("chats_dir_desc", default=""), wraplength=420, justify="left", text_color=DARK_TEXT_SECONDARY).pack(anchor="w")
             self._load_provider_params_from_string()
         def _get_default_settings(self):
             settings = self.backend.get_global_settings()
             settings['language'] = self.lang_var.get()
             if 'max_token_limit' not in settings: settings['max_token_limit'] = '8192'
+            if 'chats_dir' not in settings or not settings.get('chats_dir'):
+                settings['chats_dir'] = suggest_default_chats_dir()
             return {key: tk.StringVar(value=val) for key, val in settings.items()}
         def validate_model(self):
             model_type = self.settings_vars['model_type'].get()
@@ -1954,12 +2134,17 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 max_limit = int(self.settings_vars['max_token_limit'].get())
                 if not (1 <= token_limit <= max_limit): raise ValueError
             except (ValueError, TypeError): showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens)); return
+            chats_dir = normalize_chats_dir(self.settings_vars.get('chats_dir', tk.StringVar(value=suggest_default_chats_dir())).get())
+            try: os.makedirs(chats_dir, exist_ok=True)
+            except OSError as e:
+                showerror(self, Lang.get("error"), str(e)); return
             settings_to_save = {
                 'language': self.lang_var.get(),
                 'model_type': self.settings_vars['model_type'].get(),
                 'token_limit': self.settings_vars['token_limit'].get(),
                 'max_token_limit': self.settings_vars['max_token_limit'].get(),
-                'model_provider_params': self.settings_vars['model_provider_params'].get()}
+                'model_provider_params': self.settings_vars['model_provider_params'].get(),
+                'chats_dir': chats_dir}
             self.backend.update_global_settings(settings_to_save)
             self.on_close()
         def on_close(self):
@@ -1970,6 +2155,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
     class SettingsWindow(BaseSettingsWindow):
         def __init__(self, master, backend):
             super().__init__(master, backend, "settings_title", "500x450")
+            self._show_chats_dir_picker = True  # только главные настройки
             self.bind("<Control-o>", self.add_custom_mod)
             if sys.platform == "darwin": self.bind("<Command-o>", self.add_custom_mod)
             tabview = CTkTabview(self, **TAB_VIEW_THEME)
@@ -2012,44 +2198,89 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             create_styled_button(btn_frame, text=Lang.get("reset_settings_button"), command=self.reset_settings).pack(side="right", padx=5)
             self._load_provider_params_from_string()
         def save_settings(self):
+            # 1) Валидация и диалоги — пока окно открыто
+            current_model_type = self.settings_vars['model_type'].get()
+            current_connection_string = self._build_connection_string()
+            settings_changed = (current_model_type != self.original_model_type or current_connection_string != self.original_connection_string)
+            if not self.validated and settings_changed:
+                if not askyesno(self, Lang.get("warning"), Lang.get("model_not_validated_continue")): return
+            self.enforce_token_limit()
             try:
-                if self.master.winfo_exists():
-                    if hasattr(self.master, 'new_chat_btn'): self.master.new_chat_btn.configure(state="disabled")
-                    if hasattr(self.master, 'settings_btn'): self.master.settings_btn.configure(state="disabled")
-                    if hasattr(self.master, 'send_btn'): self.master.send_btn.configure(state="disabled")
-                current_model_type = self.settings_vars['model_type'].get()
-                current_connection_string = self._build_connection_string()
-                settings_changed = (current_model_type != self.original_model_type or current_connection_string != self.original_connection_string)
-                if not self.validated and settings_changed:
-                    if not askyesno(self.master, Lang.get("warning"), Lang.get("model_not_validated_continue")): return
-                self.enforce_token_limit()
+                token_limit = int(self.settings_vars['token_limit'].get())
+                max_limit = int(self.settings_vars['max_token_limit'].get())
+                if not (1 <= token_limit <= max_limit): raise ValueError
+            except (ValueError, TypeError):
+                showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens)); return
+            settings_to_save = {
+                'language': self.settings_vars['language'].get(),
+                'model_type': self.settings_vars['model_type'].get(),
+                'token_limit': self.settings_vars['token_limit'].get(),
+                'max_token_limit': self.settings_vars['max_token_limit'].get(),
+                'model_provider_params': self.settings_vars['model_provider_params'].get(),}
+            metadata = self.backend.get_settings_metadata()
+            for key in metadata:
+                if key in self.settings_vars: settings_to_save[key] = self.settings_vars[key].get()
+            if settings_changed: settings_to_save['model_provider_params'] = self._build_connection_string()
+            old_chats_root = self.backend.get_chats_root()
+            new_chats_root = old_chats_root
+            do_migrate = False
+            if 'chats_dir' in self.settings_vars:
+                new_chats_root = normalize_chats_dir(self.settings_vars['chats_dir'].get())
+                settings_to_save['chats_dir'] = new_chats_root
+                if os.path.normpath(old_chats_root) != os.path.normpath(new_chats_root):
+                    has_old = os.path.isdir(old_chats_root) and any(
+                        os.path.isdir(os.path.join(old_chats_root, n)) for n in os.listdir(old_chats_root) if not n.startswith('.'))
+                    if has_old:
+                        do_migrate = askyesno(
+                            self, Lang.get("chats_dir_migrate_title"),
+                            Lang.get("chats_dir_migrate_message", old=old_chats_root, new=new_chats_root))
+            pending_mods = {}
+            if hasattr(self, 'pending_default_mods'):
+                pending_mods = {mid: bool(var.get()) for mid, var in self.pending_default_mods.items()}
+            new_language = self.settings_vars['language'].get()
+            original_language = self.original_language
+            master = self.master
+            backend = self.backend
+            # 2) Сразу закрыть окно + заблокировать главные кнопки — без визуального лага в диалоге
+            def _set_main_btns(state):
+                if not master.winfo_exists(): return
+                for attr in ('new_chat_btn', 'settings_btn', 'send_btn'):
+                    if hasattr(master, attr):
+                        try: getattr(master, attr).configure(state=state)
+                        except tk.TclError: pass
+            _set_main_btns("disabled")
+            try:
+                self.grab_release()
+            except Exception:
+                pass
+            self.destroy()
+            # 3) Тяжёлую работу — после закрытия UI
+            def _do_heavy():
                 try:
-                    token_limit = int(self.settings_vars['token_limit'].get())
-                    max_limit = int(self.settings_vars['max_token_limit'].get())
-                    if not (1 <= token_limit <= max_limit): raise ValueError
-                except (ValueError, TypeError): showerror(self.master, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens)); return
-                # Собираем значения всех настроек, включая динамические из метаданных
-                settings_to_save = {
-                    'language': self.settings_vars['language'].get(),
-                    'model_type': self.settings_vars['model_type'].get(),
-                    'token_limit': self.settings_vars['token_limit'].get(),
-                    'max_token_limit': self.settings_vars['max_token_limit'].get(),
-                    'model_provider_params': self.settings_vars['model_provider_params'].get(),}
-                # Добавляем все настройки чата из метаданных
-                metadata = self.backend.get_settings_metadata()
-                for key in metadata:
-                    if key in self.settings_vars: settings_to_save[key] = self.settings_vars[key].get()
-                if settings_changed: settings_to_save['model_provider_params'] = self._build_connection_string()
-                self.backend.update_global_settings(settings_to_save)
-                new_language = self.settings_vars['language'].get()
-                if new_language != self.original_language: Lang.load_language(new_language)
-                ModuleManager().load_modules(self.backend, reload_m=True)
-                self.on_close()
-            finally:
-                if self.master.winfo_exists():
-                    if hasattr(self.master, 'new_chat_btn'): self.master.new_chat_btn.configure(state="normal")
-                    if hasattr(self.master, 'settings_btn'): self.master.settings_btn.configure(state="normal")
-                    if hasattr(self.master, 'send_btn'): self.master.send_btn.configure(state="normal")
+                    if do_migrate:
+                        ok, msg = backend.migrate_chats_dir(old_chats_root, new_chats_root)
+                        if not ok and master.winfo_exists():
+                            showerror(master, Lang.get("error"), Lang.get("chats_dir_migrate_failed", e=msg))
+                    try:
+                        os.makedirs(new_chats_root, exist_ok=True)
+                    except OSError as e:
+                        if master.winfo_exists():
+                            showerror(master, Lang.get("error"), str(e))
+                    backend.update_global_settings(settings_to_save)
+                    for mod_id, enabled in pending_mods.items():
+                        backend.update_default_mod_enabled(mod_id, enabled)
+                    if new_language != original_language:
+                        Lang.load_language(new_language)
+                    ModuleManager().load_modules(backend, reload_m=True)
+                    if master.winfo_exists() and hasattr(master, 'load_chats'):
+                        backend.cache.update_chats(backend._load_chats_from_db())
+                        master.load_chats()
+                finally:
+                    _set_main_btns("normal")
+            if master.winfo_exists():
+                master.after(1, _do_heavy)
+            else:
+                _do_heavy()
         def reset_settings(self):
             if askyesno(self, Lang.get("reset_settings_confirm_title"), Lang.get("reset_settings_confirm_message")):
                 db_path = Path(self.backend.db_path)
@@ -2075,17 +2306,26 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             create_styled_label(self.scrollable_frame, text=Lang.get("global_custom_modules"), font=FONT_REGULAR).pack(anchor="w", padx=5, pady=(10,2))
             for mod in custom_mods: self.create_mod_ui(self.scrollable_frame, mod, is_default=False)
         def create_mod_ui(self, parent, mod_data, is_default):
-            enabled_var = tk.BooleanVar(value=mod_data["enabled"])
-            def toggle_callback(): self.toggle_default_mod(mod_data["id"], enabled_var.get())
+            # Только локальное состояние; запись в БД — по кнопке Save
+            if not hasattr(self, 'pending_default_mods'):
+                self.pending_default_mods = {}
+            if is_default:
+                if mod_data["id"] not in self.pending_default_mods:
+                    self.pending_default_mods[mod_data["id"]] = tk.BooleanVar(value=mod_data["enabled"])
+                enabled_var = self.pending_default_mods[mod_data["id"]]
+            else:
+                enabled_var = None
             def remove_callback():
                 if askyesno(self, Lang.get("warning"), Lang.get("remove_module_confirm")):
                     self.backend.remove_custom_mod(mod_data["id"])
                     ModuleManager().update_custom_modules(self.backend)
                     self.rebuild_mods_list()
-            create_module_ui_item(parent, mod_data, "default" if is_default else "custom", enabled_var=enabled_var if is_default else None, on_toggle=toggle_callback if is_default else None, on_remove=None if is_default else remove_callback, show_checkbox=is_default)
-        def toggle_default_mod(self, mod_id, enabled):
-            self.backend.update_default_mod_enabled(mod_id, enabled)
-            ModuleManager().load_modules(self.backend, reload_m=True)
+            create_module_ui_item(
+                parent, mod_data, "default" if is_default else "custom",
+                enabled_var=enabled_var if is_default else None,
+                on_toggle=None,
+                on_remove=None if is_default else remove_callback,
+                show_checkbox=is_default)
         def remove_custom_mod(self, mod_id):
             if askyesno(self, Lang.get("warning"), Lang.get("remove_module_confirm")):
                 self.backend.remove_custom_mod(mod_id)
@@ -2285,23 +2525,49 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             except (ValueError, TypeError): showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens)); return
             model_config = {'model_type': self.settings_vars['model_type'].get(), 'model_provider_params': self.settings_vars['model_provider_params'].get(), 'token_limit': self.settings_vars['token_limit'].get()}
             if settings_changed: model_config['model_provider_params'] = self._build_connection_string()
-            # Собираем настройки чата динамически из метаданных
             metadata = self.backend.get_settings_metadata()
             chat_config = {"language": Lang.current_language}
             for key in metadata:
                 if key in self.settings_vars: chat_config[key] = self.settings_vars[key].get()
-            module_manager = ModuleManager()
-            default_mods = module_manager.get_default_modules()
             default_mods_config = {mid: var.get() for mid, var in self.settings_vars['default_mods'].items()}
-            final_custom_mods = self.custom_mods_for_chat + self.newly_added_mods
+            final_custom_mods = list(self.custom_mods_for_chat) + list(self.newly_added_mods)
             settings_bundle = {"model_config": model_config, "chat_config": chat_config, "default_mods_config": default_mods_config, "custom_mods_list": final_custom_mods}
-            self.on_close()
-            chat_data = self.backend.create_chat(chat_name, settings_bundle)
-            if not chat_data: showerror(self.master, Lang.get("error"), Lang.get("chat_name_exists")); return
-            if hasattr(self, 'valid_password') and self.valid_password: encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = self.valid_password
-            elif model_config['model_type'] in encryption_utils.SESSION_PASSWORDS: encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = encryption_utils.SESSION_PASSWORDS[model_config['model_type']]
-            self.master.load_chats()
-            self.master.on_chat_select(chat_data["id"])
+            valid_password = getattr(self, 'valid_password', None)
+            master = self.master
+            backend = self.backend
+            # Сразу закрыть окно, тяжёлое — after idle
+            def _set_main_btns(state):
+                if not master.winfo_exists(): return
+                for attr in ('new_chat_btn', 'settings_btn', 'send_btn'):
+                    if hasattr(master, attr):
+                        try: getattr(master, attr).configure(state=state)
+                        except tk.TclError: pass
+            _set_main_btns("disabled")
+            try:
+                self.grab_release()
+            except Exception:
+                pass
+            self.destroy()
+            def _do_create():
+                try:
+                    chat_data = backend.create_chat(chat_name, settings_bundle)
+                    if not chat_data:
+                        if master.winfo_exists():
+                            showerror(master, Lang.get("error"), Lang.get("chat_name_exists"))
+                        return
+                    if valid_password:
+                        encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = valid_password
+                    elif model_config['model_type'] in encryption_utils.SESSION_PASSWORDS:
+                        encryption_utils.SESSION_PASSWORDS[chat_data["id"]] = encryption_utils.SESSION_PASSWORDS[model_config['model_type']]
+                    if master.winfo_exists():
+                        master.load_chats()
+                        master.on_chat_select(chat_data["id"])
+                finally:
+                    _set_main_btns("normal")
+            if master.winfo_exists():
+                master.after(1, _do_create)
+            else:
+                _do_create()
     # ------------------------------------------------------------
     # 5. Инициализация приложения
     # ------------------------------------------------------------

@@ -16,7 +16,8 @@ from cross_gpt import (
     chat_path,
     recreate_agents,
     send_output_message,
-    get_input_message)
+    get_input_message,
+    critic_reuse_dialog)
 import os
 from datetime import datetime
 base_dir = os.path.join(chat_path, "results")
@@ -49,7 +50,14 @@ def main(text):
         filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}__{filename}.txt"
         path = os.path.join(base_dir, filename)
         try:
+            os.makedirs(base_dir, exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f: f.write(text)
+            # файл результата — для пользователя
+            try:
+                with open(path + '.for_user', 'w', encoding='utf-8') as mf:
+                    mf.write('for_user=1\n')
+            except Exception:
+                pass
         except Exception as e: let_log(f"Error: {e}")
     # ИСХОДНАЯ ЛОГИКА РАБОТЫ С КРИТИКОМ
     let_log('\n--- Проверка критика ---')
@@ -59,6 +67,17 @@ def main(text):
     if critic_result == 3:
         is_dialog_correct = 'correct'
         save_emb_dialog(is_dialog_correct, result_text=text, result=True)
+    elif isinstance(critic_result, str) and critic_reuse_dialog:
+        # Не пересоздаём диалог: возвращаем ответ + обновлённый промпт (комментарий критика уже в global_state)
+        let_log(f"[critic_reuse_dialog] доработка без пересоздания: {str(critic_result)[:120]}...")
+        save_emb_dialog(is_dialog_correct, result_text=text, result=True)
+        save_emb_dialog(is_dialog_correct)
+        global_state.dialog_state = True
+        global_state.stop_agent = True
+        global_state.dialog_ended = False
+        global_state.need_owerwrite_operator = True
+        # Ответ агенту: исходный результат + указание критика
+        return text + '\n\n' + str(critic_result)
     elif critic_result != 2 or critic != 1:
         let_log(f"Критик требует переделки: {critic_result}...")
         save_emb_dialog(is_dialog_correct, result_text=text, result=True)

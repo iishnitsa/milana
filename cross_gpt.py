@@ -80,6 +80,13 @@ agent_func = None
 use_librarian = True
 recreate_agents = False
 cut_wrong_command_history = True
+use_old_gigo = True
+use_gigo = True
+librarian_use_models = False
+module_hints_for_operator = False
+give_all_tools = False
+critic_reuse_dialog = True
+one_shot_intention_permission = False
 
 default_handlers_names = { # это из настроек должно выгружаться, или лучше из документации хэндлеров которая внутри них
     'doc': 'process_docx',
@@ -250,13 +257,56 @@ def let_log(t):
         log_file = os.path.join(chat_path, lname)
         with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
 
-def traceprint(*args, **kwargs):
-    stack = traceback.extract_stack()
-    caller = stack[-2]
-    line_number = caller.lineno
-    filename = caller.filename.split("/")[-1]
-    if not args: let_log(f"[{filename}:{line_number}]")
-    else: let_log(f"[{filename}:{line_number}]:", *args, **kwargs)
+# Опционально: полный стек функций + enter/exit (global_state.trace_full / trace_func_io)
+_trace_func_depth = {}
+
+def traceprint(*args, show_all=None, **kwargs):
+    """Лог точки вызова. show_all=True или global_state.trace_full — вся цепочка функций."""
+    stack = traceback.extract_stack()[:-1]  # без самого traceprint
+    full = show_all if show_all is not None else bool(getattr(global_state, 'trace_full', False))
+    if full and len(stack) > 1:
+        chain = []
+        for fr in stack[-12:]:
+            chain.append(f"{fr.filename.split('/')[-1]}:{fr.lineno}:{fr.name}")
+        prefix = " → ".join(chain)
+    else:
+        caller = stack[-1] if stack else None
+        if caller:
+            prefix = f"[{caller.filename.split('/')[-1]}:{caller.lineno}:{caller.name}]"
+        else:
+            prefix = "[traceprint]"
+    if not args:
+        let_log(prefix)
+    else:
+        let_log(f"{prefix}:", *args, **kwargs)
+
+def trace_func(name=None, *, enabled=None):
+    """
+    Декоратор: логирует вход/выход из функции (опционально).
+    Включается global_state.trace_func_io или enabled=True.
+    """
+    def deco(fn):
+        fname = name or getattr(fn, '__name__', 'func')
+        def wrapper(*a, **kw):
+            on = enabled if enabled is not None else bool(getattr(global_state, 'trace_func_io', False))
+            if not on:
+                return fn(*a, **kw)
+            depth = _trace_func_depth.get(fname, 0)
+            _trace_func_depth[fname] = depth + 1
+            let_log(f"[trace ENTER x{depth+1}] {fname}")
+            try:
+                result = fn(*a, **kw)
+                let_log(f"[trace EXIT  x{depth+1}] {fname}")
+                return result
+            except Exception as e:
+                let_log(f"[trace FAIL  x{depth+1}] {fname}: {e}")
+                raise
+            finally:
+                _trace_func_depth[fname] = max(0, _trace_func_depth.get(fname, 1) - 1)
+        wrapper.__name__ = getattr(fn, '__name__', 'wrapper')
+        wrapper.__doc__ = getattr(fn, '__doc__', None)
+        return wrapper
+    return deco
 
 def read_cache():
     global cache_counter, left_cache_counter
@@ -383,8 +433,18 @@ def get_input_message(command=None, timeout=None, wait=False):
     return answer
 
 @cacher
+def _strip_ui_command_markers(text: str) -> str:
+    """Убирает из текста для UI маркеры команд вида !!!name!!! / !!!!name!!!!."""
+    if not text:
+        return text or ''
+    # служебные маркеры команд, не показываем пользователю
+    cleaned = re.sub(r'!{2,4}\s*[\w\-]+\s*!{2,4}', '', text)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned if cleaned else text
+
 def send_output_message(text=None, attachments=None, command=None):
-    message_data = {'text': text or '', 'attachments': attachments or None, 'command': command}
+    display = _strip_ui_command_markers(text) if text else ''
+    message_data = {'text': display, 'attachments': attachments or None, 'command': command}
     try: ui_conn[1].put(message_data)
     except Exception as e: let_log(f"Ошибка при отправке сообщения: {e}"); return
     return True
@@ -955,22 +1015,44 @@ def system_tools_loader():
 @cacher
 def get_embs(text):
     global emb_token_limit
-    if not text or not text.strip(): return []
+    if not text or not text.strip():
+        let_log("[get_embs] пустой текст — эмбеддинг не запрашиваем")
+        return []
     current_text = text
     if len(current_text) * text_tokens_coefficient > emb_token_limit: half_len = len(current_text) // 2
-    while True:
+    last_err = None
+    for attempt in range(3):
         try:
             result = get_provider_embs(current_text)
+            # Пустой/None результат — не пишем в Chroma, пробуем ещё раз
+            if result is None or (isinstance(result, (list, tuple)) and len(result) == 0):
+                last_err = "empty embedding vector"
+                let_log(f"[get_embs] пустой embedding (попытка {attempt+1}/3), текст[:80]={current_text[:80]!r}")
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            if isinstance(result, (list, tuple)) and all(
+                    (not isinstance(x, (int, float)) or x == 0) for x in (result[:8] if len(result) >= 8 else result)):
+                # все нули в начале — подозрительно, но не всегда ошибка; логируем
+                let_log(f"[get_embs] embedding начинается с нулей, dim={len(result)}")
             # Обновляем лимит, если пришлось урезать текст
-            if len(current_text) < len(text): emb_token_limit = int(len(current_text) * text_tokens_coefficient); let_log(f"[get_embs] Обновлён emb_token_limit: {new_limit} (был {emb_token_limit})")
+            if len(current_text) < len(text):
+                new_limit = int(len(current_text) * text_tokens_coefficient)
+                let_log(f"[get_embs] Обновлён emb_token_limit: {new_limit} (был {emb_token_limit})")
+                emb_token_limit = new_limit
             return result
         except Exception as e:
+            last_err = e
             if 'ContextOverflowError' in str(e):
                 half_len = len(current_text) // 2
                 if half_len == 0: raise
                 current_text = current_text[:half_len]
                 continue
-            else: print(f"[get_embs] Ошибка: {e}"); return []
+            else:
+                let_log(f"[get_embs] Ошибка (попытка {attempt+1}/3): {e}")
+                time.sleep(0.5 * (attempt + 1))
+                continue
+    let_log(f"[get_embs] не удалось получить embedding: {last_err}")
+    return []
 
 def get_token_limit(): return token_limit
 
@@ -1006,8 +1088,8 @@ def _retry_loop(get_response, is_valid, error_retry_delay=60, empty_retry_delay=
             continue
 
         if not is_valid(response):
+            # В UI не спамим «пустой ответ» — только в лог; UI — при реальных ошибках (сеть/лимит)
             let_log("[WARN] Модель вернула пустой или невалидный ответ. Повторная попытка...")
-            send_ui_no_cache("Пустой ответ от модели, повторная попытка...")
             time.sleep(empty_retry_delay)
             continue
 
@@ -2031,7 +2113,72 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     let_log(f"{'='*60}")
 
 @cacher
-def gigo(task: str, settings: dict = None) -> str:
+def gigo(base_task: str, settings: dict = None) -> str:
+    """
+    Классический GIGO (версия may_fixes до advanced gigo):
+    dreamer/realist/critic → plan с no_markdown_instruction и числом пунктов плана.
+    Librarian намеренно закомментирован (как в эталоне).
+    """
+    if not use_gigo:
+        try: return gigo_return_1 + base_task
+        except NameError: return base_task
+    # librarian в классическом gigo закомментирован — так и надо
+    # try: questions = ask_model(base_task + global_state.summ_attach, system_prompt=gigo_questions)
+    # except RuntimeError as e:
+    #     if 'ContextOverflowError' in str(e):
+    #         base_task = text_cutter(base_task)
+    #         questions = ask_model(text_cutter(base_task + global_state.summ_attach), system_prompt=gigo_questions)
+    #     else: raise
+    # additional_info = librarian(questions)
+    # if additional_info != found_info_1: additional_info = '\n' + gigo_found_info + '\n' + additional_info
+    # else: additional_info = ''; let_log(found_info_1)
+    additional_info = ''
+    minds_text = ''
+    minds = []
+    roles = [gigo_dreamer, gigo_realist, gigo_critic]
+    ents_roles = ', '.join(roles) + '\n'
+    role_notes = [gigo_dreamer_note, gigo_realist_note, gigo_critic_note]
+    for role, role_note in zip(roles, role_notes):
+        try: minds.append(ask_model(base_task + additional_info, system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
+        except RuntimeError as e:
+            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
+            else: raise
+    for role, mind in zip(roles, minds):
+        minds_text += worker_role_text + mind
+        if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
+        else:
+            minds_text += operator_role_text + gigo_next_role + role
+            if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
+    # Пункты плана: gigo_plan_items (настройка GIGO), иначе number_of_plan_items
+    n_items = 0
+    try:
+        if gigo_plan_items and int(gigo_plan_items) > 0:
+            n_items = int(gigo_plan_items)
+        elif getattr(global_state, 'number_of_plan_items', 0) and int(global_state.number_of_plan_items) > 0:
+            n_items = int(global_state.number_of_plan_items)
+    except Exception:
+        n_items = 0
+    try:
+        plan_num_prefix = gigo_make_plan_num
+    except NameError:
+        plan_num_prefix = '\nPlan items required: '
+    num_plan_items = (plan_num_prefix + str(n_items)) if n_items > 0 else ''
+    try: plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + additional_info + minds_text)
+    except RuntimeError as e:
+        if 'ContextOverflowError' in str(e):
+            minds_text = ''
+            for role, mind in zip(roles, minds):
+                minds_text += worker_role_text + text_cutter(mind)
+                if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
+                else:
+                    minds_text += operator_role_text + gigo_next_role + role
+                    if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
+            plan = ask_model(system_role_text + gigo_make_plan_1 + no_markdown_instruction + num_plan_items + gigo_make_plan_2 + ents_roles + gigo_return_1 + base_task + text_cutter(additional_info) + minds_text)
+        else: raise
+    return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
+
+def gigo_adv(task: str, settings: dict = None) -> str:
+    """Продвинутый GIGO (идеи, фильтр, dreamer/realist/critic, синтез)."""
     if not use_gigo: return gigo_label_task + task
     # 1. Анализ намерения
     try: intention_text = ask_model(task, system_prompt=gigo_intention_prompt + '\n' + warn_command_text_8 + '\n' + global_state.tools_str)
@@ -2539,6 +2686,16 @@ def tools_selector(text, sid):
     except Exception: func_callable = None
     if not func_callable:
         let_log("[TOOLS_SELECTOR] не удалось получить callable для команды")
+        # Неинициализированный system tool — сразу стоп
+        try:
+            if found_key in global_state.system_tools_keys or any(
+                    found_key in sk or sk in found_key for sk in global_state.system_tools_keys):
+                let_log(f"[FATAL] Системный инструмент '{found_key}' не инициализирован")
+                try: send_ui_no_cache(f"FATAL: system tool not initialized: {found_key}")
+                except Exception: pass
+                sys.exit(1)
+        except Exception:
+            pass
         let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН] ===")
         write_cache([False, False])
         return None
@@ -2546,9 +2703,27 @@ def tools_selector(text, sid):
     let_log("[TOOLS_SELECTOR] Выполняем функцию...")
     if found_key == global_state.start_dialog_command_name: global_state.task_delegated = True
     remove_wrong_command_messages()
-    try: result = func_callable(content)
-    except Exception as e: result = "__TOOL_ERROR__: " + str(e)
-    if not isinstance(result, str): raise RuntimeError('FUNCTION ANSWER MUST BE STR'); sys.exit(1)
+    # Настоящий system tool = в system_tools_keys (модули из system_tools, не сторонние)
+    is_real_system = False
+    try:
+        is_real_system = found_key in global_state.system_tools_keys or any(
+            found_key in sk or sk in found_key for sk in global_state.system_tools_keys)
+    except Exception:
+        is_real_system = is_system
+    try:
+        result = func_callable(content)
+    except Exception as e:
+        if is_real_system:
+            let_log(f"[FATAL] Ошибка в системном инструменте '{found_key}': {e}")
+            try: send_ui_no_cache(f"FATAL system tool error: {found_key}: {e}")
+            except Exception: pass
+            sys.exit(1)
+        result = "__TOOL_ERROR__: " + str(e)
+    if not isinstance(result, str):
+        if is_real_system:
+            let_log(f"[FATAL] Системный инструмент '{found_key}' вернул не str")
+            sys.exit(1)
+        raise RuntimeError('FUNCTION ANSWER MUST BE STR')
     let_log(f"[TOOLS_SELECTOR] Результат (первые 500):\n{str(result)[:500]}")
     try: # 10) кэшировать результат если не системная команда
         if not is_system:
@@ -2737,7 +2912,11 @@ def init_chromadb(chroma_path, use_rag, max_attempts=3):
             else: raise RuntimeError("Cannot initialize ChromaDB even after deleting the database folder")
     raise RuntimeError("Unexpected: failed to initialize ChromaDB after all attempts")
 
-def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None):
+def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None, settings_override=None):
+    """
+    settings_override: dict настроек при первом запуске чата (не читать chatsettings с диска).
+    При повторных запусках (resume) settings_override=None — читаем из БД как раньше.
+    """
     global actual_handlers_names, another_tools_files_addresses
     global token_limit, emb_token_limit, chunk_size, left_cache_counter
     global client, milana_collection, user_collection, rag_collection
@@ -2749,14 +2928,29 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global do_chat_construct, native_func_call
     global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history, use_psm
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
-    global use_magical_prompt, use_gigo, gigo_idea_count, gigo_plan_items, gigo_use_entropy, gigo_use_random_roles, gigo_use_filter, gigo_use_librarian
+    global use_magical_prompt, use_gigo, use_old_gigo, gigo_idea_count, gigo_plan_items, gigo_use_entropy, gigo_use_random_roles, gigo_use_filter, gigo_use_librarian
+    global librarian_use_models, module_hints_for_operator, give_all_tools, critic_reuse_dialog, one_shot_intention_permission
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
+    # пометка: settings_override применится после открытия db_path
     # === Загружаем параметры чата ===
-    chat_path = os.path.join(base_dir, "data", "chats", chat_id)
-    filesystem_project_path = os.path.join(base_dir, "data", "chats", chat_id, 'files')
-    cache_path = os.path.join(chat_path, "cache.db")
     global_trans_db_path = os.path.join(base_dir, "data", "settings.db")
+    # Корень чатов из глобальных настроек (chats_dir), fallback data/chats
+    chats_root = os.path.join(base_dir, "data", "chats")
+    try:
+        _gs_conn = connect(global_trans_db_path)
+        _gs_cur = _gs_conn.cursor()
+        _gs_cur.execute("SELECT value FROM settings WHERE key = 'chats_dir'")
+        _row = _gs_cur.fetchone()
+        _gs_conn.close()
+        if _row and _row[0] and str(_row[0]).strip():
+            _cd = os.path.expanduser(str(_row[0]).strip())
+            chats_root = _cd if os.path.isabs(_cd) else os.path.join(base_dir, _cd)
+    except Exception:
+        pass
+    chat_path = os.path.join(chats_root, chat_id)
+    filesystem_project_path = os.path.join(chat_path, 'files')
+    cache_path = os.path.join(chat_path, "cache.db")
     folder_path = base_dir # Обновляем пути для system_tools
     sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]
     sys.path.append(os.path.join(folder_path, 'system_tools'))
@@ -2793,7 +2987,13 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
             );''')
     sql_exec('CREATE TABLE IF NOT EXISTS system_prompts (chat_id INTEGER PRIMARY KEY, system_prompt TEXT)''')
     initial_text, fl = load_initial_data(chat_id)
-    settings = load_chat_settings(chat_id)
+    # При первом запуске UI может передать settings_override, чтобы не читать БД повторно
+    if settings_override and isinstance(settings_override, dict):
+        settings = dict(settings_override)
+        let_log("[initialize_work] settings from override dict (first start)")
+    else:
+        settings = load_chat_settings(chat_id)
+        let_log("[initialize_work] settings from chatsettings.db")
     tool_paths = settings.get("another_tools", [])
     token_limit = int(settings.get("token_limit", 8192))
     global_state.allow_ocr = int(settings.get("allow_ocr", 0)) == 1
@@ -2818,12 +3018,24 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     use_global_cache = int(settings.get("use_global_cache", 0)) == 1
 
     use_gigo = int(settings.get("use_gigo", 1)) == 1
+    use_old_gigo = int(settings.get("use_old_gigo", 1)) == 1
     gigo_idea_count = int(settings.get("gigo_idea_count", 2))
     gigo_plan_items = int(settings.get("gigo_plan_items", 10))
     gigo_use_entropy = int(settings.get("gigo_use_entropy", 0)) == 1
     gigo_use_random_roles = int(settings.get("gigo_use_random_roles", 1)) == 1
     gigo_use_filter = int(settings.get("gigo_use_filter", 1)) == 1
     gigo_use_librarian = int(settings.get("gigo_use_librarian", 1)) == 1
+    librarian_use_models = int(settings.get("librarian_use_models", 0)) == 1
+    module_hints_for_operator = int(settings.get("module_hints_for_operator", 0)) == 1
+    give_all_tools = int(settings.get("give_all_tools", 0)) == 1
+    critic_reuse_dialog = int(settings.get("critic_reuse_dialog", 1)) == 1
+    one_shot_intention_permission = int(settings.get("one_shot_intention_permission", 0)) == 1
+    # optional trace flags (entry in settings optional)
+    try:
+        global_state.trace_full = int(settings.get("trace_full", 0)) == 1
+        global_state.trace_func_io = int(settings.get("trace_func_io", 0)) == 1
+    except Exception:
+        pass
 
     chroma_path = os.path.join(chat_path, "chroma_db") # === Инициализация ChromaDB ===
     client, milana_collection, user_collection, rag_collection = init_chromadb(chroma_path, use_rag)

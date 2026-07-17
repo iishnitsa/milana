@@ -377,6 +377,18 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
 
     history_final_str = "".join(history_strings_list)
     global_state.current_agent_history_for_filesystem = history_final_str
+    # При переполнении — векторизуем выпавшие из окна сообщения (shared / internal при overflow)
+    if use_rag and history_was_truncated:
+        try:
+            from chat_manager import vectorize_dropped_messages
+            included_ids = set(history_included_vector_ids)
+            dropped = [
+                m for m in history_to_use
+                if m.get('vector_id') and m.get('vector_id') not in included_ids and m.get('id', 0) != 0
+            ]
+            vectorize_dropped_messages(chat_id, dropped, overflow_happened=True)
+        except Exception as e:
+            let_log(f"[RAG] vectorize_dropped_messages: {e}")
     # RAG-часть (только если use_rag включён и история была усечена)
     rag_prompt_part = ""
     if use_rag and history_was_truncated:
@@ -390,25 +402,29 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
                 recent_context = "\n".join([f"{m['full_text']}" for m in history_to_use[-2:]])
             expanded_query = f"{recent_context}\n{current_message}"
             query_embedding = get_embs(expanded_query)
-            rag_filters = {
-                '$or': [
-                    {'chat_id_1': chat_id},
-                    {'chat_id_2': chat_id}
-                ],
-                '$nin': {'vector_id': history_included_vector_ids}
-            }
-            try:
-                initial_results = coll_exec(
-                    action="query",
-                    coll_name="rag_collection",
-                    query_embeddings=[query_embedding],
-                    n_results=10,
-                    filters=rag_filters,
-                    fetch=["ids"]
-                )
-            except Exception as e:
-                let_log(f"Ошибка coll_exec RAG: {e}")
+            if not query_embedding:
+                let_log("RAG: пустой query embedding — поиск пропущен")
                 initial_results = None
+            else:
+                rag_filters = {
+                    '$or': [
+                        {'chat_id_1': chat_id},
+                        {'chat_id_2': chat_id}
+                    ],
+                    '$nin': {'vector_id': history_included_vector_ids}
+                }
+                try:
+                    initial_results = coll_exec(
+                        action="query",
+                        coll_name="rag_collection",
+                        query_embeddings=[query_embedding],
+                        n_results=10,
+                        filters=rag_filters,
+                        fetch=["ids"]
+                    )
+                except Exception as e:
+                    let_log(f"Ошибка coll_exec RAG: {e}")
+                    initial_results = None
 
             retrieved_texts = []
             if isinstance(initial_results, dict) and initial_results.get('ids') and initial_results['ids']:

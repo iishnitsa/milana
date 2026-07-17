@@ -275,8 +275,18 @@ def connect(connection_string, timeout=30):
                 model_template_info = model_details
                 # Определяем лимит контекста
                 token_limit = find_context_size(model_details, base_url, {})
+                # 4095/4096 «по умолчанию» часто = сбой валидации/модель retired — явно сигнализируем
+                if token_limit in (4095, 4096) and not default_num_ctx:
+                    let_log(f"[validation] Контекст модели определён как {token_limit} — возможна ошибка валидации/was retired")
+                    # Не фейлим connect (локальные модели могут иметь 4k), но помечаем в tags meta
+                    tags = _parse_template_info(model_details)
+                    tags = dict(tags or {})
+                    tags["_validation_warning"] = f"context={token_limit}: possible validation error / model retired"
+                else:
+                    tags = _parse_template_info(model_details)
                 # Извлекаем теги из шаблона модели
-                tags = _parse_template_info(model_details)
+                if not tags:
+                    tags = _parse_template_info(model_details)
         except Exception as e:
             let_log(f"Ошибка при получении деталей модели: {e}")
             tags = {
@@ -287,6 +297,8 @@ def connect(connection_string, timeout=30):
                 "tool_def_start": "", "tool_def_end": "",
                 "tool_call_start": "", "tool_call_end": "",
                 "tool_result_start": "", "tool_result_end": "",}
+            # Ошибка show/details — это ошибка валидации, не «всё ок»
+            return [False, 0, tags, f"Ошибка валидации модели (details/show failed): {e}"]
         # Проверяем и устанавливаем модель для эмбеддингов
         if emb_model not in available_models:
             let_log(f"Модель для эмбеддингов '{emb_model}' не найдена. Доступные модели: {available_models}")
@@ -438,12 +450,15 @@ def _request_with_backoff(api_url, json_payload):
                         err_data = response.json()
                         err_msg = err_data.get('error', '').lower()
                         if 'session limit' in err_msg:
-                            wait_time = 5 * 60 * 60
+                            # Сессионный лимит Ollama Cloud — не ждём 5ч, сигналим UI
+                            raise RuntimeError("balance end: session limit")
                         elif 'weekly limit' in err_msg:
-                            wait_time = 7 * 24 * 60 * 60
+                            raise RuntimeError("balance end: weekly limit")
                         elif 'insufficient_quota' in err_msg:
                             raise RuntimeError("balance end")
-                    except:
+                    except RuntimeError:
+                        raise
+                    except Exception:
                         pass
 
                 if wait_time is not None:

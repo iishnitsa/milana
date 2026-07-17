@@ -14,7 +14,8 @@ from cross_gpt import (
     coll_exec,
     let_log,
     found_info_1,
-    parse_prompt_response)
+    parse_prompt_response,
+    librarian_use_models)
 
 def _extract_first_digit(text, default):
     """Извлекает первую цифру из текста (аналог parse_prompt_response для готового ответа)."""
@@ -134,6 +135,10 @@ Just output the fragment exactly as it appears, nothing else.
                 # Фильтруем пустые и "None"
                 items = [it for it in items if it['text'].strip() and it['text'].strip().lower() != "none"]
                 if items:
+                    # Без моделей (по умолчанию): сразу raw-фрагменты с источниками
+                    if not librarian_use_models:
+                        let_log('[librarian] librarian_use_models=False — возвращаем raw fragments')
+                        return '\n\n'.join(f"{it['source']}\n{it['text']}" for it in items[:5])
                     if full_output:
                         # Выбор лучшего результата
                         fragments = '\n'.join(it['text'] for it in items)

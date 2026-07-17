@@ -40,6 +40,25 @@ gigo_critic = 'critic'
 
 gigo_questions = 'The user will send you a task. In response, write a question or questions about what information is missing to complete the task. One question per line. Be sure to put a question mark (?) at the end of each line with a question. If there are several questions, ask all at once in one message. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study phenomenon X?" instead of "What authoritative sources are there?". Send only questions, no other text should be present'
 gigo_found_info = 'Only the following information is available:'
+# --- classic GIGO (use_old_gigo) ---
+gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how to complete the task in the best possible way so the client is fully delighted'
+gigo_realist_note = '. Your task is to propose a practical, feasible solution. Describe how to complete the task efficiently, avoiding unnecessary complexity'
+gigo_critic_note = '. Your task is to analyze possible solutions and point out their weaknesses, risks, and potential problems. Identify what can go wrong and suggest how to avoid or mitigate the consequences'
+gigo_role_answer_1 = 'You are a '
+gigo_role_answer_2 = '. The user will send you a task and possibly additional information for completing it. Answer immediately how to ideally complete the task and fully satisfy the client. You must not ask the user questions or discuss anything with them. An answer is needed right away. The answer must not contain interrogative sentences.'
+gigo_make_plan_1 = '''The user will send you the thoughts of different entities about solving the given task.
+As soon as they send the thoughts of the last entity, immediately write a plan for solving the task with a length of 10-25 lines.
+Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
+The answer should not contain interrogative sentences.
+Just the plan
+'''
+gigo_make_plan_num = '\nThe points of the plan are necessary: '
+gigo_make_plan_2 = '\nEntities: '
+gigo_return_1 = 'Task:\n'
+gigo_return_2 = 'Plan:\n'
+gigo_next_role = 'Next: '
+gigo_final_role = '. That is all! Right after your message I will send the plan.'
+gigo_final_role_2 = 'This is the last one. I am waiting for the plan from you right now!'
 
 start_load_attachments_text = 'Attachments are being loaded, this may take a long time...'
 end_load_attachments_text = 'Attachments loaded'
@@ -318,6 +337,19 @@ class SystemTextContainer:
         self.gigo_critic = gigo_critic
         self.gigo_questions = gigo_questions
         self.gigo_found_info = gigo_found_info
+        self.gigo_dreamer_note = gigo_dreamer_note
+        self.gigo_realist_note = gigo_realist_note
+        self.gigo_critic_note = gigo_critic_note
+        self.gigo_role_answer_1 = gigo_role_answer_1
+        self.gigo_role_answer_2 = gigo_role_answer_2
+        self.gigo_make_plan_1 = gigo_make_plan_1
+        self.gigo_make_plan_num = gigo_make_plan_num
+        self.gigo_make_plan_2 = gigo_make_plan_2
+        self.gigo_return_1 = gigo_return_1
+        self.gigo_return_2 = gigo_return_2
+        self.gigo_next_role = gigo_next_role
+        self.gigo_final_role = gigo_final_role
+        self.gigo_final_role_2 = gigo_final_role_2
         self.start_load_attachments_text = start_load_attachments_text
         self.end_load_attachments_text = end_load_attachments_text
         self.marker_decision_approve = marker_decision_approve

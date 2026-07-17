@@ -231,19 +231,40 @@ def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = N
         return False, token_limit, tags, f"Ошибка подключения к {base_url}: {e}"
 
     # Определяем лимит контекста (можно через /v1/models или оставить по умолчанию)
+    model_ids = []
     try:
         models_resp = session.get(f"{base_url}/v1/models", timeout=timeout)
         if models_resp.status_code == 200:
             data = models_resp.json()
+            for m in (data.get("data") or []):
+                mid = m.get("id") or m.get("model") or ""
+                if mid:
+                    model_ids.append(mid)
             if data.get("data"):
-                # Берём первую модель (обычно одна)
+                # предпочитаем запрошенную модель, иначе первую
                 model_info = data["data"][0]
-                # Пытаемся извлечь context_length из разных полей
-                ctx = model_info.get("context_length") or model_info.get("max_context_length")
+                for m in data["data"]:
+                    mid = (m.get("id") or m.get("model") or "").lower()
+                    if chat_model and chat_model.lower() in mid:
+                        model_info = m
+                        break
+                ctx = (
+                    model_info.get("context_length")
+                    or model_info.get("max_context_length")
+                    or model_info.get("meta", {}).get("n_ctx_train")
+                )
                 if ctx:
                     token_limit = int(ctx)
-    except:
-        pass  # оставляем значение по умолчанию
+    except Exception as e:
+        let_log(f"llama.cpp: не удалось прочитать /v1/models: {e}")
+
+    # 4095/4096 без явного meta — подозрительно (ошибка валидации / retired)
+    if token_limit in (4095, 4096):
+        let_log(f"[validation] llama.cpp context={token_limit} — возможна ошибка валидации")
+        # не фейлим, но возвращаем warning через 4-й элемент, UI может показать
+        warn = f"Ошибка валидации / was retired?: context={token_limit}. Models: {model_ids or 'n/a'}"
+    else:
+        warn = None
 
     # Если эмбеддинги будут через тот же сервер – устанавливаем лимит такой же
     emb_token_limit = token_limit
@@ -258,6 +279,8 @@ def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = N
         "tool_call_start": "", "tool_call_end": "",
         "tool_result_start": "", "tool_result_end": "",
     }
+    if warn:
+        tags["_validation_warning"] = warn
 
     # Устанавливаем глобальные флаги (как в других провайдерах)
     global do_chat_construct, native_func_call
@@ -265,7 +288,7 @@ def connect(connection_string: str, timeout: int = 30, _decrypted_token: str = N
     native_func_call = False       # инструменты вызываются через маркеры, не через native
 
     let_log(f"Провайдер llama.cpp подключен к {base_url}, модель: {chat_model}, контекст: {token_limit}")
-    return True, token_limit, tags, None
+    return True, token_limit, tags, warn
 
 def disconnect() -> bool:
     """Закрыть сессию."""
