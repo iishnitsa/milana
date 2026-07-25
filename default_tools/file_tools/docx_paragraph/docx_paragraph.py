@@ -12,7 +12,8 @@ import difflib
 import zipfile
 import xml.etree.ElementTree as et
 
-from cross_gpt import ask_model, filesystem_project_path, get_embs, pipeline, status_success, status_failed, status_forbidden
+from cross_gpt import ask_model, filesystem_project_path, get_embs
+from filesystem import pipeline, status_success, status_failed, status_forbidden
 
 
 def _scan_docx_files(root_path, max_files=400):

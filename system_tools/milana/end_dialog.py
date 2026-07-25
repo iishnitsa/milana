@@ -59,6 +59,16 @@ def main(text):
             except Exception:
                 pass
         except Exception as e: let_log(f"Error: {e}")
+    # Optional: snapshot touched project files to dialog_artifacts/ (NOT branch merge into main)
+    # Setting: fs_copy_touched_on_end (default off). Auto-promote merge is TODO.
+    try:
+        if getattr(global_state, 'fs_copy_touched_on_end', False):
+            from filesystem import copy_touched_to_folder
+            sess = str(getattr(global_state, 'now_try', 'default') or 'default')
+            snap = copy_touched_to_folder(sess, label=sess)
+            let_log(f"[fs] copy_touched_on_end: {snap.get('dest')} files={snap.get('copied')}")
+    except Exception as e:
+        let_log(f"[fs] copy_touched_on_end skipped: {e}")
     # ИСХОДНАЯ ЛОГИКА РАБОТЫ С КРИТИКОМ
     let_log('\n--- Проверка критика ---')
     let_log(f"Реакции критика: {global_state.critic_reactions}")
@@ -86,14 +96,16 @@ def main(text):
         save_emb_dialog(is_dialog_correct, dialog_type='executor')
         # Удаляем чат исполнителя
         delete_chat(global_state.conversations)
-        global_state.tools_commands_dict.pop(global_state.conversations)
+        from cross_gpt import pop_agent_tools
+        pop_agent_tools(global_state.conversations)
         let_log("Удалены инструменты исполнителя")
         global_state.conversations -= 1
         let_log(f"Удалён чат исполнителя, conversations уменьшен до: {global_state.conversations}")
     else: let_log('Исполнитель не был создан, чат не удалён')
     delete_chat(global_state.conversations)
     let_log("Удалёны чат оператора")
-    global_state.tools_commands_dict.pop(global_state.conversations)
+    from cross_gpt import pop_agent_tools
+    pop_agent_tools(global_state.conversations)
     let_log("Удалены инструменты оператора")
     global_state.conversations -= 1
     let_log(f"Conversations после уменьшения: {global_state.conversations}")

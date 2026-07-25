@@ -48,11 +48,15 @@ gigo_role_answer_1 = 'You are a '
 gigo_role_answer_2 = '. The user will send you a task and possibly additional information for completing it. Answer immediately how to ideally complete the task and fully satisfy the client. You must not ask the user questions or discuss anything with them. An answer is needed right away. The answer must not contain interrogative sentences.'
 gigo_make_plan_1 = '''The user will send you the thoughts of different entities about solving the given task.
 As soon as they send the thoughts of the last entity, immediately write a plan for solving the task with a length of 10-25 lines.
+Format the plan as a numbered list only, like:
+1. ...
+2. ...
+3. ...
 Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
 The answer should not contain interrogative sentences.
-Just the plan
+Just the numbered plan
 '''
-gigo_make_plan_num = '\nThe points of the plan are necessary: '
+gigo_make_plan_num = '\nNumber of plan steps required: '
 gigo_make_plan_2 = '\nEntities: '
 gigo_return_1 = 'Task:\n'
 gigo_return_2 = 'Plan:\n'
@@ -216,7 +220,7 @@ error_in_provider = 'An error occurred while accessing the model provider. Infin
 
 success_in_provider = 'The error has been resolved, continuing work'
 
-wrong_command = 'Wrong command'
+wrong_command = 'Wrong or missing command'
 
 warn_command_text_1 = "Protocol violation detected:"
 
@@ -232,7 +236,7 @@ warn_command_text_6 = "Command is inside markdown formatting (bold, italic, code
 
 warn_command_text_7 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
 
-warn_command_text_8 = 'Avaiable tools:'
+warn_command_text_8 = 'Available tools:'
 
 no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -). Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
 
@@ -262,6 +266,9 @@ If there is nothing to shorten, simply rewrite the message unchanged.
 The user's message will be replaced by your message and embedded into the conversation, which is why you cannot give comments, lead-ins, or any extraneous text.'''
 
 write_shortly_prompt = '\nTry to write concisely to save context.'
+
+# Single hint for old-GIGO roles (replaces write_shortly + separate English "10 sentences")
+gigo_role_short_hint = '\nRespond in at most about 10 short sentences. Be concise.\n'
 
 prompt_chunk_summary = "Concisely summarize the essence of the given dialogue fragment. Highlight key facts, decisions, and important details. Response — 1-2 sentences."
 
@@ -425,6 +432,7 @@ class SystemTextContainer:
         self.no_word = no_word
         self.cut_message_prompt = cut_message_prompt
         self.write_shortly_prompt = write_shortly_prompt
+        self.gigo_role_short_hint = gigo_role_short_hint
         self.prompt_chunk_summary = prompt_chunk_summary
         self.prompt_global_summary = prompt_global_summary
         self.prompt_recent_summary = prompt_recent_summary

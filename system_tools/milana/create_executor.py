@@ -16,6 +16,7 @@ from cross_gpt import (
     sql_exec,
     save_emb_dialog,
     librarian,
+    librarian_search_surface_ok,
     next_executor,
     chunk_size,
     parse_prompt_response,
@@ -30,7 +31,8 @@ from cross_gpt import (
     write_shortly_prompt,
     use_magical_prompt,
     use_psm,
-    give_all_tools,)
+    give_all_tools,
+    use_librarian,)
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -51,6 +53,8 @@ def main(text):
             'hierarchy_limit_info',
             'delegate_unavailable_for_executor',
             'need_info_example',
+            'need_info_example_note',
+            'need_info_example_unavailable',
             'tasks_identical_text',
             'exec_anti_loop_text',
             'exec_magical',
@@ -113,6 +117,12 @@ In response to the delegation command, you will receive only the result or a fai
 '''
         main.need_info_example = '''
 Example command call - "!!!need_info!!! React hooks documentation"
+'''
+        main.need_info_example_note = '''
+This is only an example of command syntax.
+'''
+        main.need_info_example_unavailable = '''
+Currently this particular command is not available.
 '''
         main.avaiable_tools_text = 'Available tools:'
         main.create_executor_return_text_1 = 'Executor has been created.'
@@ -191,6 +201,11 @@ Personality:
     if global_state.conversations % 2 == 0:
         return_text = main.create_executor_return_text_2
         let_log('ПЕРЕСОЗДАНИЕ ИСПОЛНИТЕЛЯ')
+        max_rec = int(getattr(global_state, 'max_executor_recreates', 0) or 0)
+        cur_rec = int(getattr(global_state, 'executor_recreate_count', 0) or 0)
+        if max_rec > 0 and cur_rec >= max_rec:
+            let_log(f"[create_executor] лимит пересозданий: {cur_rec}/{max_rec}")
+            return f"Executor recreate limit reached ({max_rec}). Continue with the current executor or end the dialog."
         lt = global_state.last_task_for_executor.get(global_state.conversations, '')
         if text == lt: return main.tasks_identical_text
         if text != '' and text is not None: param = parse_prompt_response(main.create_executor_param_1, main.create_executor_param_2 + ' 1:\n' + text + '\n' + main.create_executor_param_2 + ' 2:\n' + lt, 0)
@@ -202,13 +217,23 @@ Personality:
         let_log(f"Сохранили старого исполнителя с тегом '{tag}'")
         delete_chat(global_state.conversations)
         let_log("Удалили старый чат исполнителя")
-    else: return_text = main.create_executor_return_text_1; global_state.conversations += 1; let_log('создание нового специалиста')
+        global_state.executor_recreate_count = cur_rec + 1
+    else: return_text = main.create_executor_return_text_1; global_state.conversations += 1; global_state.executor_recreate_count = 0; let_log('создание нового специалиста')
     global_state.last_task_for_executor[global_state.conversations] = text
     next_executor()
-    questions_raw = ask_model(text, system_prompt=gigo_questions)
-    additional_info = librarian(questions_raw)
-    if additional_info != found_info_1: additional_info = main.additional_info_text + additional_info
-    else: additional_info = ''; let_log("Библиотекарь не нашел дополнительной информации")
+    additional_info = ''
+    if use_librarian and librarian_search_surface_ok():
+        questions_raw = ask_model(text, system_prompt=gigo_questions)
+        additional_info = librarian(questions_raw)
+        if additional_info != found_info_1:
+            additional_info = main.additional_info_text + additional_info
+        else:
+            additional_info = ''
+            let_log("Библиотекарь не нашел дополнительной информации")
+    elif use_librarian:
+        let_log("Библиотекарь: нет surface (web/chroma) — вопросы не генерируем")
+    else:
+        let_log("Библиотекарь выключен (use_librarian=0)")
     ivan_tools = global_state.ivan_module_tools.copy()
     current_level = get_level()
     if global_state.hierarchy_limit == 0: delegation_allowed = True
@@ -239,7 +264,10 @@ Personality:
     let_log("Генерация инструкций для исполнителя...")
     instructions = ask_model(user_content, system_prompt=system_prompt_for_instructions)
     prompt = main.worker_base
-    if use_psm: prompt += ' ' + ask_model(main.exec_psm_prompt_1 + text + main.exec_psm_prompt_2 + global_state.psm_operator_person[global_state.conversations - 1], all_user=True)
+    if use_psm:
+        from cross_gpt import psm_get
+        oper_person = psm_get(global_state.conversations - 1, 'per', '') or ''
+        prompt += ' ' + ask_model(main.exec_psm_prompt_1 + text + main.exec_psm_prompt_2 + oper_person, all_user=True)
     prompt += no_markdown_instruction + write_shortly_prompt + '\n' + prompt_evaluation_2 + ' ' + text
     if global_state.hierarchy_limit != 1: prompt += main.worker_delegation_part
     hierarchy_note = ""
@@ -249,11 +277,32 @@ Personality:
         if not delegation_allowed: hierarchy_note += f"\n{main.delegate_unavailable_for_executor}\n"
     prompt += hierarchy_note
     prompt += instructions + only_one_func_text
-    if ivan_tools: prompt += selected_ivan_tools
-    if not native_func_call: prompt += what_is_func_text + main.need_info_example
+    # явный список доступных команд с описаниями
+    if selected_ivan_tools:
+        prompt += '\n' + main.avaiable_tools_text + '\n' + selected_ivan_tools
+    if not native_func_call:
+        # template for calling commands (always); concrete examples optional (tools_no_examples)
+        prompt += what_is_func_text
+        no_examples = bool(getattr(global_state, 'tools_no_examples', False))
+        need_info_available = any(
+            'need_info' in str(k).lower() or 'нужна_информац' in str(k).lower() or 'librarian' in str(k).lower()
+            for k in (ivan_tools or {})
+            if k not in global_state.skip_tools_keys
+        )
+        if not no_examples:
+            prompt += main.need_info_example
+            # need_info (librarian): если команды нет — пример + «недоступна»; если есть — только пример
+            if not need_info_available and not use_librarian:
+                prompt += getattr(main, 'need_info_example_note', '') or '\nThis is only an example of command syntax.\n'
+                prompt += getattr(main, 'need_info_example_unavailable', '') or (
+                    '\nCurrently this particular command is not available.\n')
+        elif not need_info_available and not use_librarian:
+            prompt += getattr(main, 'need_info_example_unavailable', '') or (
+                '\nCurrently need_info / librarian is not available.\n')
     prompt += main.exec_anti_loop_text
     if use_magical_prompt: prompt += main.exec_magical
-    global_state.tools_commands_dict[global_state.conversations] = ivan_tools
+    from cross_gpt import set_agent_tools
+    set_agent_tools(global_state.conversations, ivan_tools, role='executor')
     let_log('ДОСТУПНЫЕ ИНСТРУМЕНТЫ ДЛЯ ИСПОЛНИТЕЛЯ:')
     for tool, (desc, _) in ivan_tools.items(): let_log(f"  {tool}: {desc}")
     system_prompt = system_role_text + prompt

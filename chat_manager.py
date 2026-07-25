@@ -14,8 +14,14 @@ def get_chat_context(chat_id: int, user_message=None):
     """
     let_log(f"Getting chat context for chat: {chat_id}")
     # Получаем системный промпт
+    # sql_exec(fetchone) unwraps single-column rows to a scalar string
     row = sql_exec('SELECT system_prompt FROM system_prompts WHERE chat_id=?', (chat_id,), fetchone=True)
-    system_prompt = row[0] if row else None
+    if row is None:
+        system_prompt = None
+    elif isinstance(row, (tuple, list)):
+        system_prompt = row[0]
+    else:
+        system_prompt = row
     if not system_prompt:
         let_log(f"WARNING: system prompt not found for chat {chat_id}")
         system_prompt = ""
@@ -154,7 +160,11 @@ def delete_chat(chat_id: int):
     """Удаляет все данные, связанные с чатом: сообщения, системный промпт и векторы (если включён RAG)."""
     let_log(f"Deleting chat and all related data: {chat_id}")
     str_chat_id = str(chat_id)
-    global_state.psm_operator_person.pop(chat_id, None)
+    try:
+        from cross_gpt import psm_pop
+        psm_pop(chat_id)
+    except Exception:
+        global_state.psm_operator_person.pop(chat_id, None)
     # Удаляем из rag_messages
     sql_exec("DELETE FROM rag_messages WHERE chat_id = ?", (str_chat_id,))
     # Удаляем системный промпт

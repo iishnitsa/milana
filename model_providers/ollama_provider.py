@@ -202,7 +202,7 @@ def connect(connection_string, timeout=30):
     # Параметры по умолчанию (только необходимые)
     params = {
         "url": "http://localhost:11434",
-        "model": "qwen3.5:2b",
+        "model": "ministral-3:8b",
         "emb_model": "all-minilm:latest",
         "chat_template": "True",
         "native_func_call": "False",

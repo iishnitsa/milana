@@ -1,35 +1,25 @@
 '''
-project_navigator_tool
+project_navigator
 navigate project folders for agents using cd-like command and json tree output from filesystem; Send command: "cd folder" to change current directory, "tree" for tree of current folder, "tree 3" for depth 3
 Project navigator
 Provides change_dir and project tree for agent-friendly navigation
 '''
 
-import os
 import json
-import importlib.util
-
-from cross_gpt import chat_path
-
-
-def _load_filesystem():
-    if hasattr(main, '_filesystem_mod'):
-        return main._filesystem_mod
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    fs_path = os.path.join(base_dir, 'filesystem.py')
-    spec = importlib.util.spec_from_file_location('tests_filesystem_runtime', fs_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    main._filesystem_mod = mod
-    return mod
+from cross_gpt import chat_path, filesystem_project_path
+from filesystem import change_dir, get_project_tree_json
 
 
 def _workspace():
+    if filesystem_project_path:
+        return filesystem_project_path
     if chat_path:
-        project_path = os.path.join(chat_path, 'project')
+        import os
+        project_path = os.path.join(chat_path, 'files')
         if os.path.isdir(project_path):
             return project_path
         return chat_path
+    import os
     return os.getcwd()
 
 
@@ -51,9 +41,7 @@ def main(text):
         main.current_cwd = '.'
         return
 
-    fs = _load_filesystem()
     workspace = _workspace()
-
     raw = str(text or '').strip()
     if not raw:
         return main.help_text
@@ -61,7 +49,7 @@ def main(text):
     low = raw.lower()
     if low.startswith('cd '):
         target = raw[3:].strip()
-        result = fs.change_dir(main.current_cwd, target, repo_path=workspace)
+        result = change_dir(main.current_cwd, target, repo_path=workspace)
         if result.get('status') != 'success':
             return f"{main.failed_text}: {result.get('reason')}"
         main.current_cwd = result.get('cwd', main.current_cwd)
@@ -75,7 +63,7 @@ def main(text):
                 depth = int(parts[1])
             except Exception:
                 depth = 8
-        result = fs.get_project_tree_json(
+        result = get_project_tree_json(
             repo_path=workspace,
             cwd=main.current_cwd,
             max_depth=depth,
@@ -83,7 +71,7 @@ def main(text):
         )
         if result.get('status') != 'success':
             return f"{main.failed_text}: {result.get('reason')}"
-        return f"{main.done_text}: {json.dumps(result.get('tree'), ensure_ascii=False)}"
+        tree = result.get('tree') or result.get('files')
+        return f"{main.done_text}: {json.dumps(tree, ensure_ascii=False)}"
 
     return main.help_text
-

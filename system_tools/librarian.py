@@ -15,7 +15,8 @@ from cross_gpt import (
     let_log,
     found_info_1,
     parse_prompt_response,
-    librarian_use_models)
+    librarian_use_models,
+    librarian_use_web)
 
 def _extract_first_digit(text, default):
     """Извлекает первую цифру из текста (аналог parse_prompt_response для готового ответа)."""
@@ -90,9 +91,10 @@ Just output the fragment exactly as it appears, nothing else.
                 # Список найденных элементов с источником
                 items = []
                 try:
+                    allow_web = bool(librarian_use_web) and bool(getattr(global_state, 'gigo_web_search_allowed', True))
                     if search_target == 1: # milana_collection
                         base_filter = {}
-                        if not global_state.gigo_web_search_allowed: base_filter = {'source': {'$ne': 'web'}}
+                        if not allow_web: base_filter = {'source': {'$ne': 'web'}}
                         def query_collection(where_clause):
                             res_dict = coll_exec("query", "milana_collection", query_embeddings=[emb], filters=where_clause, fetch=["documents", "metadatas"], first=False) or {}
                             docs = res_dict.get('documents', []) or []
@@ -109,13 +111,17 @@ Just output the fragment exactly as it appears, nothing else.
                         for meta, doc in zip(metas, docs):
                             if doc and doc.strip():
                                 src = meta.get('source', '')
-                                if src == 'web': source_str = main.source_web
+                                if src == 'web':
+                                    if not allow_web:
+                                        continue
+                                    source_str = main.source_web
                                 elif src == 'file': fname = meta.get('name', 'unknown'); source_str = f"{main.source_user_file} ({fname})"
                                 else: source_str = main.source_unknown
                                 items.append({'text': doc, 'source': source_str})
                 except Exception as e: let_log(f"[find_engine] Ошибка запроса: {e}"); items = []
-                # Если ничего не найдено, пробуем веб-поиск
-                if not items and global_state.gigo_web_search_allowed:
+                # Если ничего не найдено, пробуем веб-поиск (только если librarian_use_web)
+                allow_web = bool(librarian_use_web) and bool(getattr(global_state, 'gigo_web_search_allowed', True))
+                if not items and allow_web:
                     # Проверяем, не выполняли ли уже веб-поиск для этого текста запроса
                     if i not in web_search_done_texts:
                         try:

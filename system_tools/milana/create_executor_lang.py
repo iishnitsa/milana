@@ -62,6 +62,12 @@ locales = {
         'main.need_info_example': '''
 Пример вызова – "!!!нужна_информация!!! Документация по хукам React"
 ''',
+        'main.need_info_example_note': '''
+Это только пример синтаксиса команд.
+''',
+        'main.need_info_example_unavailable': '''
+В настоящее время конкретно эта команда недоступна.
+''',
         'main.avaiable_tools_text': 'Доступные инструменты:',
         'main.create_executor_return_text_1': 'Исполнитель создан',
         'main.create_executor_return_text_2': 'Исполнитель пересоздан',

@@ -5,7 +5,8 @@ import re
 import time
 import random
 import translators as ts
-from cross_gpt import cacher, sql_exec, global_trans_cache_exec, use_local_cache, use_global_cache
+import cross_gpt as _cg
+from cross_gpt import cacher, sql_exec, global_trans_cache_exec
 
 # Единый список переводчиков: (имя, макс_символов, таймаут)
 TRANSLATORS = [
@@ -19,15 +20,23 @@ TRANSLATORS = [
 
 def get_translation_from_cache(text, to_lang):
     """Проверяет локальный кэш (chatsettings.db). Глобальный НЕ проверяется."""
-    if use_local_cache:
-        result = sql_exec("SELECT translation FROM translation_cache WHERE src_text=? AND to_lang=?", (text, to_lang), fetchone=True)
-        if result: return result[0]
-    return None
+    # read flags from cross_gpt live (initialize_work updates them)
+    if not getattr(_cg, 'use_local_cache', False):
+        return None
+    result = sql_exec("SELECT translation FROM translation_cache WHERE src_text=? AND to_lang=?", (text, to_lang), fetchone=True)
+    if result is None:
+        return None
+    # sql_exec unwraps single-column rows to a scalar
+    if isinstance(result, (tuple, list)):
+        return result[0]
+    return result
 
 def save_translation_to_cache(text, translation, to_lang):
     """Сохраняет перевод в локальный и глобальный кэш (без from_lang)."""
-    if use_local_cache: sql_exec("INSERT INTO translation_cache (src_text, translation, to_lang) VALUES (?, ?, ?)", (text, translation, to_lang))
-    if use_global_cache: global_trans_cache_exec("INSERT INTO translation_cache (src_text, translation, to_lang) VALUES (?, ?, ?)", (text, translation, to_lang))
+    if getattr(_cg, 'use_local_cache', False):
+        sql_exec("INSERT INTO translation_cache (src_text, translation, to_lang) VALUES (?, ?, ?)", (text, translation, to_lang))
+    if getattr(_cg, 'use_global_cache', False):
+        global_trans_cache_exec("INSERT INTO translation_cache (src_text, translation, to_lang) VALUES (?, ?, ?)", (text, translation, to_lang))
 
 def _get_max_chars(translator_name):
     """Возвращает максимальное количество символов для указанного переводчика."""

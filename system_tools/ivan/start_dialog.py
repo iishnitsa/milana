@@ -43,6 +43,17 @@ def find_tuple_by_first_list(data, target_list):
         if list1 == target_list: return (list1, list2), obj
     return None
 
+def _format_tools_for_prompt(tools_dict):
+    """Описания tools в промпт (без skip), module-level — не пересоздаётся в main."""
+    lines = []
+    skip = set(global_state.skip_tools_keys or [])
+    for tool, meta in (tools_dict or {}).items():
+        if tool in skip:
+            continue
+        desc = meta[0] if isinstance(meta, (tuple, list)) and meta else str(meta)
+        lines.append(f"{tool} ({desc})")
+    return ('\n'.join(lines) + '\n') if lines else ''
+
 def main(client_task):
     if not hasattr(main, 'attr_names'):
         main.attr_names = (
@@ -59,8 +70,8 @@ def main(client_task):
             'oper_magical',
             'oper_psm_prompt',
         )
-        main.milana_base_1 = '''You are "Milana", an AI operator. You have received a task plan from a client'''
-        main.milana_base_2 = ''' or from a higher-level dialog'''
+        main.milana_base_1 = '''You are "Milana", an AI operator. Above you is the CLIENT (human) — they send the original task and receive the final result. You have received a task plan from the client'''
+        main.milana_base_2 = ''' or from a HIGHER-LEVEL AGENT (another operator/dialog above you in the hierarchy). That higher agent may send a refined plan and task instead of the human client. Treat their request as the current authority for this dialog'''
         main.milana_base_3 = '''
 Your workflow:
 1. CREATE ONE EXECUTOR — Use the command "!!!create_executor!!!" followed by the task description. This creates "Ivan", an AI executor who will handle the current subtask.
@@ -211,13 +222,16 @@ The task:
         del milana_tools[global_state.start_dialog_command_name]
         let_log("Удалена команда делегирования из инструментов Миланы")
     # === BUILD PROMPT ===
+    # client vs higher agent: level>1 → делегирование сверху, не «голый» client
     full_prompt = main.milana_base_1
+    if current_level > 1 or global_state.hierarchy_limit != 1:
+        full_prompt += main.milana_base_2
     # 1. Information that Ivan can delegate (added ALWAYS except when delegation is completely disabled - limit=1)
     if global_state.hierarchy_limit != 1:
-        full_prompt += main.milana_base_2
         if use_psm:
             operator_personality = ask_model(main.oper_psm_prompt + client_task, all_user=True)
-            global_state.psm_operator_person[global_state.conversations + 1] = operator_personality
+            from cross_gpt import psm_set
+            psm_set(global_state.conversations + 1, per=operator_personality)
             full_prompt += ' ' + operator_personality
         full_prompt += main.milana_base_3
         full_prompt += main.milana_delegation_part
@@ -229,9 +243,7 @@ The task:
     full_prompt += no_markdown_instruction + write_shortly_prompt
     let_log(milana_tools)
     prompt += only_one_func_text
-    # Add tool descriptions, excluding skip commands
-    for tool in milana_tools: # ВЫНЕСИ TODO:
-        if tool not in global_state.skip_tools_keys: prompt += tool + ' (' + milana_tools[tool][0] + ')\n'
+    prompt += _format_tools_for_prompt(milana_tools)
     if not native_func_call: prompt += what_is_func_text
     # Опционально: расширенные подсказки по модулям и оператору
     if module_hints_for_operator and global_state.another_tools:
@@ -249,7 +261,8 @@ The task:
     let_log(f"[DBG_MILANA_CREATE] conversations={global_state.conversations}")
     create_chat(global_state.conversations, system_role_text + full_prompt)
     update_history(global_state.conversations, make_exec_first, func_role_text)
-    global_state.tools_commands_dict[global_state.conversations] = milana_tools
+    from cross_gpt import set_agent_tools
+    set_agent_tools(global_state.conversations, milana_tools, role='operator')
     # Generate initial response
     try:
         talk_prompt = ask_model(

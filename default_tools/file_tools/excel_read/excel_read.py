@@ -13,7 +13,8 @@ import zipfile
 import difflib
 import xml.etree.ElementTree as et
 
-from cross_gpt import ask_model, filesystem_project_path, pipeline, status_success, status_failed, status_forbidden
+from cross_gpt import ask_model, filesystem_project_path
+from filesystem import pipeline, status_success, status_failed, status_forbidden
 
 
 def _scan_table_files(root_path, max_files=500):

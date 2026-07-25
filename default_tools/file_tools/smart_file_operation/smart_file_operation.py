@@ -9,28 +9,21 @@ import os
 import re
 import json
 import difflib
-import importlib.util
 
-from cross_gpt import ask_model, chat_path
-
-
-def _load_filesystem():
-    if hasattr(main, '_filesystem_mod'):
-        return main._filesystem_mod
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    fs_path = os.path.join(base_dir, 'filesystem.py')
-    spec = importlib.util.spec_from_file_location('tests_filesystem_runtime', fs_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    main._filesystem_mod = mod
-    return mod
+from cross_gpt import ask_model, chat_path, filesystem_project_path
+from filesystem import pipeline, status_success, status_forbidden
 
 
 def _workspace():
+    if filesystem_project_path:
+        return filesystem_project_path
     if chat_path:
         project_path = os.path.join(chat_path, 'project')
         if os.path.isdir(project_path):
             return project_path
+        files_path = os.path.join(chat_path, 'files')
+        if os.path.isdir(files_path):
+            return files_path
         return chat_path
     return os.getcwd()
 
@@ -38,7 +31,7 @@ def _workspace():
 def _scan_files(root_path, max_files=800):
     out = []
     for root, dirs, files in os.walk(root_path):
-        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', '.venv', 'venv')]
+        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', '.venv', 'venv', '.fs_work')]
         for name in files:
             abs_path = os.path.join(root, name)
             rel_path = os.path.relpath(abs_path, root_path).replace('\\', '/')
@@ -98,47 +91,31 @@ def _pick_path(hint, files):
 
 
 def _parse_request(text, files):
-    low = text.lower()
-    default_action = 'read'
-    if any(k in low for k in ('созда', 'create')):
-        default_action = 'create'
-    elif any(k in low for k in ('замени', 'измени', 'редакт', 'edit', 'replace', 'update')):
-        default_action = 'edit'
-    elif any(k in low for k in ('удали', 'delete', 'remove')):
-        default_action = 'delete'
-    elif any(k in low for k in ('копир', 'copy')):
-        default_action = 'copy'
-    elif any(k in low for k in ('перемест', 'move', 'rename')):
-        default_action = 'move'
-    elif any(k in low for k in ('прочита', 'покажи', 'read', 'show')):
-        default_action = 'read'
+    low = (text or '').lower()
+    action = 'read'
+    if any(k in low for k in getattr(main, 'keywords_create', ['созда', 'create'])):
+        action = 'create'
+    elif any(k in low for k in getattr(main, 'keywords_delete', ['удали', 'delete'])):
+        action = 'delete'
+    elif any(k in low for k in getattr(main, 'keywords_move', ['перемест', 'move'])):
+        action = 'move'
+    elif any(k in low for k in getattr(main, 'keywords_copy', ['копир', 'copy'])):
+        action = 'copy'
+    elif any(k in low for k in getattr(main, 'keywords_edit', ['замени', 'edit', 'replace'])):
+        action = 'edit'
 
-    files_view = '\n'.join([f"{i+1}. {f['rel']}" for i, f in enumerate(files[:150])])
+    file_list = '\n'.join(f['rel'] for f in files[:200])
     prompt = (
-        "Разбери пользовательский запрос на файловую операцию.\n"
-        "Верни ТОЛЬКО JSON:\n"
-        "{\"action\":\"create|read|edit|delete|copy|move\","
-        "\"source\":\"...\",\"target\":\"...\",\"content\":\"...\","
-        "\"purpose\":\"...\",\"experimental_mode\":false}\n"
-        "Если значение неизвестно, верни пустую строку.\n"
-        f"Запрос:\n{text}\n\n"
-        f"Список файлов:\n{files_view}"
+        getattr(main, 'prompt_parse_part1', '')
+        + text
+        + getattr(main, 'prompt_parse_part2', '\nFiles:\n')
+        + file_list
     )
-    try:
-        raw = ask_model(prompt, all_user=True)
-        parsed = _extract_json(raw)
-    except Exception:
-        parsed = None
-
-    if not parsed:
-        parsed = {}
-    parsed.setdefault('action', default_action)
-    parsed.setdefault('source', '')
-    parsed.setdefault('target', '')
-    parsed.setdefault('content', '')
-    parsed.setdefault('purpose', '')
-    parsed.setdefault('experimental_mode', False)
-    return parsed
+    raw = ask_model(prompt)
+    parsed = _extract_json(raw) or {}
+    if parsed.get('action'):
+        action = str(parsed.get('action')).lower()
+    return action, parsed
 
 
 def main(text):
@@ -151,6 +128,14 @@ def main(text):
             'done_text',
             'failed_text',
             'forbidden_text',
+            'prompt_parse_part1',
+            'prompt_parse_part2',
+            'keywords_create',
+            'keywords_edit',
+            'keywords_delete',
+            'keywords_copy',
+            'keywords_move',
+            'keywords_read',
         )
         main.empty_files_text = 'В рабочей папке нет файлов'
         main.cannot_parse_text = 'Не удалось разобрать запрос'
@@ -159,22 +144,27 @@ def main(text):
         main.done_text = 'Готово'
         main.failed_text = 'Ошибка'
         main.forbidden_text = 'Запрещено'
+        main.prompt_parse_part1 = """
+Разбери пользовательский запрос на файловую операцию.
+Верни ТОЛЬКО JSON:
+{"action":"create|read|edit|delete|copy|move","source":"...","target":"...","content":"...","purpose":"...","experimental_mode":false}
+Если значение неизвестно, верни пустую строку.
+Запрос:
+"""
+        main.prompt_parse_part2 = """
+Список файлов:
+"""
+        main.keywords_create = ['созда', 'create']
+        main.keywords_edit = ['замени', 'измени', 'редакт', 'edit', 'replace', 'update']
+        main.keywords_delete = ['удали', 'delete', 'remove']
+        main.keywords_copy = ['копир', 'copy']
+        main.keywords_move = ['перемест', 'move', 'rename']
+        main.keywords_read = ['прочита', 'покажи', 'read', 'show']
         return
 
-    fs = _load_filesystem()
     workspace = _workspace()
     files = _scan_files(workspace)
-
-    parsed = _parse_request(text, files)
-    action = str(parsed.get('action') or '').strip().lower()
-    if action == 'update':
-        action = 'edit'
-    if action == 'remove':
-        action = 'delete'
-    if action == 'rename':
-        action = 'move'
-    if action not in ('create', 'read', 'edit', 'delete', 'copy', 'move'):
-        return f"{main.cannot_parse_text}: action"
+    action, parsed = _parse_request(text, files)
 
     src_hint = str(parsed.get('source') or '').strip()
     dst_hint = str(parsed.get('target') or '').strip()
@@ -212,14 +202,14 @@ def main(text):
         intention['purpose'] = purpose
     intention['self_risk'] = '50'
 
-    result = fs.pipeline(
+    result = pipeline(
         actor,
         source_path if source_path else target_path,
         for_actor=target_path,
         action=action,
         handler_arg=handler_arg,
         repo_path=workspace,
-        use_git=False,
+        use_git=True,
         intention=intention,
         experimental_mode=experimental_mode,
     )
@@ -229,8 +219,3 @@ def main(text):
     if result.get('status') != status_success:
         return f"{main.failed_text}: {result.get('reason')}"
     return f"{main.done_text}: {json.dumps(result, ensure_ascii=False)}"
-
-
-status_success = "success"
-status_forbidden = "forbidden"
-

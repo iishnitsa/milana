@@ -51,6 +51,8 @@ class GlobalState:
         self.gigo_web_search_allowed = True
         self.hierarchy_limit = 0
         self.write_results = 0
+        # FS: copy session touched files to chat/dialog_artifacts/ on end_dialog (off by default)
+        self.fs_copy_touched_on_end = 0
         self.need_owerwrite_operator = False
         self.need_owerwrite_executor = False
         self.task_delegated = False
@@ -62,8 +64,19 @@ class GlobalState:
         self.allow_ocr = 1
         self.wrong_command_messages_vector_ids = []
         self.number_of_plan_items = 0
-        self.psm_operator_person = {} # TODO: потом объедини с другими в словарь с чат айди и подсловарями, также имена пространств должны быть короткими, в районе 3 символов
+        # chat_id → {'per': personality, ...}  (короткие ключи ~3 символа)
+        self.psm_operator_person = {}
         self.current_agent_history_for_filesystem = ""
+        # 0 = без лимита; иначе макс. итераций agent_func (сообщения/шаги до ответа)
+        self.max_messages_before_answer = 0
+        self.messages_step_count = 0
+        # shell: не спрашивать подтверждение (default: спрашивать)
+        self.shell_skip_confirm = False
+        # лимит пересозданий исполнителя на один диалог-уровень (0 = без лимита)
+        self.max_executor_recreates = 0
+        self.executor_recreate_count = 0
+        # dual model: escalate agent from small → large after protocol fail
+        self.agent_use_large = False
 global_state = GlobalState()
 
 chat_path = ''
@@ -79,7 +92,8 @@ cache_can_write = False
 agent_func = None
 use_librarian = True
 recreate_agents = False
-cut_wrong_command_history = True
+# False = keep wrong-command turns in history (default off — less confusing for models)
+cut_wrong_command_history = False
 use_old_gigo = True
 use_gigo = True
 librarian_use_models = False
@@ -87,6 +101,17 @@ module_hints_for_operator = False
 give_all_tools = False
 critic_reuse_dialog = True
 one_shot_intention_permission = False
+# librarian: ходить в web_search (default off — «не работает с веб по умолчанию»)
+librarian_use_web = False
+# translation flags (defaults; initialize_work overwrites from settings)
+do_translate = False
+# версия релиза (совместимость чатов)
+RELEASE_VERSION = "2026-07"
+local_and_tools_translate = False
+target_lang = 'en'
+use_local_cache = False
+use_global_cache = False
+global_trans_db_path = ''
 
 default_handlers_names = { # это из настроек должно выгружаться, или лучше из документации хэндлеров которая внутри них
     'doc': 'process_docx',
@@ -161,6 +186,15 @@ normalize_action = None
 get_provider_embs = None
 ask_provider_model = None
 ask_provider_model_chat = None
+# Dual model: large is primary; small optional (default off)
+_model_backends = {}  # 'large' | 'small' -> backend dict
+_active_model_tier = 'large'
+use_small_model = False
+small_for_cutter_only = True  # True: cutter/summaries/save_emb only; False: all non-agent
+small_agent_until_protocol = False  # True: agent on small until protocol fail → large
+# text_cutter / incoming caps (token estimates via text_tokens_coefficient)
+text_cutter_token_limit = 2000  # max est. tokens per cutter LLM call
+max_incoming_tokens = 10000  # max est. tokens fed into cutter / ask before hard cut
 memory_sql = None
 client = None
 milana_collection = None
@@ -254,8 +288,13 @@ def let_log(t):
     if is_save_log:
         if left_cache_counter == 0: lname = 'log.txt'
         else: return#lname = 'log1.txt'
+        if not chat_path:
+            return
         log_file = os.path.join(chat_path, lname)
-        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
+        try:
+            with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{full_message}\n')
+        except OSError:
+            pass  # chat dir may be gone after test cleanup / early provider calls
 
 # Опционально: полный стек функций + enter/exit (global_state.trace_full / trace_func_io)
 _trace_func_depth = {}
@@ -343,7 +382,13 @@ def read_cache():
                 cache_conn.close()
                 cache_conn = None
                 return [True, deserialized_value]
+            # left_cache_counter > 0 but row missing — fall through to write/miss handling
         if cache_can_write:
+            # Nested @cacher (e.g. ask_model → sql_exec) or miss while write-slot open:
+            # must open connection if previous branch did not.
+            if cache_conn is None:
+                cache_conn = connect(cache_path)
+                cache_cursor = cache_conn.cursor()
             cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, b'\x02'))
             cache_conn.commit()
             cache_conn.close()
@@ -380,14 +425,19 @@ def write_cache(content):
         cache_conn = connect(cache_path)
         cache_cursor = cache_conn.cursor()
         if not cache_can_write:
+            # Nested / marker rewrite path: cut tail from pending id, write real value there.
+            # After write, counter must be written_id+1 (not written_id), else next INSERT
+            # hits UNIQUE constraint on the same id.
             if pending_write_cache_ids == []: raise RuntimeError('Read/write sequence violation in the save system! Write command was expected.')
-            cache_cursor.execute('DELETE FROM cache WHERE id >= ?', (pending_write_cache_ids[-1],))
-            cache_counter = pending_write_cache_ids[-1]
-            cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, compres_to_cache(content)))
+            written_id = pending_write_cache_ids[-1]
+            cache_cursor.execute('DELETE FROM cache WHERE id >= ?', (written_id,))
+            cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (written_id, compres_to_cache(content)))
             cache_conn.commit()
             cache_conn.close()
             cache_conn = None
             del pending_write_cache_ids[-1]
+            cache_counter = written_id + 1
+            cache_can_write = False
             return True
         cache_cursor.execute('INSERT INTO cache (id, value) VALUES (?, ?)', (cache_counter, compres_to_cache(content)))
         cache_conn.commit()
@@ -432,6 +482,40 @@ def get_input_message(command=None, timeout=None, wait=False):
             except Exception as e: let_log(f"Ошибка при получении сообщения: {e}"); break
     return answer
 
+def poll_user_mid_dialog_injects() -> list:
+    """
+    Non-blocking: pull UI messages with command=user_inject (mid-dialog client notes).
+    Re-queues other messages so answer_user / first task are not stolen.
+    """
+    if not getattr(global_state, 'deliver_user_messages', False):
+        return []
+    if not ui_conn or not ui_conn[0]:
+        return []
+    injects = []
+    kept = []
+    try:
+        while True:
+            try:
+                msg = ui_conn[0].get_nowait()
+            except Empty:
+                break
+            except Exception as e:
+                let_log(f"poll_user_mid_dialog_injects: {e}")
+                break
+            if isinstance(msg, dict) and msg.get('command') == 'user_inject':
+                t = (msg.get('text') or '').strip()
+                if t:
+                    injects.append(t)
+            else:
+                kept.append(msg)
+    finally:
+        for m in kept:
+            try:
+                ui_conn[0].put(m)
+            except Exception as e:
+                let_log(f"poll_user_mid_dialog requeue: {e}")
+    return injects
+
 @cacher
 def _strip_ui_command_markers(text: str) -> str:
     """Убирает из текста для UI маркеры команд вида !!!name!!! / !!!!name!!!!."""
@@ -441,6 +525,27 @@ def _strip_ui_command_markers(text: str) -> str:
     cleaned = re.sub(r'!{2,4}\s*[\w\-]+\s*!{2,4}', '', text)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
     return cleaned if cleaned else text
+
+# Команды, которые не кладём в embeddings диалога (шум: делегирование / create_executor / …)
+_SAVE_EMB_STRIP_COMMAND_NAMES = (
+    'create_executor', 'create_exec', 'delegate_task', 'start_dialog',
+    'end_dialogue', 'end_dialog', 'need_info',
+)
+
+def _strip_save_emb_noise(text: str) -> str:
+    """Убрать маркеры служебных команд перед save_emb_dialog (и тело вызова до следующего role-ish)."""
+    if not text:
+        return text or ''
+    cleaned = _strip_ui_command_markers(text)
+    # убрать строки, где только имя служебной команды
+    for name in _SAVE_EMB_STRIP_COMMAND_NAMES:
+        cleaned = re.sub(
+            rf'(?im)^[ \t]*{re.escape(name)}[ \t]*$|!!!!?\s*{re.escape(name)}\s*!!!!?',
+            '',
+            cleaned,
+        )
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned
 
 def send_output_message(text=None, attachments=None, command=None):
     display = _strip_ui_command_markers(text) if text else ''
@@ -508,6 +613,203 @@ def sql_exec(query, params=(), fetchone=False, fetchall=False, executemany=False
         let_log(f"Ошибка SQL-запроса: {query} с {params} — {e}")
         raise
 
+# ---- coll_exec helpers (module-level, not redefined each call) ----
+
+def _coll_enable_compression():
+    return globals().get('enable_compression', True)
+
+def _compress_doc_always(doc):
+    if doc is None:
+        return None
+    if isinstance(doc, (bytes, bytearray)):
+        raw_bytes = bytes(doc)
+        original_str = doc.decode("utf-8") if hasattr(doc, 'decode') else str(doc)
+    else:
+        original_str = str(doc)
+        raw_bytes = original_str.encode("utf-8")
+    uncompressed_str = "n" + original_str
+    uncompressed_size = len(uncompressed_str.encode("utf-8"))
+    try:
+        compressed_bytes = lzma.compress(raw_bytes, preset=9)
+        compressed_b64 = base64.b64encode(compressed_bytes).decode("ascii")
+        compressed_str = "L" + compressed_b64
+        compressed_size = len(compressed_str.encode("utf-8"))
+        if compressed_size < uncompressed_size:
+            return compressed_str
+        return uncompressed_str
+    except Exception:
+        return uncompressed_str
+
+def _decompress_doc_always(comp):
+    if comp is None:
+        return None
+    if not comp:
+        return comp
+    first_char = comp[0]
+    content = comp[1:]
+    if first_char == 'L':
+        decoded_bytes = base64.b64decode(content)
+        decompressed_bytes = lzma.decompress(decoded_bytes)
+        return decompressed_bytes.decode("utf-8")
+    if first_char == 'n':
+        return content
+    return comp
+
+def _compress_documents_always(coll_name, documents_list):
+    if documents_list is None:
+        return None
+    if not _coll_enable_compression() or coll_name not in ("milana_collection", "user_collection"):
+        return documents_list
+    out = []
+    for d in documents_list:
+        if d is None:
+            out.append(None)
+            continue
+        out.append(_compress_doc_always(d))
+    return out
+
+def _decompress_documents_always(coll_name, documents_list):
+    if documents_list is None:
+        return None
+    if not _coll_enable_compression() or coll_name not in ("milana_collection", "user_collection"):
+        return documents_list
+    out = []
+    for d in documents_list:
+        if d is None:
+            out.append(None)
+            continue
+        out.append(_decompress_doc_always(d))
+    return out
+
+def _make_where(d):
+    if not d:
+        return None
+    clauses = []
+    for k, v in d.items():
+        if isinstance(v, list):
+            clauses.append({k: {"$in": v}})
+        elif isinstance(v, dict) and any(op in v for op in ["$gt", "$gte", "$lt", "$lte", "$ne", "$eq", "$in", "$nin"]):
+            clauses.append({k: v})
+        else:
+            clauses.append({k: v})
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+def _filter_relevance(resp, coeff=0.9):
+    if "distances" not in resp or resp["distances"] is None or not resp["distances"]:
+        return resp
+    dists = resp["distances"][0] if isinstance(resp["distances"][0], list) else resp["distances"]
+    if not dists:
+        return resp
+    best = min(dists)
+    threshold = best * (1.0 + (1.0 - coeff))
+    keep_idx = [i for i, d in enumerate(dists) if d <= threshold]
+    if not keep_idx:
+        return {k: [] for k in resp}
+    out = {}
+    for k, v in resp.items():
+        if isinstance(v, list) and v and isinstance(v[0], list):
+            out[k] = [[row[i] for i in keep_idx] for row in v]
+        elif isinstance(v, list):
+            out[k] = [v[i] for i in keep_idx]
+        else:
+            out[k] = v
+    return out
+
+def _process_in_nin_operators(coll, filters, coll_name, get_results=True):
+    print(f"[{coll_name}] Запуск обхода (in/nin) для ID с фильтрами: {filters}")
+    nin_ids = set(filters.get('$nin', {}).get('vector_id', []))
+    in_ids = set(filters.get('$in', {}).get('vector_id', []))
+    base_where_filter = {k: v for k, v in filters.items() if k not in ('$in', '$nin', 'vector_id')}
+    all_ids = set()
+    offset = 0
+    batch_size = 1000
+    where_for_get = _make_where(base_where_filter)
+    while True:
+        r = coll.get(where=where_for_get, limit=batch_size, offset=offset, include=[])
+        current_ids = r.get('ids', [])
+        if not current_ids:
+            break
+        all_ids.update(current_ids)
+        offset += batch_size
+        if len(current_ids) < batch_size:
+            break
+    print(f"[{coll_name}] Найдено {len(all_ids)} ID до фильтрации $in/$nin.")
+    final_ids = all_ids
+    if nin_ids:
+        final_ids = final_ids - nin_ids
+    if in_ids:
+        final_ids = final_ids.intersection(in_ids)
+    final_ids_list = list(final_ids)
+    print(f"[{coll_name}] Осталось {len(final_ids_list)} ID после фильтрации $in/$nin.")
+    if not get_results:
+        return final_ids_list
+    if final_ids_list:
+        return coll.get(ids=final_ids_list, include=['metadatas', 'documents', 'embeddings'])
+    return {'ids': [], 'metadatas': [], 'documents': [], 'embeddings': []}
+
+def _coll_empty_result(fetch):
+    include = fetch if isinstance(fetch, list) else [fetch]
+    if len(include) > 1:
+        out = {}
+        for key in include:
+            out[key] = [] if key != "distances" else [[]]
+        return out
+    key = include[0]
+    if key == "distances":
+        return [[]]
+    if key in ("ids", "documents", "metadatas", "embeddings"):
+        return []
+    return None
+
+def _coll_extract(resp, include, coll_name, first=True, flatten=False):
+    if len(include) > 1:
+        out = {}
+        for key in include:
+            data = resp.get(key, []) or []
+            if key == "documents":
+                if isinstance(data, list) and data and isinstance(data[0], list):
+                    data = [_decompress_documents_always(coll_name, sub) for sub in data]
+                else:
+                    data = _decompress_documents_always(coll_name, data)
+            if flatten and isinstance(data, list) and data and isinstance(data[0], list):
+                data = [i for sub in data for i in sub]
+            out[key] = data
+        return out
+    key = include[0]
+    data = resp.get(key, []) or []
+    if key == "documents":
+        if isinstance(data, list) and data and isinstance(data[0], list):
+            data = [_decompress_documents_always(coll_name, sub) for sub in data]
+        else:
+            data = _decompress_documents_always(coll_name, data)
+    if first:
+        if isinstance(data, list) and data and isinstance(data[0], list):
+            return data[0][0] if data[0] else None
+        return data[0] if data else None
+    if isinstance(data, list) and data and isinstance(data[0], list):
+        return [i for sub in data for i in sub]
+    return data
+
+def confirm_shell_command(command: str, denied_log: str = "shell") -> bool:
+    """Общий confirm для shell-модулей (shell_skip_confirm / ask_user)."""
+    if getattr(global_state, 'shell_skip_confirm', False):
+        return True
+    try:
+        send_output_message(
+            text=f"Allow shell command?\n{command}\n\nReply yes to allow.",
+            command='ask_user')
+        msg = get_input_message(command='answer_user', wait=True)
+        text = (msg or {}).get('text', '') if isinstance(msg, dict) else str(msg or '')
+        if text.strip().lower() in ('y', 'yes', 'да', 'д', 'ok', 'allow', 'разрешить'):
+            return True
+        let_log(f"[{denied_log}] denied: {command[:80]!r}")
+        return False
+    except Exception as e:
+        let_log(f"[{denied_log}] confirm error, deny: {e}")
+        return False
+
 @cacher
 def coll_exec(action, coll_name, *,
               query_embeddings=None,
@@ -528,207 +830,92 @@ def coll_exec(action, coll_name, *,
               client_override=None,
               relevance_coeff=0.9,
               **kwargs):
-    """
-    Универсальная обёртка для работы с коллекциями ChromaDB.
-    Все вспомогательные функции вложены внутрь.
-    """
-    global_vars = globals() # ---- Глобальные настройки (с подстановкой значений по умолчанию) ----
-    enable_compression = global_vars.get('enable_compression', True)
-    compression_threshold = global_vars.get('compression_threshold', 1.0)
-    # ---- Вспомогательные функции сжатия ----
-    def _compress_doc_always(doc): # Всегда пытается сжать документ. Возвращает 'L' + base64(lzma(...)) или 'n' + оригинал
-        if doc is None: return None
-        if isinstance(doc, (bytes, bytearray)): raw_bytes = bytes(doc); original_str = doc.decode("utf-8") if hasattr(doc, 'decode') else str(doc)
-        else: original_str = str(doc); raw_bytes = original_str.encode("utf-8")
-        uncompressed_str = "n" + original_str
-        uncompressed_size = len(uncompressed_str.encode("utf-8"))
-        try:
-            compressed_bytes = lzma.compress(raw_bytes, preset=9)
-            compressed_b64 = base64.b64encode(compressed_bytes).decode("ascii")
-            compressed_str = "L" + compressed_b64
-            compressed_size = len(compressed_str.encode("utf-8"))
-            if compressed_size < uncompressed_size: return compressed_str
-            else: return uncompressed_str
-        except Exception: return uncompressed_str
-    def _decompress_doc_always(comp): # Распаковывает документ: 'L' -> lzma, 'z' -> gzip (старый формат), 'n' -> вернуть как есть
-        if comp is None: return None
-        if not comp: return comp
-        first_char = comp[0]
-        content = comp[1:]
-        if first_char == 'L':
-            decoded_bytes = base64.b64decode(content)
-            decompressed_bytes = lzma.decompress(decoded_bytes)
-            return decompressed_bytes.decode("utf-8")
-        elif first_char == 'n': return content
-        else: return comp
-    def _compress_documents_always(coll_name, documents_list): # Сжимает список документов для коллекций, для которых включено сжатие.
-        if documents_list is None: return None
-        if not enable_compression or coll_name not in ("milana_collection", "user_collection"): return documents_list
-        out = []
-        for d in documents_list:
-            if d is None: out.append(None); continue
-            out.append(_compress_doc_always(d))
-        return out
-    def _decompress_documents_always(coll_name, documents_list): # Распаковывает список документов
-        if documents_list is None: return None
-        if not enable_compression or coll_name not in ("milana_collection", "user_collection"): return documents_list
-        out = []
-        for d in documents_list:
-            if d is None: out.append(None); continue
-            out.append(_decompress_doc_always(d))
-        return out
-    # ---- Остальные вспомогательные функции ----
-    def _make_where(d): # Преобразует словарь фильтров в формат ChromaDB where.
-        if not d: return None
-        clauses = []
-        for k, v in d.items():
-            if isinstance(v, list): clauses.append({k: {"$in": v}})
-            elif isinstance(v, dict) and any(op in v for op in ["$gt", "$gte", "$lt", "$lte", "$ne", "$eq", "$in", "$nin"]): clauses.append({k: v})
-            else: clauses.append({k: v})
-        if len(clauses) == 1: return clauses[0]
-        else: return {"$and": clauses}
-    def _filter_relevance(resp, coeff=0.9): # Фильтрует результаты по расстоянию: оставляет только те, чьё расстояние <= best * (1 + (1-coeff))
-        if "distances" not in resp or resp["distances"] is None or not resp["distances"]: return resp
-        dists = resp["distances"][0] if isinstance(resp["distances"][0], list) else resp["distances"]
-        if not dists: return resp
-        best = min(dists)
-        threshold = best * (1.0 + (1.0 - coeff))
-        keep_idx = [i for i, d in enumerate(dists) if d <= threshold]
-        if not keep_idx: return {k: [] for k in resp}
-        out = {}
-        for k, v in resp.items():
-            if isinstance(v, list) and v and isinstance(v[0], list): out[k] = [[row[i] for i in keep_idx] for row in v]
-            elif isinstance(v, list): out[k] = [v[i] for i in keep_idx]
-            else: out[k] = v
-        return out
-    def _process_in_nin_operators(coll, filters, coll_name, get_results=True):
-        """
-        Обрабатывает фильтры $in и $nin для поля vector_id.
-        Возвращает либо список ID (если get_results=False), либо результат coll.get.
-        """
-        print(f"[{coll_name}] Запуск обхода (in/nin) для ID с фильтрами: {filters}")
-        nin_ids = set(filters.get('$nin', {}).get('vector_id', []))
-        in_ids = set(filters.get('$in', {}).get('vector_id', []))
-        base_where_filter = {
-            k: v for k, v in filters.items()
-            if k not in ('$in', '$nin', 'vector_id')}
-        all_ids = set()
-        offset = 0
-        batch_size = 1000
-        where_for_get = _make_where(base_where_filter)
-        while True:
-            r = coll.get(where=where_for_get, limit=batch_size, offset=offset, include=[])
-            current_ids = r.get('ids', [])
-            if not current_ids: break
-            all_ids.update(current_ids)
-            offset += batch_size
-            if len(current_ids) < batch_size: break
-        print(f"[{coll_name}] Найдено {len(all_ids)} ID до фильтрации $in/$nin.")
-        final_ids = all_ids
-        if nin_ids: final_ids = final_ids - nin_ids
-        if in_ids: final_ids = final_ids.intersection(in_ids)
-        final_ids_list = list(final_ids)
-        print(f"[{coll_name}] Осталось {len(final_ids_list)} ID после фильтрации $in/$nin.")
-        if not get_results: return final_ids_list
-        if final_ids_list: return coll.get(ids=final_ids_list, include=['metadatas', 'documents', 'embeddings'])
-        return {'ids': [], 'metadatas': [], 'documents': [], 'embeddings': []}
-    # ---- Получение коллекции ----
+    """Универсальная обёртка для работы с коллекциями ChromaDB."""
     coll = globals().get(coll_name)
     if coll is None and client_override:
-        try: coll = client_override.get_collection(coll_name)
-        except Exception: pass
+        try:
+            coll = client_override.get_collection(coll_name)
+        except Exception:
+            pass
     if coll is None and client:
-        try: coll = client.get_collection(coll_name)
-        except Exception: pass
-    if coll is None: raise NameError(f"Collection '{coll_name}' not found")
-    # ---- Вспомогательная для пустого результата ----
-    def _empty_result(fetch):
-        include = fetch if isinstance(fetch, list) else [fetch]
-        if len(include) > 1:
-            out = {}
-            for key in include: out[key] = [] if key != "distances" else [[]]
-            return out
-        else:
-            key = include[0]
-            if key == "ids": return []
-            elif key == "documents": return []
-            elif key == "metadatas": return []
-            elif key == "embeddings": return []
-            elif key == "distances": return [[]]
-            else: return None
-    # ---- Внутренняя _extract (исправленная) ----
-    def _extract(resp, include):
-        if len(include) > 1:
-            out = {}
-            for key in include:
-                data = resp.get(key, []) or []
-                if key == "documents":
-                    if isinstance(data, list) and data and isinstance(data[0], list): data = [_decompress_documents_always(coll_name, sub) for sub in data]
-                    else: data = _decompress_documents_always(coll_name, data)
-                if flatten and isinstance(data, list) and data and isinstance(data[0], list): data = [i for sub in data for i in sub]
-                out[key] = data
-            return out
-        else:
-            key = include[0]
-            data = resp.get(key, []) or []
-            if key == "documents":
-                if isinstance(data, list) and data and isinstance(data[0], list): data = [_decompress_documents_always(coll_name, sub) for sub in data]
-                else: data = _decompress_documents_always(coll_name, data)
-            if first:
-                if isinstance(data, list) and data and isinstance(data[0], list): return data[0][0] if data[0] else None
-                else: return data[0] if data else None
-            else:
-                if isinstance(data, list) and data and isinstance(data[0], list): return [i for sub in data for i in sub]
-                else: return data
-    # ---- Проверка пустых эмбеддингов для записи ----
+        try:
+            coll = client.get_collection(coll_name)
+        except Exception:
+            pass
+    if coll is None:
+        raise NameError(f"Collection '{coll_name}' not found")
     if action in ("add", "update") and embeddings is not None:
         for i, emb in enumerate(embeddings):
-            if emb is None or (isinstance(emb, list) and len(emb) == 0): print(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}"); return None
+            if emb is None or (isinstance(emb, list) and len(emb) == 0):
+                print(f"[coll_exec] ⚠ Пустой эмбеддинг для {action}, индекс {i}")
+                return None
     if action == "query":
-        if query_embeddings is None: return _empty_result(fetch)
+        if query_embeddings is None:
+            return _coll_empty_result(fetch)
         all_empty = True
         for qe in query_embeddings:
-            if qe and isinstance(qe, list) and len(qe) > 0: all_empty = False; break
-        if all_empty: return _empty_result(fetch)
-    # ---- Проверка на специальные фильтры $in/$nin для vector_id ----
-    id_filters_present = (filters and ((filters.get('$nin') and isinstance(filters.get('$nin'), dict) and 'vector_id' in filters['$nin']) or (filters.get('$in') and isinstance(filters.get('$in'), dict) and 'vector_id' in filters['$in'])))
+            if qe and isinstance(qe, list) and len(qe) > 0:
+                all_empty = False
+                break
+        if all_empty:
+            return _coll_empty_result(fetch)
+    id_filters_present = (
+        filters and (
+            (filters.get('$nin') and isinstance(filters.get('$nin'), dict) and 'vector_id' in filters['$nin'])
+            or (filters.get('$in') and isinstance(filters.get('$in'), dict) and 'vector_id' in filters['$in'])))
     if action in ("query", "get") and id_filters_present:
         processed = _process_in_nin_operators(coll, filters, coll_name, get_results=True)
         if isinstance(processed, dict) and 'ids' in processed:
             resp = processed
             include = fetch if isinstance(fetch, list) else [fetch]
-            if include == ["all"]: include = ["ids", "documents", "metadatas", "embeddings", "distances"]
-            if action == "query": resp = _filter_relevance(resp, relevance_coeff)
-            return _extract(resp, include)
-    # ---- Основные действия ----
+            if include == ["all"]:
+                include = ["ids", "documents", "metadatas", "embeddings", "distances"]
+            if action == "query":
+                resp = _filter_relevance(resp, relevance_coeff)
+            return _coll_extract(resp, include, coll_name, first=first, flatten=flatten)
     try:
-        if action == "add": docs_to_send = _compress_documents_always(coll_name, documents); return coll.add(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
-        if action == "update": docs_to_send = _compress_documents_always(coll_name, documents); return coll.update(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
-        if action == "delete": return coll.delete(ids=ids, where=_make_where(filters), **kwargs)
-        if action == "count": return coll.count()
-        if action == "modify": return coll.modify(name=new_name, metadata=new_meta)
+        if action == "add":
+            docs_to_send = _compress_documents_always(coll_name, documents)
+            return coll.add(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
+        if action == "update":
+            docs_to_send = _compress_documents_always(coll_name, documents)
+            return coll.update(ids=ids, documents=docs_to_send, metadatas=metadatas, embeddings=embeddings, **kwargs)
+        if action == "delete":
+            return coll.delete(ids=ids, where=_make_where(filters), **kwargs)
+        if action == "count":
+            return coll.count()
+        if action == "modify":
+            return coll.modify(name=new_name, metadata=new_meta)
         if action == "delete_collection":
-            if client is None and client_override is None: raise ValueError("client required for delete_collection")
+            if client is None and client_override is None:
+                raise ValueError("client required for delete_collection")
             cl = client_override or client
             return cl.delete_collection(coll_name)
         if action in ("query", "get"):
             include = fetch if isinstance(fetch, list) else [fetch]
-            if include == ["all"]: include = ["ids", "documents", "metadatas", "embeddings", "distances"]
+            if include == ["all"]:
+                include = ["ids", "documents", "metadatas", "embeddings", "distances"]
             params = {}
             if action == "query":
                 params.update({"query_embeddings": query_embeddings or [], "where": _make_where(filters), "n_results": n_results})
-                if doc_contains: params["where_document"] = {"$contains": doc_contains}
-            else: # get
+                if doc_contains:
+                    params["where_document"] = {"$contains": doc_contains}
+            else:
                 params.update({"where": _make_where(filters), "limit": limit, "offset": offset})
-                if doc_contains: params["where_document"] = {"$contains": doc_contains}
+                if doc_contains:
+                    params["where_document"] = {"$contains": doc_contains}
             params["include"] = include
             params.update(kwargs)
             resp = (coll.query if action == "query" else coll.get)(**params)
-            if not resp.get("ids") or not any(resp["ids"]): return _extract(resp, include)
-            if action == "query": resp = _filter_relevance(resp, relevance_coeff)
-            return _extract(resp, include)
+            if not resp.get("ids") or not any(resp["ids"]):
+                return _coll_extract(resp, include, coll_name, first=first, flatten=flatten)
+            if action == "query":
+                resp = _filter_relevance(resp, relevance_coeff)
+            return _coll_extract(resp, include, coll_name, first=first, flatten=flatten)
         raise ValueError(f"Unsupported action: {action}")
-    except Exception as e: print(f"[coll_exec] Ошибка ({action}): {e}"); return None
+    except Exception as e:
+        print(f"[coll_exec] Ошибка ({action}): {e}")
+        return None
 
 def load_chat_settings(chat_id): # Загрузка настроек чата из SQLite БД
     settings = {}
@@ -1058,6 +1245,223 @@ def get_token_limit(): return token_limit
 
 def get_text_tokens_coefficient(): return text_tokens_coefficient
 
+def estimate_tokens(text) -> int:
+    """Rough token estimate (same coefficient as rest of app)."""
+    if not text:
+        return 0
+    try:
+        coeff = float(text_tokens_coefficient)
+    except Exception:
+        coeff = 0.5
+    return int(len(str(text)) * max(coeff, 0.01))
+
+def effective_incoming_token_cap() -> int:
+    """
+    Cap for text fed into model/cutter so generation still has room:
+    min(max_incoming_tokens, token_limit - 1000), at least 500.
+    """
+    global max_incoming_tokens, token_limit
+    try:
+        hard = int(max_incoming_tokens) if max_incoming_tokens else 10000
+    except (TypeError, ValueError):
+        hard = 10000
+    try:
+        tl = int(token_limit) if token_limit else 8192
+    except (TypeError, ValueError):
+        tl = 8192
+    # leave ~1000 tokens for generation / system
+    room = max(500, tl - 1000)
+    return max(500, min(hard, room))
+
+def cap_text_to_tokens(text, max_tokens=None) -> str:
+    """Truncate text to approx max_tokens (chars via coefficient)."""
+    if text is None:
+        return ''
+    text = str(text)
+    if not text:
+        return text
+    cap = effective_incoming_token_cap() if max_tokens is None else int(max_tokens)
+    if estimate_tokens(text) <= cap:
+        return text
+    try:
+        coeff = float(text_tokens_coefficient)
+    except Exception:
+        coeff = 0.5
+    max_chars = max(200, int(cap / max(coeff, 0.01)))
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    # prefer break on newline/space
+    for sep in ('\n\n', '\n', '. ', ' '):
+        pos = cut.rfind(sep)
+        if pos > max_chars * 0.6:
+            cut = cut[: pos + len(sep)]
+            break
+    let_log(f"[cap_text_to_tokens] truncated {len(text)}→{len(cut)} chars (~{cap} tok)")
+    return cut
+
+def split_text_by_token_budget(text, budget_tokens=None) -> list:
+    """Split text into chunks each under budget_tokens (for text_cutter)."""
+    if not text:
+        return []
+    try:
+        budget = int(budget_tokens if budget_tokens is not None else text_cutter_token_limit)
+    except (TypeError, ValueError):
+        budget = 2000
+    budget = max(200, budget)
+    if estimate_tokens(text) <= budget:
+        return [text]
+    try:
+        coeff = float(text_tokens_coefficient)
+    except Exception:
+        coeff = 0.5
+    chunk_chars = max(200, int(budget / max(coeff, 0.01)))
+    chunks = []
+    pos = 0
+    n = len(text)
+    while pos < n:
+        end = min(pos + chunk_chars, n)
+        if end < n:
+            window = text[pos:end]
+            split = -1
+            for sep in ('\n\n', '\n', '. ', ' '):
+                i = window.rfind(sep)
+                if i > len(window) * 0.4:
+                    split = pos + i + len(sep)
+                    break
+            if split > pos:
+                end = split
+        piece = text[pos:end]
+        if piece.strip():
+            chunks.append(piece)
+        pos = end if end > pos else pos + chunk_chars
+    return chunks or [text]
+
+def _resolve_model_tier(use_small=None, purpose=None) -> str:
+    """
+    purpose: agent | cutter | summary | save_emb | None(default/other)
+    use_small: True/False forces tier when small is enabled; None = auto by purpose.
+    """
+    if not use_small_model or 'small' not in _model_backends:
+        return 'large'
+    if use_small is True:
+        return 'small'
+    if use_small is False:
+        return 'large'
+    purpose = (purpose or 'default').lower()
+    if purpose in ('cutter', 'summary', 'save_emb'):
+        return 'small'
+    if purpose == 'agent':
+        if small_agent_until_protocol and not getattr(global_state, 'agent_use_large', False):
+            return 'small'
+        return 'large'
+    # other (gigo, critic, tools selection, …)
+    if small_for_cutter_only:
+        return 'large'
+    return 'small'
+
+def _activate_model_tier(tier: str):
+    """Switch module-level provider callables/token_limit to large or small backend."""
+    global ask_provider_model, ask_provider_model_chat, token_limit
+    global do_chat_construct, native_func_call, _active_model_tier
+    tier = tier if tier in _model_backends else 'large'
+    b = _model_backends[tier]
+    ask_provider_model = b['ask_model']
+    ask_provider_model_chat = b['ask_model_chat']
+    token_limit = b['token_limit']
+    do_chat_construct = b['do_chat_construct']
+    native_func_call = b['native_func_call']
+    _active_model_tier = tier
+    # keep provider module token_limit in sync if present
+    try:
+        if b.get('module') is not None:
+            setattr(b['module'], 'token_limit', token_limit)
+    except Exception:
+        pass
+    let_log(f"[model_tier] active={tier} token_limit={token_limit}")
+
+def _load_provider_module_isolated(base_dir, model_type: str, alias_suffix: str = ''):
+    """Import provider; alias_suffix forces a second independent module copy (dual same provider)."""
+    model_type = _normalize_provider_module_name(model_type)
+    providers_dir = os.path.join(base_dir, "model_providers")
+    if providers_dir not in sys.path:
+        sys.path.append(providers_dir)
+    if not alias_suffix:
+        return importlib.import_module(f"model_providers.{model_type}"), model_type
+    path = os.path.join(providers_dir, f"{model_type}.py")
+    if not os.path.isfile(path):
+        raise ImportError(f"Provider file not found: {path}")
+    mod_name = f"model_providers.{model_type}{alias_suffix}"
+    # drop stale
+    if mod_name in sys.modules:
+        del sys.modules[mod_name]
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+    return mod, model_type
+
+def _decrypt_connect_token(params_dict, session_passwords, chat_id, model_type):
+    decrypted_token = None
+    if params_dict.get("password") == "set":
+        password = None
+        if session_passwords:
+            password = session_passwords.get(chat_id) or session_passwords.get(model_type)
+            # also try small_ key variants
+            if not password:
+                password = session_passwords.get(f"small_{model_type}") or session_passwords.get(f"{model_type}_small")
+        if not password:
+            raise RuntimeError(f"Password not found in session for chat {chat_id} or model {model_type}")
+        encrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
+        if encrypted_token:
+            import encryption_utils as _enc
+            decrypted_token = _enc.decrypt_token(encrypted_token, password)
+        else:
+            raise RuntimeError("Encrypted token (api_token/token) not found in connection string")
+    elif params_dict.get("password") == "empty":
+        decrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
+    return decrypted_token
+
+def _connect_model_backend(base_dir, model_type, connect_params, token_limit_val, session_passwords, chat_id, alias_suffix=''):
+    """Connect one provider instance; returns backend dict."""
+    mod, model_type = _load_provider_module_isolated(base_dir, model_type, alias_suffix=alias_suffix)
+    params_dict = {}
+    for part in (connect_params or "").split(";"):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        params_dict[k.strip().lower()] = v.strip()
+    decrypted_token = _decrypt_connect_token(params_dict, session_passwords, chat_id, model_type)
+    model_connect = mod.connect
+    sig = inspect.signature(model_connect)
+    if '_decrypted_token' in sig.parameters:
+        connection_result = model_connect(connect_params, _decrypted_token=decrypted_token)
+    else:
+        connection_result = model_connect(connect_params)
+    if not connection_result or not connection_result[0]:
+        err = connection_result[1] if connection_result and len(connection_result) > 1 else 'Unknown error'
+        raise RuntimeError(f"connect failed ({model_type}): {err}")
+    tags = connection_result[2] if len(connection_result) > 2 else {}
+    try:
+        tl = int(token_limit_val)
+    except (TypeError, ValueError):
+        tl = int(getattr(mod, 'token_limit', 8192) or 8192)
+    setattr(mod, "token_limit", tl)
+    return {
+        'module': mod,
+        'model_type': model_type,
+        'ask_model': mod.ask_model,
+        'ask_model_chat': mod.ask_model_chat,
+        'create_embeddings': mod.create_embeddings,
+        'disconnect': getattr(mod, 'disconnect', None),
+        'token_limit': tl,
+        'emb_token_limit': getattr(mod, 'emb_token_limit', 4095),
+        'do_chat_construct': getattr(mod, 'do_chat_construct', True),
+        'native_func_call': getattr(mod, 'native_func_call', False),
+        'tags': tags or {},
+        'connect_params': connect_params or '',
+    }
+
 # ========== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (добавить в начало файла) ==========
 
 def _retry_loop(get_response, is_valid, error_retry_delay=60, empty_retry_delay=2):
@@ -1148,10 +1552,33 @@ def _call_completions_with_retry(generation_params):
 
 # TODO: убрать температуру
 @cacher
-def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, **extra_params) -> str:
+def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, use_small=None, purpose=None, **extra_params) -> str:
+    """
+    use_small: True/False force small/large when dual model on; None = auto via purpose.
+    purpose: 'agent' | 'cutter' | 'summary' | 'save_emb' | other — routes to small when enabled.
+    """
+    prev_tier = _active_model_tier
+    tier = _resolve_model_tier(use_small=use_small, purpose=purpose)
+    if tier != prev_tier or not ask_provider_model:
+        try:
+            _activate_model_tier(tier)
+        except Exception as e:
+            let_log(f"[ask_model] activate {tier} failed: {e}; fallback large")
+            _activate_model_tier('large')
+            tier = 'large'
+    try:
+        return _ask_model_impl(prompt_text, system_prompt=system_prompt, all_user=all_user, limit=limit, temperature=temperature, **extra_params)
+    finally:
+        if prev_tier != _active_model_tier and prev_tier in _model_backends:
+            try:
+                _activate_model_tier(prev_tier)
+            except Exception:
+                pass
+
+def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = False, limit: int = None, temperature: float = 0.6, **extra_params) -> str:
     let_log(system_prompt)
     let_log(prompt_text)
-    let_log(f'ВХОД {len(prompt_text)} токенов')
+    let_log(f'ВХОД {len(prompt_text)} токенов tier={_active_model_tier}')
     try: let_log(f'ПРОМПТ {len(system_prompt)} токенов')
     except: pass
 
@@ -1161,8 +1588,11 @@ def ask_model(prompt_text, system_prompt: str = None, all_user: bool = False, li
             system_prompt = translate_text(system_prompt, target_lang, from_lang=language)
         prompt_text = translate_text(prompt_text, target_lang, from_lang=language)
 
-    # Проверка длины контекста
-    if len(prompt_text) * text_tokens_coefficient > token_limit - 1000:
+    # Проверка длины контекста (per active tier + configurable incoming cap)
+    est = estimate_tokens(prompt_text)
+    inc_cap = effective_incoming_token_cap()
+    if est > inc_cap or est > token_limit - 1000:
+        let_log(f"[ask_model] ContextOverflow est={est} cap={inc_cap} token_limit={token_limit}")
         raise RuntimeError("ContextOverflowError")
     '''
     if use_user:
@@ -1661,16 +2091,67 @@ def detect_and_remove_loops(text, min_len=2, max_len=50, min_repeats=3, min_frac
                     break
     return text
 
-def remove_commands_roles(cleaned_text): # TODO: перепроверь работоспособность, учти отступы и что-то напоминающее команды
-    if not filter_generations: return cleaned_text
-    for var_content in clean_variables_content:
-        if var_content:
-            start_pos = cleaned_text.find(var_content)
-            if start_pos != -1: cleaned_text = cleaned_text[:start_pos]; break
-    markers = _find_command_markers(cleaned_text, global_state.tools_commands_dict.get(sid, {}), return_all=True, start_limit=None)
-    if len(markers) >= 2: second_marker_start = markers[1]['start']; cleaned_text = cleaned_text[:second_marker_start]
-    if remove_loops: cleaned_text = detect_and_remove_loops(cleaned_text)
-    return cleaned_text
+def remove_commands_roles(cleaned_text, sid=None):
+    """
+    Чистит ответ модели перед tools_selector / UI:
+    - при filter_generations: обрезка на role-маркерах (и с отступами)
+    - всегда: не больше одной команды (со 2-го маркера !!!…!!! режем)
+    - remove_loops
+    sid: agent id для словаря команд; по умолчанию global_state.now_agent_id
+    """
+    if cleaned_text is None:
+        return ''
+    text = str(cleaned_text)
+    if not text:
+        return text
+    if sid is None:
+        sid = getattr(global_state, 'now_agent_id', None)
+    # 1) Role / tag cutoffs (optional clean generations)
+    if filter_generations:
+        for var_content in (clean_variables_content or []):
+            if not var_content:
+                continue
+            start_pos = text.find(var_content)
+            if start_pos == -1:
+                vc = var_content.strip()
+                if vc:
+                    m = re.search(r'(?m)^[ \t]*' + re.escape(vc), text)
+                    if m:
+                        start_pos = m.start()
+            # режем только если маркер не в самом начале (иначе съедим весь ответ)
+            if start_pos is not None and start_pos > 0:
+                text = text[:start_pos]
+                break
+    # 2) Commands dict for this agent (+ fallbacks)
+    commands = {}
+    if sid is not None:
+        try:
+            commands = dict(global_state.tools_commands_dict.get(sid) or {})
+        except Exception:
+            commands = {}
+    if not commands:
+        for d in (global_state.tools_commands_dict or {}).values():
+            if isinstance(d, dict):
+                commands.update(d)
+        for tok, desc, func in (global_state.another_tools or []):
+            commands.setdefault(tok, (desc, func))
+        if isinstance(getattr(global_state, 'milana_module_tools', None), dict):
+            commands.update(global_state.milana_module_tools)
+        if isinstance(getattr(global_state, 'ivan_module_tools', None), dict):
+            commands.update(global_state.ivan_module_tools)
+    # 3) At most one command block
+    markers = _find_command_markers(text, commands, return_all=True, start_limit=None) if commands else []
+    if markers and len(markers) >= 2:
+        text = text[:markers[1]['start']]
+    else:
+        # generic !!!name!!! even if commands_dict empty / unknown name
+        generic = list(re.finditer(r'[!¡]{2,4}\s*[\w\-]+\s*[!¡]{2,4}', text))
+        if len(generic) >= 2:
+            text = text[:generic[1].start()]
+    # 4) Loop cleanup
+    if remove_loops:
+        text = detect_and_remove_loops(text)
+    return text.rstrip()
 
 def split_text_with_cutting(text, min_chunk_percentage=0.8):
     if not isinstance(text, str) or not text.strip(): return None
@@ -1697,38 +2178,75 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
     return chunks if chunks else None
 
 def text_cutter(text, cut_message=False):
+    """
+    Iterative LLM compression.
+    - Caps total input to max_incoming_tokens (and token_limit-1000).
+    - Pre-splits into chunks of ~text_cutter_token_limit before calling the model.
+    - On ContextOverflowError still bisects (safety net).
+    """
     let_log('ИТЕРАТИВНЫЙ КАТТЕР ВЫЗВАН')
-    let_log(text)
-    chunks_to_process = [text]
+    if text is None:
+        return ''
+    text = str(text)
+    if not text.strip():
+        return text
+    # hard incoming cap so cutter + generation fit active model ctx
+    capped = cap_text_to_tokens(text, effective_incoming_token_cap())
+    if capped is not text and len(capped) < len(text):
+        let_log(f"[text_cutter] incoming cap: {len(text)}→{len(capped)} chars")
+    # proactive split by cutter budget
+    try:
+        cutter_budget = int(text_cutter_token_limit) if text_cutter_token_limit else 2000
+    except (TypeError, ValueError):
+        cutter_budget = 2000
+    initial_chunks = split_text_by_token_budget(capped, cutter_budget)
+    let_log(f"[text_cutter] chunks={len(initial_chunks)} budget={cutter_budget} est={estimate_tokens(capped)}")
+    chunks_to_process = list(initial_chunks)
     summarized_chunks = []
     while chunks_to_process:
         current_chunk = chunks_to_process.pop(0)
         try:
-            if cut_message: summarized_part = ask_model(current_chunk, system_prompt=cut_message_prompt)
-            else: summarized_part = ask_model(current_chunk, system_prompt=summarize_prompt + '\n' + no_markdown_instruction)
+            if cut_message:
+                summarized_part = ask_model(current_chunk, system_prompt=cut_message_prompt, purpose='cutter')
+            else:
+                summarized_part = ask_model(
+                    current_chunk,
+                    system_prompt=summarize_prompt + '\n' + no_markdown_instruction,
+                    purpose='cutter')
             summarized_chunks.append(summarized_part)
             traceprint()
         except RuntimeError as e:
             if 'ContextOverflowError' in str(e):
                 let_log(f'ошибка каттера (переполнение), делим кусок: {len(current_chunk)=}')
                 let_log(e)
-                text2 = current_chunk[len(current_chunk) // 2:]
+                if len(current_chunk) < 80:
+                    # cannot split further — hard truncate and retry once
+                    chunks_to_process.insert(0, current_chunk[: max(40, len(current_chunk) // 2)])
+                    continue
+                mid = len(current_chunk) // 2
+                text2 = current_chunk[mid:]
                 try:
-                    split_pos = min(text2.find('\n'), text2.find('. '))
-                    if split_pos == -1: split_pos = text2.find(' ')
-                    if split_pos != -1: text2 = text2[split_pos + 2:]
+                    split_pos = min(
+                        (x for x in (text2.find('\n'), text2.find('. ')) if x != -1),
+                        default=-1)
+                    if split_pos == -1:
+                        split_pos = text2.find(' ')
+                    if split_pos != -1:
+                        text2 = text2[split_pos + 1:]
                 except Exception as split_e:
                     traceprint()
                     let_log(f"Ошибка при поиске точки разделения: {split_e}")
-                    pass
-                text1 = current_chunk[:current_chunk.find(text2)]
-                if text2: chunks_to_process.insert(0, text2)
-                if text1: chunks_to_process.insert(0, text1)
-            else: sys.exit(1)
+                text1 = current_chunk[: current_chunk.find(text2)] if text2 and text2 in current_chunk else current_chunk[:mid]
+                if text2:
+                    chunks_to_process.insert(0, text2)
+                if text1:
+                    chunks_to_process.insert(0, text1)
+            else:
+                raise
         except Exception as e:
             traceprint()
-            print(e)
-            sys.exit(1)
+            let_log(f"[text_cutter] error: {e}")
+            raise
     return ' '.join(summarized_chunks)
 
 def load_info_loaders(info_loaders_names):
@@ -1856,6 +2374,249 @@ def get_common_save_id(): return str(global_state.common_save_id)
 @no_cache
 def reset_common_save_id(): global_state.common_save_id = 1
 
+# --- PSM: chat_id → {'per': personality, ...} ---
+
+def psm_set(agent_id, **fields):
+    """Записать поля личности агента. Короткие ключи: per=personality."""
+    try:
+        aid = int(agent_id)
+    except (TypeError, ValueError):
+        aid = agent_id
+    block = global_state.psm_operator_person.get(aid)
+    if isinstance(block, str):
+        block = {'per': block}
+    elif not isinstance(block, dict):
+        block = {}
+    else:
+        block = dict(block)
+    for k, v in fields.items():
+        if v is None:
+            continue
+        key = str(k)
+        if key not in ('per',) and len(key) > 3:
+            key = key[:3]
+        block[key] = v
+    global_state.psm_operator_person[aid] = block
+    return block
+
+def psm_get(agent_id, key='per', default=''):
+    try:
+        aid = int(agent_id)
+    except (TypeError, ValueError):
+        aid = agent_id
+    block = global_state.psm_operator_person.get(aid)
+    if isinstance(block, dict):
+        return block.get(key, default)
+    if isinstance(block, str) and key == 'per':
+        return block
+    return default
+
+def psm_pop(agent_id):
+    try:
+        aid = int(agent_id)
+    except (TypeError, ValueError):
+        aid = agent_id
+    return global_state.psm_operator_person.pop(aid, None)
+
+def _load_mcp_tools(mcp_url: str):
+    """
+    MVP MCP client: JSON-RPC tools/list over HTTP(S).
+    mcp_url: host:port | http://host:port | https://...
+    Returns list of (command_name, description, callable) like mod_loader.
+    """
+    import urllib.request
+    url = mcp_url.strip()
+    if not url.startswith('http://') and not url.startswith('https://'):
+        url = 'http://' + url
+    url = url.rstrip('/')
+    # common paths
+    candidates = [url, url + '/mcp', url + '/rpc', url + '/jsonrpc']
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {},
+    }).encode('utf-8')
+    last_err = None
+    data = None
+    for endpoint in candidates:
+        try:
+            req = urllib.request.Request(
+                endpoint, data=payload,
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+                method='POST')
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8', errors='replace'))
+            break
+        except Exception as e:
+            last_err = e
+            continue
+    if data is None:
+        raise RuntimeError(f"MCP unreachable: {last_err}")
+    result = data.get('result') or data
+    tools = result.get('tools') if isinstance(result, dict) else None
+    if not tools:
+        let_log(f"[mcp] no tools in response: {str(data)[:200]}")
+        return []
+    out = []
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get('name') or t.get('tool') or '').strip()
+        if not name:
+            continue
+        # safe command token
+        cmd = re.sub(r'[^a-zA-Z0-9_\-]', '_', name)[:64] or 'mcp_tool'
+        desc = str(t.get('description') or f'MCP tool {name}')[:500]
+        def _make(tool_name=name, endpoint_base=url):
+            def _call(arg_text: str) -> str:
+                import urllib.request as _ur
+                body = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": tool_name, "arguments": {"input": arg_text}},
+                }).encode('utf-8')
+                last = None
+                for ep in (endpoint_base, endpoint_base + '/mcp', endpoint_base + '/rpc'):
+                    try:
+                        req = _ur.Request(
+                            ep, data=body,
+                            headers={'Content-Type': 'application/json'},
+                            method='POST')
+                        with _ur.urlopen(req, timeout=60) as resp:
+                            raw = json.loads(resp.read().decode('utf-8', errors='replace'))
+                        if isinstance(raw, dict) and 'result' in raw:
+                            return str(raw['result'])
+                        return str(raw)
+                    except Exception as e:
+                        last = e
+                        continue
+                return f"MCP call failed: {last}"
+            return _call
+        out.append((cmd, desc + ' [MCP]', _make()))
+    return out
+
+
+# --- Агенты: список инструментов в БД (имена), callable-кэш в ОЗУ ---
+
+def ensure_agents_table():
+    """Таблица агентов в chatsettings.db (memory_sql)."""
+    sql_exec('''CREATE TABLE IF NOT EXISTS agents (
+        agent_id INTEGER PRIMARY KEY,
+        role TEXT,
+        tools_json TEXT NOT NULL,
+        person TEXT DEFAULT NULL,
+        try_path TEXT DEFAULT NULL
+    )''')
+    sql_exec('''CREATE TABLE IF NOT EXISTS agent_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )''')
+
+def _agent_role_for_id(agent_id):
+    try:
+        aid = int(agent_id)
+    except (TypeError, ValueError):
+        return 'unknown'
+    # нечётный id — оператор (как в worker/agent_func)
+    return 'operator' if aid % 2 != 0 else 'executor'
+
+def _rebuild_tools_from_names(names):
+    """Собрать dict name→(desc, func) из загруженных модулей."""
+    if not names:
+        return {}
+    catalog = {}
+    for src in (global_state.milana_module_tools, global_state.ivan_module_tools):
+        if isinstance(src, dict):
+            catalog.update(src)
+    for tool_tokens, tool_desc, tool_func in (global_state.another_tools or []):
+        catalog[tool_tokens] = (tool_desc, tool_func)
+    out = {}
+    for name in names:
+        if name in catalog:
+            out[name] = catalog[name]
+        elif isinstance(global_state.milana_module_tools, dict) and name in global_state.milana_module_tools:
+            out[name] = global_state.milana_module_tools[name]
+        elif isinstance(global_state.ivan_module_tools, dict) and name in global_state.ivan_module_tools:
+            out[name] = global_state.ivan_module_tools[name]
+    return out
+
+@no_cache
+def set_agent_tools(agent_id, tools_dict, role=None, person=None):
+    """
+    Записать инструменты агента: имена — в БД, callables — в RAM-кэш.
+    tools_commands_dict остаётся кэшем для hot path; source of list — agents.tools_json.
+    """
+    ensure_agents_table()
+    tools_dict = tools_dict or {}
+    global_state.tools_commands_dict[agent_id] = tools_dict
+    names = list(tools_dict.keys())
+    if role is None:
+        role = _agent_role_for_id(agent_id)
+    try_path = getattr(global_state, 'now_try', None) or ''
+    person_val = person if person is not None else psm_get(agent_id, 'per', None)
+    sql_exec(
+        'INSERT OR REPLACE INTO agents (agent_id, role, tools_json, person, try_path) VALUES (?, ?, ?, ?, ?)',
+        (int(agent_id), role, json.dumps(names, ensure_ascii=False), person_val, try_path))
+    sql_exec(
+        'INSERT OR REPLACE INTO agent_meta (key, value) VALUES (?, ?)',
+        ('conversations', str(global_state.conversations)))
+    let_log(f"[agents_db] set agent_id={agent_id} role={role} tools={names}")
+
+@no_cache
+def pop_agent_tools(agent_id, default=None):
+    """Удалить агента из кэша и БД (end_dialog / recreate)."""
+    tools = global_state.tools_commands_dict.pop(agent_id, default)
+    try:
+        ensure_agents_table()
+        sql_exec('DELETE FROM agents WHERE agent_id=?', (int(agent_id),))
+        sql_exec(
+            'INSERT OR REPLACE INTO agent_meta (key, value) VALUES (?, ?)',
+            ('conversations', str(global_state.conversations)))
+        let_log(f"[agents_db] pop agent_id={agent_id}")
+    except Exception as e:
+        let_log(f"[agents_db] pop failed agent_id={agent_id}: {e}")
+    return tools
+
+def get_agent_tools(agent_id):
+    """Инструменты агента: сначала RAM-кэш, иначе реконструкция из БД."""
+    if agent_id in global_state.tools_commands_dict:
+        return global_state.tools_commands_dict[agent_id]
+    try:
+        ensure_agents_table()
+        row = sql_exec('SELECT tools_json FROM agents WHERE agent_id=?', (int(agent_id),), fetchone=True)
+        if not row:
+            return {}
+        names = json.loads(row if isinstance(row, str) else (row[0] if row else '[]'))
+        rebuilt = _rebuild_tools_from_names(names)
+        global_state.tools_commands_dict[agent_id] = rebuilt
+        return rebuilt
+    except Exception as e:
+        let_log(f"[agents_db] get failed agent_id={agent_id}: {e}")
+        return global_state.tools_commands_dict.get(agent_id, {})
+
+def load_agents_from_db():
+    """После загрузки модулей — поднять agents → tools_commands_dict (resume)."""
+    try:
+        ensure_agents_table()
+        rows = sql_exec('SELECT agent_id, role, tools_json, person FROM agents', fetchall=True) or []
+        for row in rows:
+            agent_id, role, tools_json, person = row[0], row[1], row[2], row[3] if len(row) > 3 else None
+            try:
+                names = json.loads(tools_json or '[]')
+            except Exception:
+                names = []
+            global_state.tools_commands_dict[agent_id] = _rebuild_tools_from_names(names)
+            if person:
+                psm_set(agent_id, per=person)
+        meta = sql_exec("SELECT value FROM agent_meta WHERE key='conversations'", fetchone=True)
+        if meta is not None and str(meta).strip().isdigit():
+            global_state.conversations = int(meta)
+        let_log(f"[agents_db] loaded {len(rows)} agents, conversations={global_state.conversations}")
+    except Exception as e:
+        let_log(f"[agents_db] load_agents_from_db: {e}")
+
 @no_cache
 def down_hierarchy(): # Добавить новый уровень иерархии (делегирование)
     parts = global_state.now_try.strip('/').split('/')
@@ -1941,12 +2702,59 @@ def get_executor_id():
     if get_executor_number() == 0: return None
     return global_state.now_try
 
+def _web_search_module_available() -> bool:
+    """True if a web_search callable was loaded (simple_web_search / deep_research path)."""
+    try:
+        return 'web_search' in globals() and callable(globals().get('web_search'))
+    except Exception:
+        return False
+
+def _chroma_has_any_docs() -> bool:
+    """True if milana/user/rag collections have at least one document for librarian."""
+    for coll_name in ('milana_collection', 'user_collection', 'rag_collection'):
+        try:
+            resp = coll_exec(action='get', coll_name=coll_name, limit=1, include=['documents'])
+            if not resp:
+                continue
+            ids = resp.get('ids') if isinstance(resp, dict) else None
+            if ids:
+                # chroma may nest ids
+                flat = ids[0] if ids and isinstance(ids[0], list) else ids
+                if flat:
+                    return True
+            docs = resp.get('documents') if isinstance(resp, dict) else None
+            if docs:
+                flat = docs[0] if docs and isinstance(docs[0], list) else docs
+                if any(flat):
+                    return True
+        except Exception as e:
+            let_log(f"[librarian surface] chroma check {coll_name}: {e}")
+    return False
+
+def librarian_search_surface_ok() -> bool:
+    """
+    Whether it is worth generating librarian questions:
+    - web path: librarian_use_web AND web_search module loaded
+    - or local chroma has something to search
+    If neither — skip question generation (empty search is wasteful).
+    """
+    web_ok = bool(librarian_use_web) and _web_search_module_available()
+    if web_ok:
+        return True
+    if _chroma_has_any_docs():
+        return True
+    let_log("[librarian] skip questions: no web module/web flag and chroma empty")
+    return False
+
 def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
     """
     Сохраняет диалог с новой системой ID
     dialog_type: 'operator' или 'executor'
     overwrite: True - перезаписать существующие записи, False - добавить новые
     """
+    if not getattr(global_state, 'save_emb_dialog_enabled', True):
+        let_log("[save_emb_dialog] disabled by setting save_emb_dialog=0 — skip")
+        return
     let_log(f"\n{'='*60}")
     let_log(f"Current ID: {global_state.now_try}")
     def _parse_dialog_to_messages(t): # Парсит текст диалога на отдельные сообщения
@@ -2037,7 +2845,7 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
         system_prompt = grouping_prompt_1 + grouping_prompt_2
         try:
             # Используем ask_model с system_prompt
-            response = ask_model(numbered_text, system_prompt=system_prompt)
+            response = ask_model(numbered_text, system_prompt=system_prompt, purpose='save_emb')
             ranges = _parse_ranges_from_response(response)
             return _create_groups_from_ranges(msgs, ranges, batch_offset)
         except Exception as e:
@@ -2107,41 +2915,65 @@ def save_emb_dialog(tag, dialog_type='operator', result_text='', result=False):
         metadata = {"doc_id": doc_id, "dialog_type": dialog_type, "done": tag, "result": result, "group_index": i, "total_groups": len(all_groups), "hierarchy": global_state.now_try, "timestamp": time.time()}
         let_log(f"\n### ГРУППА {i+1} (Сохраняемый документ {get_common_save_id()}) ###")
         let_log(f"Диапазон: {group['global_start']}-{group['global_end']}")
-        let_log(f"СОХРАНЯЕМЫЙ ТЕКСТ (первые 500 символов):\n---START---\n{group['text'][:500]}...\n---END---")
-        coll_exec(action="add", coll_name="milana_collection", ids=[get_common_save_id()], embeddings=[get_embs(group['text'])], metadatas=[metadata], documents=[group['text']])
+        save_text = _strip_save_emb_noise(group['text'])
+        let_log(f"СОХРАНЯЕМЫЙ ТЕКСТ (первые 500 символов):\n---START---\n{save_text[:500]}...\n---END---")
+        coll_exec(action="add", coll_name="milana_collection", ids=[get_common_save_id()], embeddings=[get_embs(save_text)], metadatas=[metadata], documents=[save_text])
     let_log(f"Всего сохранено {len(all_groups)} групп сообщений для {doc_id}")
     let_log(f"{'='*60}")
 
 @cacher
 def gigo(base_task: str, settings: dict = None) -> str:
     """
-    Классический GIGO (версия may_fixes до advanced gigo):
+    Классический GIGO:
     dreamer/realist/critic → plan с no_markdown_instruction и числом пунктов плана.
-    Librarian намеренно закомментирован (как в эталоне).
+    Librarian — если gigo_use_librarian (как в tests/cross_gpt эталоне).
     """
     if not use_gigo:
         try: return gigo_return_1 + base_task
         except NameError: return base_task
-    # librarian в классическом gigo закомментирован — так и надо
-    # try: questions = ask_model(base_task + global_state.summ_attach, system_prompt=gigo_questions)
-    # except RuntimeError as e:
-    #     if 'ContextOverflowError' in str(e):
-    #         base_task = text_cutter(base_task)
-    #         questions = ask_model(text_cutter(base_task + global_state.summ_attach), system_prompt=gigo_questions)
-    #     else: raise
-    # additional_info = librarian(questions)
-    # if additional_info != found_info_1: additional_info = '\n' + gigo_found_info + '\n' + additional_info
-    # else: additional_info = ''; let_log(found_info_1)
     additional_info = ''
+    if gigo_use_librarian and librarian_search_surface_ok():
+        try:
+            try:
+                questions = ask_model(base_task + global_state.summ_attach, system_prompt=gigo_questions)
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e):
+                    base_task = text_cutter(base_task)
+                    questions = ask_model(text_cutter(base_task + global_state.summ_attach), system_prompt=gigo_questions)
+                else:
+                    raise
+            if questions and str(questions).strip():
+                additional_info = librarian(questions)
+                if additional_info and additional_info != found_info_1:
+                    if len(additional_info) > 3000:
+                        additional_info = text_cutter(additional_info)
+                    additional_info = '\n' + gigo_found_info + '\n' + additional_info
+                else:
+                    additional_info = ''
+                    let_log(found_info_1)
+        except Exception as e:
+            let_log(f"[gigo] librarian skip: {e}")
+            additional_info = ''
+    elif gigo_use_librarian:
+        let_log("[gigo] librarian enabled but no search surface — skip questions")
     minds_text = ''
     minds = []
     roles = [gigo_dreamer, gigo_realist, gigo_critic]
     ents_roles = ', '.join(roles) + '\n'
     role_notes = [gigo_dreamer_note, gigo_realist_note, gigo_critic_note]
+    # короткие ответы ролей: один локализуемый hint (без дубля write_shortly + en "10 sentences")
+    try:
+        role_len_hint = gigo_role_short_hint
+    except NameError:
+        try:
+            role_len_hint = write_shortly_prompt
+        except NameError:
+            role_len_hint = '\nRespond in at most about 10 short sentences. Be concise.\n'
     for role, role_note in zip(roles, role_notes):
-        try: minds.append(ask_model(base_task + additional_info, system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
+        role_sys = gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction + role_len_hint
+        try: minds.append(ask_model(base_task + additional_info, system_prompt=role_sys))
         except RuntimeError as e:
-            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction))
+            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=role_sys))
             else: raise
     for role, mind in zip(roles, minds):
         minds_text += worker_role_text + mind
@@ -2187,7 +3019,7 @@ def gigo_adv(task: str, settings: dict = None) -> str:
         else: raise
     # 2. Библиотекарь
     library = ""
-    if gigo_use_librarian:
+    if gigo_use_librarian and librarian_search_surface_ok():
         try: questions = ask_model(task + global_state.summ_attach, system_prompt=gigo_questions)
         except RuntimeError as e:
             if 'ContextOverflowError' in str(e): questions = ask_model(text_cutter(task + global_state.summ_attach), system_prompt=gigo_questions)
@@ -2198,6 +3030,8 @@ def gigo_adv(task: str, settings: dict = None) -> str:
                 if len(library) > 3000: library = text_cutter(library)
                 library = gigo_found_info + '\n' + library
             else: library = ""
+    elif gigo_use_librarian:
+        let_log("[gigo_adv] librarian enabled but no search surface — skip questions")
     # 3. Генерация идей
     role = ""
     if gigo_use_random_roles: # TODO: опционально случайная строка для множества ролей
@@ -2288,12 +3122,14 @@ def gigo_adv(task: str, settings: dict = None) -> str:
         else: raise
     return answer
 
-@cacher
 def critic(task: str, result: str) -> int | str:
     """
     Оценивает результат.
     - Возвращает 1, если результат приемлем, критик не уверен или произошла ошибка.
     - Возвращает строку с новой, доработанной задачей для исполнителя.
+
+    Note: @cacher снят — critic сам вызывает ask_model (@cacher); вложенный
+    cacher ломал sequence/cache.db. Кэшируются только внутренние ask_model.
     """
     if global_state.conversations % 2 == 0:
         if global_state.conversations != 0: num_critic_reaction = 1
@@ -2400,14 +3236,15 @@ def _find_command_markers(text, commands_dict, return_all=False, start_limit=Non
     """
     if not text or not commands_dict: return [] if return_all else None
     exclamation_chars = {'!', '¡'}
-    pattern = r'[!¡]{1,3}\s*([\w\s]+?)\s*[!¡]{1,3}'
+    # 2–4 bangs, optional spaces, name with word/hyphen/space (indent allowed before !!!)
+    pattern = r'[!¡]{2,4}\s*([\w\-]+(?:\s+[\w\-]+)*)\s*[!¡]{2,4}'
     markers = []
     for match in re.finditer(pattern, text):
         start = match.start()
         if start_limit is not None and start > start_limit: continue
         raw_name = match.group(1).strip()
         # Нормализуем имя: заменяем пробелы на подчёркивания, приводим к нижнему регистру
-        normalized_name = re.sub(r'\s+', '_', raw_name).lower()
+        normalized_name = re.sub(r'[\s\-]+', '_', raw_name).lower()
         # Поиск соответствия в commands_dict
         found_key = None
         # 1. Точное совпадение по нормализованному имени
@@ -2519,8 +3356,17 @@ def _find_any_markers(text):
 
 def remove_wrong_command_messages():
     if global_state.wrong_command_messages_vector_ids != []:
-        sql_exec("DELETE FROM rag_messages WHERE vector_id IN ({})".format(','.join('?' * len(global_state.wrong_command_messages_vector_ids))), global_state.wrong_command_messages_vector_ids)
-        coll_exec(action="delete", coll_name="rag_collection", ids=global_state.wrong_command_messages_vector_ids)
+        ids = list(global_state.wrong_command_messages_vector_ids)
+        sql_exec(
+            "DELETE FROM rag_messages WHERE vector_id IN ({})".format(','.join('?' * len(ids))),
+            ids,
+        )
+        # Chroma only when RAG is enabled and collection exists
+        if use_rag:
+            try:
+                coll_exec(action="delete", coll_name="rag_collection", ids=ids)
+            except Exception as e:
+                let_log(f"remove_wrong_command_messages chroma delete: {e}")
         global_state.wrong_command_messages_vector_ids = []
 
 def add_wrong_command_message_id(vid):
@@ -2587,17 +3433,29 @@ def analyze_protocol(text, now_commands={}):
             if best_match: found = True
         if not found: unknown_command = True; break
     if unknown_command:
-        known_commands_str = warn_command_text_7
-        for known_tool in now_commands: known_commands_str + '\n' + ' (' + now_commands[known_tool][0] + ')'
-        violations.append(wrong_command + known_commands_str)
+        # wrong_command + список доступных (имя + описание); раньше += не было — список не строился
+        # и wrong_command склеивался с warn_command_text_7 без перевода строки
+        skip = set(getattr(global_state, 'skip_tools_keys', None) or [])
+        tool_lines = [wrong_command, warn_command_text_8]
+        for known_tool, meta in (now_commands or {}).items():
+            if known_tool in skip:
+                continue
+            if isinstance(meta, (list, tuple)) and meta:
+                desc = meta[0]
+            else:
+                desc = str(meta) if meta is not None else ''
+            tool_lines.append(f"{known_tool} ({desc})")
+        violations.append("\n".join(tool_lines))
     if not violations:
         remove_wrong_command_messages()
         return None # если нарушений нет, команды корректны, но мы не будем их выполнять (т.к. find_and_match_command не сработал) TODO: ТУТ МОЖЕТ БЫТЬ ОШИБКА
     add_wrong_command_message_id(vector_id_out)
-    violations = list(dict.fromkeys(violations)) # TODO: переработай циклы
-    violations.insert(0, warn_command_text_1)
-    violations.append(warn_command_text_7)
-    return "\n".join(violations) # формируем сообщение
+    violations = list(dict.fromkeys(violations))
+    # заголовок один раз; skip-hint один раз в конце (не дублировать в блоке unknown)
+    body = [warn_command_text_1] + violations
+    if warn_command_text_7 not in body:
+        body.append(warn_command_text_7)
+    return "\n".join(body)
 
 def tools_selector(text, sid):
     """
@@ -2621,6 +3479,41 @@ def tools_selector(text, sid):
     # 3) system keys
     try: sys_keys = [str(k) for k in global_state.system_tools_keys]
     except Exception: sys_keys = []
+    # 3b) skip first — before protocol check (hidden tools, e.g. !!!skip!!! / !!!пропустить!!!)
+    try:
+        skip_keys = list(getattr(global_state, 'skip_tools_keys', None) or [])
+    except Exception:
+        skip_keys = []
+    if skip_keys:
+        skip_dict = {}
+        for sk in skip_keys:
+            if sk in now_commands:
+                skip_dict[sk] = now_commands[sk]
+        if skip_dict:
+            skip_match = find_and_match_command(text, skip_dict)
+            if skip_match:
+                found_key, content = skip_match
+                let_log(f"[TOOLS_SELECTOR] skip-команда до protocol: {found_key}")
+                entry = now_commands.get(found_key)
+                func_callable = None
+                try:
+                    if isinstance(entry, (tuple, list)):
+                        if len(entry) >= 2 and callable(entry[1]): func_callable = entry[1]
+                        elif len(entry) >= 3 and callable(entry[2]): func_callable = entry[2]
+                        elif callable(entry[0]): func_callable = entry[0]
+                    elif callable(entry):
+                        func_callable = entry
+                except Exception:
+                    func_callable = None
+                if func_callable:
+                    remove_wrong_command_messages()
+                    try:
+                        result = func_callable(content)
+                    except Exception as e:
+                        result = str(e)
+                    write_cache([False, result if result is not None else ''])
+                    let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН SKIP] ===")
+                    return result if result is not None else ''
     # 4) найти маркер и сопоставить с командами
     match = find_and_match_command(text, now_commands)
     if not match: # TODO: может разделить случаи когда маркер не найден или команда не сопоставилась
@@ -2751,35 +3644,66 @@ def agent_func(text, agent_number):
             msg_from = func_role_text
             global_state.dialog_ended = False
         else: msg_from = operator_role_text
+    steps = 0
+    max_steps = int(getattr(global_state, 'max_messages_before_answer', 0) or 0)
     while not global_state.stop_agent:
-        let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}")
+        steps += 1
+        global_state.messages_step_count = steps
+        if max_steps > 0 and steps > max_steps:
+            let_log(f"[agent_func] лимит сообщений до ответа: {max_steps}, soft stop")
+            if talk_prompt and not str(talk_prompt).startswith('[message_limit]'):
+                talk_prompt = f"[message_limit] Reached max_messages_before_answer={max_steps}. Partial:\n{talk_prompt}"
+            break
+        let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}, step={steps}/{max_steps or '∞'}")
+        # mid-dialog client messages (optional deliver_user_messages)
+        for inject in poll_user_mid_dialog_injects():
+            note = f"[Client message]\n{inject}"
+            let_log(f"[agent_func] user_inject into sid={sid}: {inject[:120]}")
+            try:
+                update_history(sid, note, func_role_text, local_message=False)
+            except Exception as e:
+                let_log(f"[agent_func] user_inject history: {e}")
+            talk_prompt = note + '\n' + (talk_prompt or '')
         # Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
-        # Вызываем модель, добавив роль текущего агента для корректной генерации
-        talk_prompt = ask_model(final_prompt_for_model + you)
-        talk_prompt = remove_commands_roles(talk_prompt)
-        # Сохраняем ответ самой модели в RAG-историю
+        # agent generation — purpose=agent (small if small_agent_until_protocol and not escalated)
+        model_reply = ask_model(final_prompt_for_model + you, purpose='agent')
+        model_reply = remove_commands_roles(model_reply)
         set_common_save_id()
         vector_id_out = str(get_common_save_id())
-        embedding = get_embs(text)
-        #coll_exec(action="add", coll_name="rag_collection", ids=[vector_id_out], metadatas=[{'chat_id': str(sid), 'role': you, 'relevance_score': 0}], embeddings=[embedding])
-        # TODO: вот тут локал мессадж
-        #let_log(f"Сообщение {vector_id_out} векторизовано и добавлено в RAG")
-        answer = tools_selector(talk_prompt, sid)
+        answer = tools_selector(model_reply, sid)
         if answer:
             let_log(global_state.stop_agent)
+            if global_state.stop_agent:
+                # skip: plain message path — drop large-escalation
+                global_state.agent_use_large = False
+                talk_prompt = answer
+                update_history(sid, talk_prompt, you, vector_id=vector_id_out, local_message=False)
+                break
+            # protocol warning vs successful tool
+            try:
+                _is_proto = bool(warn_command_text_1) and str(answer).lstrip().startswith(str(warn_command_text_1))
+            except Exception:
+                _is_proto = False
+            if _is_proto and small_agent_until_protocol and use_small_model:
+                global_state.agent_use_large = True
+                let_log("[model] protocol fail → escalate agent to large until valid cmd/plain msg")
+            else:
+                # correct command executed → back to small for next agent turns
+                global_state.agent_use_large = False
+            # tool result or protocol warning: keep original model text as agent, answer as Function
+            update_history(sid, model_reply, you, vector_id=vector_id_out)
             talk_prompt = answer
             msg_from = func_role_text
-            update_history(sid, talk_prompt, you, vector_id=vector_id_out)
-            # посмотри как вектор айди ин работает, где создавать
             vector_id_in = update_history(sid, talk_prompt, func_role_text)
-            # тут надо сохранять от функции но сначала от агента
+            if global_state.wrong_command_messages_vector_ids != []:
+                add_wrong_command_message_id(vector_id_in)
         else:
+            # plain message to peer
+            global_state.agent_use_large = False
+            talk_prompt = model_reply
             update_history(sid, talk_prompt, you, vector_id=vector_id_out, local_message=False)
             break
-        # Сохраняем входящее сообщение от предыдущего агента в RAG-историю
-        # а тут только исходящее от агента
-        if global_state.wrong_command_messages_vector_ids != []: add_wrong_command_message_id(vector_id_in)
     global_state.stop_agent = False
     return talk_prompt
 
@@ -2912,10 +3836,37 @@ def init_chromadb(chroma_path, use_rag, max_attempts=3):
             else: raise RuntimeError("Cannot initialize ChromaDB even after deleting the database folder")
     raise RuntimeError("Unexpected: failed to initialize ChromaDB after all attempts")
 
-def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None, settings_override=None):
+# Short / legacy model_type values → module file stem under model_providers/
+_PROVIDER_MODULE_ALIASES = {
+    'ollama': 'ollama_provider',
+    'openai': 'openai_provider',
+    'xai': 'grok_provider',
+    'xai_provider': 'grok_provider',
+    'grok': 'grok_provider',
+    'llama_cpp': 'llama_cpp_provider',
+    'llamacpp': 'llama_cpp_provider',
+    'gpt4all': 'gpt4all_provider',
+    'lmstudio': 'lmstudio_provider',
+    'anthropic': 'anthropic_provider',
+    'cohere': 'cohere_provider',
+    'huggingface': 'huggingface_hub_provider',
+    'huggingface_hub': 'huggingface_hub_provider',
+    'scripted': 'scripted_provider',
+}
+
+def _normalize_provider_module_name(model_type) -> str:
+    """Map UI/legacy model_type to importable model_providers.<name> module stem."""
+    mt = (model_type or 'ollama_provider').strip()
+    if not mt:
+        mt = 'ollama_provider'
+    return _PROVIDER_MODULE_ALIASES.get(mt, mt)
+
+def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, session_passwords=None, settings_override=None, run_worker=True):
     """
     settings_override: dict настроек при первом запуске чата (не читать chatsettings с диска).
     При повторных запусках (resume) settings_override=None — читаем из БД как раньше.
+    run_worker: если False — только инициализация (модель, БД, инструменты), без worker().
+               Нужно для unit/integration тестов. UI всегда оставляет True (по умолчанию).
     """
     global actual_handlers_names, another_tools_files_addresses
     global token_limit, emb_token_limit, chunk_size, left_cache_counter
@@ -2929,7 +3880,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history, use_psm
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
     global use_magical_prompt, use_gigo, use_old_gigo, gigo_idea_count, gigo_plan_items, gigo_use_entropy, gigo_use_random_roles, gigo_use_filter, gigo_use_librarian
-    global librarian_use_models, module_hints_for_operator, give_all_tools, critic_reuse_dialog, one_shot_intention_permission
+    global librarian_use_models, librarian_use_web, module_hints_for_operator, give_all_tools, critic_reuse_dialog, one_shot_intention_permission
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
     # пометка: settings_override применится после открытия db_path
@@ -2986,6 +3937,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
             recent_summary TEXT DEFAULT NULL
             );''')
     sql_exec('CREATE TABLE IF NOT EXISTS system_prompts (chat_id INTEGER PRIMARY KEY, system_prompt TEXT)''')
+    ensure_agents_table()
     initial_text, fl = load_initial_data(chat_id)
     # При первом запуске UI может передать settings_override, чтобы не читать БД повторно
     if settings_override and isinstance(settings_override, dict):
@@ -2999,8 +3951,34 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global_state.allow_ocr = int(settings.get("allow_ocr", 0)) == 1
     global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
     global_state.write_results = int(settings.get("write_results", 0)) == 1
+    global_state.fs_copy_touched_on_end = int(settings.get("fs_copy_touched_on_end", 0)) == 1
     global_state.number_of_plan_items = int(settings.get("number_of_plan_items", 0))
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
+    try:
+        global_state.max_messages_before_answer = int(settings.get("max_messages_before_answer", 0) or 0)
+    except (TypeError, ValueError):
+        global_state.max_messages_before_answer = 0
+    global_state.shell_skip_confirm = int(settings.get("shell_skip_confirm", 0)) == 1
+    global_state.save_emb_dialog_enabled = int(settings.get("save_emb_dialog", 1)) == 1
+    global_state.tools_no_examples = int(settings.get("tools_no_examples", 0)) == 1
+    global_state.deliver_user_messages = int(settings.get("deliver_user_messages", 0)) == 1
+    global text_cutter_token_limit, max_incoming_tokens
+    try:
+        text_cutter_token_limit = int(settings.get("text_cutter_token_limit", 2000) or 2000)
+    except (TypeError, ValueError):
+        text_cutter_token_limit = 2000
+    try:
+        max_incoming_tokens = int(settings.get("max_incoming_tokens", 10000) or 10000)
+    except (TypeError, ValueError):
+        max_incoming_tokens = 10000
+    text_cutter_token_limit = max(200, text_cutter_token_limit)
+    max_incoming_tokens = max(500, max_incoming_tokens)
+    let_log(f"[limits] text_cutter_token_limit={text_cutter_token_limit} max_incoming_tokens={max_incoming_tokens}")
+    try:
+        global_state.max_executor_recreates = int(settings.get("max_executor_recreates", 0) or 0)
+    except (TypeError, ValueError):
+        global_state.max_executor_recreates = 0
+    global_state.executor_recreate_count = 0
     global_state.skip_nested_images = int(settings.get("skip_nested_images", 0)) == 1
     use_rag = int(settings.get("use_rag", 1)) == 1
     use_psm = int(settings.get("use_psm", 0)) == 1
@@ -3009,7 +3987,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     recreate_agents = int(settings.get("recreate_agents", 0)) == 1
     filter_generations = int(settings.get("filter_generations", 0)) == 1
     use_magical_prompt = int(settings.get("use_magical_prompt", 0)) == 1
-    cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 1)) == 1
+    cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 0)) == 1
 
     do_translate = int(settings.get("do_translate", 0)) == 1
     target_lang = settings.get("target_lang", "None")
@@ -3026,10 +4004,17 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     gigo_use_filter = int(settings.get("gigo_use_filter", 1)) == 1
     gigo_use_librarian = int(settings.get("gigo_use_librarian", 1)) == 1
     librarian_use_models = int(settings.get("librarian_use_models", 0)) == 1
+    librarian_use_web = int(settings.get("librarian_use_web", 0)) == 1
     module_hints_for_operator = int(settings.get("module_hints_for_operator", 0)) == 1
     give_all_tools = int(settings.get("give_all_tools", 0)) == 1
     critic_reuse_dialog = int(settings.get("critic_reuse_dialog", 1)) == 1
     one_shot_intention_permission = int(settings.get("one_shot_intention_permission", 0)) == 1
+    # release version check (soft warn in log; UI may show dialog later)
+    chat_release = str(settings.get("release_version", "") or "").strip()
+    if chat_release and chat_release != RELEASE_VERSION:
+        let_log(f"[release] chat release_version={chat_release!r} != app {RELEASE_VERSION!r}")
+    elif not chat_release:
+        let_log(f"[release] chat has no release_version; app={RELEASE_VERSION}")
     # optional trace flags (entry in settings optional)
     try:
         global_state.trace_full = int(settings.get("trace_full", 0)) == 1
@@ -3046,50 +4031,75 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         else: full_path = os.path.join(default_tools_dir, rel_path)
         full_path = os.path.normpath(full_path)
         another_tools_files_addresses.append(full_path)
-    # === Инициализация модели ===
-    model_type = settings.get("model_type", "ollama")
+    # === Инициализация модели (large = primary; small optional, default off) ===
+    global use_small_model, small_for_cutter_only, small_agent_until_protocol, _model_backends, emb_token_limit
+    global do_chat_construct, native_func_call, ask_provider_model, ask_provider_model_chat, get_provider_embs
+    _model_backends = {}
+    use_small_model = int(settings.get("use_small_model", 0)) == 1
+    small_for_cutter_only = int(settings.get("small_for_cutter_only", 1)) == 1
+    small_agent_until_protocol = int(settings.get("small_agent_until_protocol", 0)) == 1
+    global_state.agent_use_large = False
+    model_type = _normalize_provider_module_name(settings.get("model_type", "ollama_provider"))
+    connect_params = settings.get("model_provider_params", "")
     try:
-        model_providers_path = os.path.join(base_dir, "model_providers")
-        if model_providers_path not in sys.path: sys.path.append(model_providers_path)
-        model_providers_module = importlib.import_module(f"model_providers.{model_type}")
-        ask_model = model_providers_module.ask_model
-        ask_model_chat = model_providers_module.ask_model_chat
-        create_embeddings = model_providers_module.create_embeddings
-        model_connect = model_providers_module.connect
-        model_disconnect = model_providers_module.disconnect
-        connect_params = settings.get("model_provider_params", "")
-        params_dict = {}
-        for part in connect_params.split(";"):
-            if "=" not in part: continue
-            k, v = part.split("=", 1)
-            params_dict[k.strip().lower()] = v.strip()
-        decrypted_token = None
-        if params_dict.get("password") == "set": # Если в параметрах указано, что пароль установлен
-            # Пытаемся получить пароль из кэша (сначала по chat_id, потом по model_type)
-            password = None
-            if session_passwords: password = session_passwords.get(chat_id) or session_passwords.get(model_type)
-            if not password: raise RuntimeError(f"Password not found in session for chat {chat_id} or model {model_type}")
-            # Определяем, какой параметр содержит зашифрованный токен
-            encrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
-            if encrypted_token:
-                try: decrypted_token = encryption_utils.decrypt_token(encrypted_token, password)
-                except Exception as e: raise RuntimeError(f"Failed to decrypt token: {e}")
-            else: raise RuntimeError("Encrypted token (api_token/token) not found in connection string")
-        elif params_dict.get("password") == "empty": decrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
-        sig = inspect.signature(model_connect) # Вызываем connect провайдера, передавая расшифрованный токен отдельным параметром
-        if '_decrypted_token' in sig.parameters: connection_result = model_connect(connect_params, _decrypted_token=decrypted_token)
-        else: connection_result = model_connect(connect_params)
-        if not connection_result or not connection_result[0]: let_log(f"Ошибка подключения модели: {connection_result[1] if len(connection_result) > 1 else 'Unknown error'}"); return
-        success = connection_result[0]
-        tags = connection_result[2] if len(connection_result) > 2 else {}
-        if tags: global unified_tags; unified_tags = tags
-        globals().update({'ask_provider_model': ask_model, 'ask_provider_model_chat': ask_model_chat, 'get_provider_embs': create_embeddings,})
-        provider_module_name = f"model_providers.{model_type}"
-        provider_module = sys.modules.get(provider_module_name)
-        setattr(provider_module, "token_limit", token_limit)
-        emb_token_limit = provider_module.emb_token_limit
-        do_chat_construct = provider_module.do_chat_construct
-        native_func_call = provider_module.native_func_call
+        large_backend = _connect_model_backend(
+            base_dir, model_type, connect_params, token_limit,
+            session_passwords, chat_id, alias_suffix='')
+        _model_backends['large'] = large_backend
+        # embeddings always from large
+        get_provider_embs = large_backend['create_embeddings']
+        emb_token_limit = large_backend['emb_token_limit']
+        tags = large_backend.get('tags') or {}
+        if tags:
+            global unified_tags
+            unified_tags = tags
+        _activate_model_tier('large')
+        provider_module = large_backend['module']
+        let_log(f"[model] large connected: {large_backend['model_type']} token_limit={large_backend['token_limit']}")
+
+        if use_small_model:
+            small_type_raw = (settings.get("small_model_type") or "").strip()
+            small_params = (settings.get("small_model_provider_params") or "").strip()
+            small_tl = settings.get("small_token_limit", settings.get("token_limit", 8192))
+            if not small_type_raw:
+                let_log("[model] use_small_model=1 but small_model_type empty — small disabled")
+                use_small_model = False
+            else:
+                small_type = _normalize_provider_module_name(small_type_raw)
+                # same provider as large → copy large params except model= from small/large merge
+                if small_type == large_backend['model_type'] and not small_params:
+                    small_params = connect_params
+                elif small_type == large_backend['model_type'] and small_params:
+                    # ensure non-model keys from large fill gaps
+                    large_map = {}
+                    for part in (connect_params or "").split(";"):
+                        if "=" in part:
+                            k, v = part.split("=", 1)
+                            large_map[k.strip().lower()] = v.strip()
+                    small_map = {}
+                    for part in small_params.split(";"):
+                        if "=" in part:
+                            k, v = part.split("=", 1)
+                            small_map[k.strip().lower()] = v.strip()
+                    for k, v in large_map.items():
+                        if k == "model":
+                            continue
+                        if k not in small_map or not small_map[k]:
+                            small_map[k] = v
+                    small_params = ";".join(f"{k}={v}" for k, v in small_map.items() if v)
+                alias = "_small" if small_type == large_backend['model_type'] else ""
+                try:
+                    small_backend = _connect_model_backend(
+                        base_dir, small_type, small_params, small_tl,
+                        session_passwords, chat_id, alias_suffix=alias)
+                    _model_backends['small'] = small_backend
+                    let_log(f"[model] small connected: {small_backend['model_type']} token_limit={small_backend['token_limit']}")
+                except Exception as se:
+                    let_log(f"[model] small connect failed, continue large-only: {se}")
+                    use_small_model = False
+                    traceback.print_exc()
+        # re-activate large as default after small connect (small connect may touch globals)
+        _activate_model_tier('large')
     except Exception as e:
         let_log(f"Ошибка инициализации модели: {str(e)}")
         traceback.print_exc()
@@ -3097,14 +4107,17 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     # === Загрузка языка, модели и инструментов ===
     if do_translate:
         if use_local_cache:
-            sql_exec("CREATE TABLE translation_cache (src_text TEXT NOT NULL, translation TEXT NOT NULL, to_lang TEXT NOT NULL)")
+            sql_exec("CREATE TABLE IF NOT EXISTS translation_cache (src_text TEXT NOT NULL, translation TEXT NOT NULL, to_lang TEXT NOT NULL)")
             # выгрузка из глобального с целевым языком (тогда можно и в модуль импортировать функцию работы с глобальными настройками (только на самом деле надо отдельный файл))
             if use_global_cache:
                 global_cache_records = global_trans_cache_exec("SELECT src_text, translation FROM translation_cache WHERE to_lang IN (?, ?)", (target_lang, language), fetchall=True)
                 if global_cache_records:
                     sql_exec("INSERT OR IGNORE INTO translation_cache (src_text, translation, to_lang) VALUES (?, ?, ?)", global_cache_records, executemany=True)
                     print(f"Загружено {len(global_cache_records)} записей")
-        from simple_translator import translate_text, translate_texts
+        # Must be module-global: ask_model / tools_selector / worker call translate_text by name
+        from simple_translator import translate_text as _tr_one, translate_texts as _tr_many
+        globals()['translate_text'] = _tr_one
+        globals()['translate_texts'] = _tr_many
     language = settings.get("language", "ru")
     globalize_language_packet(language)
     chunk_size = provider_module.emb_token_limit * text_tokens_coefficient
@@ -3169,20 +4182,54 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         global_state.module_tools_keys.append(tt)
         if tt not in global_state.skip_tools_keys: global_state.tools_str += tt + ' (' + t + ')\n'
         let_log(tt)
+    # MCP (MVP): mcp_url=host:port или http://host:port — list tools, wrap as milana modules
+    mcp_url = str(settings.get("mcp_url", "") or "").strip()
+    if mcp_url:
+        try:
+            mcp_tools = _load_mcp_tools(mcp_url)
+            if mcp_tools:
+                loaded_tools.extend(mcp_tools)
+                global_state.another_tools = loaded_tools
+                for tt, t, _ in mcp_tools:
+                    if tt not in global_state.module_tools_keys:
+                        global_state.module_tools_keys.append(tt)
+                        if tt not in global_state.skip_tools_keys:
+                            global_state.tools_str += tt + ' (' + t + ')\n'
+                let_log(f"[mcp] loaded {len(mcp_tools)} tools from {mcp_url}")
+        except Exception as e:
+            let_log(f"[mcp] load failed: {e}")
+    # Восстановить агентов из БД после того, как callable-модули уже в памяти
+    load_agents_from_db()
     if fl:
         send_output_message(text=start_load_attachments_text)
         upload_user_data(fl)
         send_output_message(text=end_load_attachments_text)
     let_log("ЗАПУСК")
+    if not run_worker:
+        # Provider stays connected for subsequent unit/integration calls.
+        let_log("[initialize_work] run_worker=False — worker не запускается, disconnect отложен")
+        return initial_text
     try: worker(initial_text)
     except Exception as e:
-        print(f"Ошибка: {e}")
-        tb = traceback.extract_tb(e.__traceback__)[-1]
-        print(f"Файл: {tb.filename}, строка: {tb.lineno}")
-        tb = traceback.extract_tb(e.__traceback__)[-1]
-        t = f"{e} | {tb.filename}:{tb.lineno}"
-        send_ui_no_cache(t)
-        log_file = os.path.join(chat_path, 'log.txt')
-        with open(log_file, 'a', encoding='utf-8') as f: f.write(f'{t}\n')
+        # Полная цепочка функций, не только последний фрейм
+        full_tb = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+        print(full_tb)
+        frames = traceback.extract_tb(e.__traceback__) or []
+        chain = ' → '.join(f"{f.filename.split('/')[-1]}:{f.lineno}:{f.name}" for f in frames[-12:])
+        last = frames[-1] if frames else None
+        last_s = f"{last.filename}:{last.lineno}" if last else "?"
+        t = f"{e} | chain: {chain} | last: {last_s}"
+        let_log(t)
+        let_log(full_tb)
+        try:
+            send_ui_no_cache(t)
+        except Exception:
+            pass
+        try:
+            log_file = os.path.join(chat_path, 'log.txt')
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f'{t}\n{full_tb}\n')
+        except Exception:
+            pass
     try: model_disconnect()
     except: pass

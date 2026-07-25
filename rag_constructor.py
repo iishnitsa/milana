@@ -13,6 +13,7 @@ def get_history(chat_id: str) -> list[dict]:
         let_log(f"История не найдена для чата {chat_id}")
         return []
     history = []
+    missing_link_ids = []
     for r in rows:
         msg = {
             'id': r[0],
@@ -25,21 +26,48 @@ def get_history(chat_id: str) -> list[dict]:
             'chat_id': r[7]
         }
         if not msg['full_text'] and msg['vector_id']:
-            row_text = sql_exec(
-                "SELECT full_text, role, is_compressed, relevance_score FROM rag_messages WHERE vector_id = ? AND full_text IS NOT NULL AND full_text != '' LIMIT 1",
-                (msg['vector_id'],), fetchone=True
-            )
-            if row_text:
-                msg['full_text'] = row_text[0]
-                if row_text[1]:
-                    msg['role'] = row_text[1]
-                if row_text[2] is not None:
-                    msg['is_compressed'] = row_text[2]
-                if row_text[3] is not None:
-                    msg['relevance_score'] = row_text[3]
+            missing_link_ids.append(str(msg['vector_id']))
         history.append(msg)
+    # Батч-резолв full_text по vector_id (меньше sql_exec / открытий)
+    if missing_link_ids:
+        by_vid = _batch_resolve_texts_by_vector_ids(missing_link_ids)
+        for msg in history:
+            if not msg['full_text'] and msg['vector_id']:
+                row_text = by_vid.get(str(msg['vector_id']))
+                if row_text:
+                    msg['full_text'] = row_text[0]
+                    if row_text[1]:
+                        msg['role'] = row_text[1]
+                    if row_text[2] is not None:
+                        msg['is_compressed'] = row_text[2]
+                    if row_text[3] is not None:
+                        msg['relevance_score'] = row_text[3]
     let_log(f"Получена история для чата {chat_id}: {len(history)} сообщений")
     return history
+
+
+def _batch_resolve_texts_by_vector_ids(vector_ids: list) -> dict:
+    """vector_id → (full_text, role, is_compressed, relevance_score). Один/несколько IN-запросов."""
+    ids = list(dict.fromkeys(str(v) for v in vector_ids if v))
+    if not ids:
+        return {}
+    result = {}
+    chunk = 400
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        placeholders = ','.join('?' * len(part))
+        # Берём строки, где full_text уже заполнен (link-сообщения смотрят на «полную» копию)
+        rows = sql_exec(
+            f"SELECT vector_id, full_text, role, is_compressed, relevance_score FROM rag_messages "
+            f"WHERE vector_id IN ({placeholders}) AND full_text IS NOT NULL AND full_text != ''",
+            tuple(part),
+            fetchall=True,
+        ) or []
+        for row in rows:
+            vid = str(row[0])
+            if vid not in result:
+                result[vid] = (row[1], row[2], row[3], row[4])
+    return result
 
 def is_context_overflow(context_text: str) -> bool:
     estimated_tokens = len(context_text) * get_text_tokens_coefficient()
@@ -96,7 +124,7 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
             chunk_text += f"{msg['role']}{text}\n"
         let_log(f"##### Суммаризация чанка {i+1}/{len(chunks)} #####")
         let_log(f"Текст чанка: {chunk_text}...")
-        chunk_summary = ask_model(chunk_text, system_prompt=prompt_chunk_summary + '\n' + no_markdown_instruction).strip()
+        chunk_summary = ask_model(chunk_text, system_prompt=prompt_chunk_summary + '\n' + no_markdown_instruction, purpose='summary').strip()
         if chunk_summary:
             chunk_summaries.append(chunk_summary)
             let_log(f"Сводка чанка: {chunk_summary}")
@@ -113,7 +141,7 @@ def create_hierarchical_summary(chat_id: str, messages: list[dict], summary_type
     let_log("##### Создание финальной сводки #####")
     let_log(f"Сводки чанков: {summaries_text}")
     let_log(f"Финальный промпт: {final_prompt}\n- {summaries_text}")
-    final_summary = ask_model(f"\n- {summaries_text}", system_prompt=final_prompt + '\n' + no_markdown_instruction).strip()
+    final_summary = ask_model(f"\n- {summaries_text}", system_prompt=final_prompt + '\n' + no_markdown_instruction, purpose='summary').strip()
     if final_summary:
         max_id = max(msg['id'] for msg in messages)
         set_summary(chat_id, summary_type, max_id, final_summary)

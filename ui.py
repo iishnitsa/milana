@@ -3,6 +3,7 @@ from PIL import Image, ImageTk
 import multiprocessing
 import sys
 import os
+import json
 
 # ====== БАЗОВЫЕ ПУТИ (остаются глобальными для заставки и других вызовов) ======
 def get_base_dir():
@@ -509,14 +510,24 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             if not loaded:
                 self.texts = {"lang_load_error_title": "Language Error", "lang_load_error_message": "Could not load any language files. Please ensure 'lang/en' directory exists."}
             return loaded
-        def get(self, key, **kwargs):
+        def get(self, key, default=None, **kwargs):
+            """key; optional default if missing; kwargs for str.format."""
             defaults = {
                 "ok": "OK", "cancel": "Cancel", "yes": "Yes", "no": "No",
                 "cut": "Cut", "copy": "Copy", "paste": "Paste", "select_all": "Select All",
-                "undo": "Undo", "redo": "Redo"}
-            if key in defaults and key not in self.texts: return defaults[key]
-            template = self.texts.get(key, f"[{key.upper()}]")
-            return template.format(**kwargs)
+                "undo": "Undo", "redo": "Redo", "error": "Error"}
+            if key in defaults and key not in self.texts:
+                template = defaults[key]
+            elif key in self.texts:
+                template = self.texts[key]
+            elif default is not None:
+                template = default
+            else:
+                template = f"[{key.upper()}]"
+            try:
+                return template.format(**kwargs) if kwargs else template
+            except (KeyError, ValueError, IndexError):
+                return template
     class ModuleValidator:
         @staticmethod
         def validate_module(module_path):
@@ -550,10 +561,16 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.providers.clear()
             provider_dir = Path("model_providers")
             if not provider_dir.is_dir(): print("Warning: 'model_providers' directory not found."); return
+            # Thin re-export aliases (importable, not shown as separate UI providers)
+            alias_skip = {"xai_provider"}
             for py_file in provider_dir.glob("*.py"):
                 if py_file.name.startswith("_") or not py_file.is_file(): continue
                 module_name = py_file.stem
+                if module_name in alias_skip:
+                    continue
                 display_name = module_name.replace("_", " ").title()
+                if module_name == "grok_provider":
+                    display_name = "Grok (xAI)"
                 is_valid, funcs, has_token_limit, has_params_in_connect = self._validate_provider(py_file)
                 if is_valid and has_token_limit and has_params_in_connect:
                     params = self._parse_params_from_connect_as_params_list(py_file)
@@ -660,14 +677,16 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             localized_name, localized_desc = None, None
             if lang is None: lang = Lang.current_language
             lang_file = mod_path.with_name(f"{mod_path.stem}_lang.py")
-            if lang_file.exists() and lang and lang != "en":
+            if lang_file.exists() and lang:
                 try:
                     spec = importlib.util.spec_from_file_location("lang_module", str(lang_file))
                     lang_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(lang_module)
                     if hasattr(lang_module, 'locales') and lang in lang_module.locales:
                         locale_data = lang_module.locales[lang]
-                        if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 4: localized_name = locale_data['module_doc'][2]; localized_desc = locale_data['module_doc'][3]
+                        if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 4:
+                            localized_name = locale_data['module_doc'][2]
+                            localized_desc = locale_data['module_doc'][3]
                 except Exception as e: print(f"Ошибка загрузки локализации для {mod_path.name}: {e}")
             with open(mod_path, 'r', encoding='utf-8') as f: source = f.read()
             tree = ast.parse(source)
@@ -732,13 +751,16 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             else: allow_ocr = "1"
             defaults = {
                 "token_limit": "8192", "model_provider_params": "",
+                "provider_params_by_type": "{}",
                 "model_type": default_provider, "use_rag": "1",
                 "filter_generations": "0", "hierarchy_limit": "0",
-                "write_log": "1", "write_results": "0", "max_critic_reactions": "2",
+                "write_log": "1", "write_results": "0",
+                "fs_copy_touched_on_end": "0",
+                "max_critic_reactions": "2",
                 "max_token_limit": "8192", "use_librarian": "0",
                 "recreate_agents": "0",
                 "skip_nested_images": "0",
-                "cut_wrong_command_history": "1",
+                "cut_wrong_command_history": "0",
                 "allow_ocr": allow_ocr,
                 "number_of_plan_items": "0",
                 "do_translate": "0",
@@ -762,6 +784,24 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "give_all_tools": "0",
                 "critic_reuse_dialog": "1",
                 "one_shot_intention_permission": "0",
+                "max_messages_before_answer": "0",
+                "librarian_use_web": "0",
+                "save_emb_dialog": "1",
+                "tools_no_examples": "0",
+                "deliver_user_messages": "0",
+                "use_small_model": "0",
+                "small_model_type": "",
+                "small_model_provider_params": "",
+                "small_token_limit": "8192",
+                "small_max_token_limit": "8192",
+                "small_for_cutter_only": "1",
+                "small_agent_until_protocol": "0",
+                "text_cutter_token_limit": "2000",
+                "max_incoming_tokens": "10000",
+                "release_version": "2026-07",
+                "shell_skip_confirm": "0",
+                "mcp_url": "",
+                "max_executor_recreates": "0",
                 }
             for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
             # Устанавливаем widget_type для известных ключей
@@ -770,6 +810,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "filter_generations": "switch",
                 "write_log": "switch",
                 "write_results": "switch",
+                "fs_copy_touched_on_end": "switch",
                 "use_librarian": "switch",
                 "recreate_agents": "switch",
                 "skip_nested_images": "switch",
@@ -796,7 +837,24 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "gigo_plan_items": "entry",
                 "hierarchy_limit": "entry",
                 "max_critic_reactions": "entry",
+                "max_messages_before_answer": "entry",
+                "max_executor_recreates": "entry",
                 "number_of_plan_items": "entry",
+                "librarian_use_web": "switch",
+                "save_emb_dialog": "switch",
+                "tools_no_examples": "switch",
+                "deliver_user_messages": "switch",
+                "use_small_model": "switch",
+                "small_for_cutter_only": "switch",
+                "small_agent_until_protocol": "switch",
+                "small_model_type": "entry",
+                "small_model_provider_params": "entry",
+                "small_token_limit": "entry",
+                "small_max_token_limit": "entry",
+                "text_cutter_token_limit": "entry",
+                "max_incoming_tokens": "entry",
+                "shell_skip_confirm": "switch",
+                "mcp_url": "entry",
                 "gigo_idea_count": "entry",
                 "chats_dir": "entry",
                 }
@@ -902,6 +960,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.sql_exec(settings_db, "CREATE TABLE custom_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE)")
             all_settings = {**settings_data.get('model_config', {}), **settings_data.get('chat_config', {})}
             all_settings['chat_name'] = chat_name
+            # версия релиза всегда штамп приложения (не пользовательское поле)
+            try:
+                from cross_gpt import RELEASE_VERSION as _app_rel
+            except Exception:
+                _app_rel = '2026-07'
+            all_settings['release_version'] = _app_rel
             for key, value in all_settings.items(): self.sql_exec(settings_db, "INSERT INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
             default_mods = ModuleManager().get_default_modules()
             enabled_defaults = settings_data.get('default_mods_config', {})
@@ -934,6 +998,26 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             if not db.exists(): return {}
             rows = self.sql_exec(str(db), "SELECT key, value FROM settings", fetchall=True) or []
             return {k: v for k, v in rows}
+        def get_chat_tool_paths(self, chat_id):
+            """Пути модулей чата (enabled default_mods + custom) — та же форма, что load_chat_settings another_tools."""
+            db = self.chat_folder(chat_id) / "chatsettings.db"
+            if not db.exists(): return []
+            paths = []
+            default_mods = self.sql_exec(str(db), "SELECT adress FROM default_mods WHERE enabled=?", (1,), fetchall=True) or []
+            paths.extend([row[0] for row in default_mods if row and row[0]])
+            custom_mods = self.sql_exec(str(db), "SELECT adress FROM custom_mods", fetchall=True) or []
+            paths.extend([row[0] for row in custom_mods if row and row[0]])
+            return paths
+        def set_chat_setting(self, chat_id, key, value):
+            """Обновить один ключ settings в chatsettings.db."""
+            db = self.chat_folder(chat_id) / "chatsettings.db"
+            if not db.exists():
+                return False
+            self.sql_exec(
+                str(db),
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)))
+            return True
         def get_default_mods(self):
             rows = self.sql_exec(self.db_path, "SELECT id, name, description, adress, enabled FROM default_mods", fetchall=True) or []
             return [{"id": r[0], "name": r[1], "description": r[2], "adress": r[3], "enabled": bool(r[4])} for r in rows]
@@ -956,6 +1040,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             max_tokens = 8192
             try:
                 if not model_type: return False, Lang.get("model_err_no_provider"), max_tokens
+                # same aliases as worker (ollama→ollama_provider, xai→grok_provider, …)
+                try:
+                    from cross_gpt import _normalize_provider_module_name
+                    model_type = _normalize_provider_module_name(model_type)
+                except Exception:
+                    pass
                 provider_manager = ProviderManager()
                 provider_data = provider_manager.providers.get(model_type)
                 if not provider_data: return False, Lang.get("model_err_provider_missing", provider=model_type), max_tokens
@@ -965,8 +1055,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     try:
                         import inspect
                         sig = inspect.signature(provider_module.connect)
-                        if '_decrypted_password' in sig.parameters: valid, tokens, _, *rest = provider_module.connect(connection_string, _decrypted_password=plain_password)
-                        else: valid, tokens, _, *rest = provider_module.connect(connection_string)
+                        if '_decrypted_token' in sig.parameters and plain_password is not None:
+                            valid, tokens, _, *rest = provider_module.connect(connection_string, _decrypted_token=plain_password)
+                        elif '_decrypted_password' in sig.parameters:
+                            valid, tokens, _, *rest = provider_module.connect(connection_string, _decrypted_password=plain_password)
+                        else:
+                            valid, tokens, _, *rest = provider_module.connect(connection_string)
                     except Exception as ex:
                         try: valid, tokens, _, error_text = provider_module.connect(connection_string); return False, Lang.get("model_err_validation_generic", e=error_text), max_tokens
                         except: return False, Lang.get("model_err_validation_generic", e=str(ex)), max_tokens
@@ -1002,7 +1096,15 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         switch_items = [(k, v) for k, v in metadata.items() if v == 'switch']
         for key, wtype in entry_items + switch_items:
             # Пропускаем служебные ключи, которые не должны отображаться в настройках чата
-            if key in ('language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit', 'chat_name', 'chats_dir'):
+            # служебные / read-only: release_version штампуется приложением, не редактируется
+            # model dualism edited only in model UI block (not duplicate switches here)
+            if key in (
+                'language', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit',
+                'chat_name', 'chats_dir', 'release_version', 'provider_params_by_type',
+                'use_small_model', 'small_model_type', 'small_model_provider_params',
+                'small_token_limit', 'small_max_token_limit',
+                'small_for_cutter_only', 'small_agent_until_protocol',
+            ):
                 continue
             desc_key = key + "_desc"
             has_desc = desc_key in Lang.texts  # наличие описания в текущем языке
@@ -1129,10 +1231,32 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.providers = self.provider_manager.get_providers()
             self.real_token_values = {}
             self.real_pwd_status = {}
+            # small model: separate widget namespace (same provider type as large is OK)
+            self.small_provider_param_full_paths = {}
+            self.small_model_frames = {}
+            self.small_real_token_values = {}
+            self.small_real_pwd_status = {}
+            self.small_settings_vars = {}  # module_name -> {param: StringVar}
+        def _ensure_dual_model_vars(self):
+            """Defaults: large-only; small off."""
+            defaults = {
+                'use_small_model': '0',
+                'small_model_type': '',
+                'small_model_provider_params': '',
+                'small_token_limit': self.settings_vars.get('token_limit', tk.StringVar(value='8192')).get() if self.settings_vars.get('token_limit') else '8192',
+                'small_max_token_limit': self.settings_vars.get('max_token_limit', tk.StringVar(value='8192')).get() if self.settings_vars.get('max_token_limit') else '8192',
+                'small_for_cutter_only': '1',
+                'small_agent_until_protocol': '0',
+            }
+            for k, v in defaults.items():
+                if k not in self.settings_vars:
+                    self.settings_vars[k] = tk.StringVar(value=str(v))
         def _create_model_ui(self, parent):
+            self._ensure_dual_model_vars()
+            # ----- LARGE (primary) -----
             model_type_frame = create_styled_frame(parent)
             model_type_frame.pack(fill="x", pady=10)
-            create_styled_label(model_type_frame, text=Lang.get("model_type")).pack(side="top")
+            create_styled_label(model_type_frame, text=Lang.get("model_type_large", default=Lang.get("model_type"))).pack(side="top")
             radio_scroll = CTkScrollableFrame(parent, orientation="horizontal", fg_color="transparent", height=50, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE)
             if hasattr(radio_scroll, '_scrollbar'):
                 try: radio_scroll._scrollbar.configure(corner_radius=50)
@@ -1162,6 +1286,296 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.update_max_token_label()
             if provider_items and not self.settings_vars['model_type'].get(): self.settings_vars['model_type'].set(provider_items[0][0])
             self.toggle_model_frames()
+            # ----- SMALL (optional, default off) -----
+            self._create_small_model_ui(parent)
+        def _create_small_model_ui(self, parent):
+            self._ensure_dual_model_vars()
+            box = create_styled_frame(parent, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
+            box.pack(fill="x", pady=(12, 5), padx=2)
+            head = create_styled_frame(box, fg_color="transparent")
+            head.pack(fill="x", padx=8, pady=6)
+            create_styled_label(head, text=Lang.get("small_model_section", default="Small model (optional)")).pack(side="left")
+            sw = CTkSwitch(
+                head, text="", variable=self.settings_vars['use_small_model'],
+                onvalue="1", offvalue="0", switch_width=50, switch_height=25,
+                progress_color=PURPLE_ACCENT, font=FONT_REGULAR,
+                command=self._toggle_small_model_section)
+            sw.pack(side="right")
+            create_styled_label(
+                box,
+                text=Lang.get("small_model_section_desc", default="Off by default. Large is primary; embeddings always from large."),
+                wraplength=420, justify="left", text_color=DARK_TEXT_SECONDARY
+            ).pack(anchor="w", padx=8, pady=(0, 4))
+            self.small_details = create_styled_frame(box, fg_color="transparent")
+            self.small_details.pack(fill="x", padx=6, pady=4)
+            # options
+            opt = create_styled_frame(self.small_details, fg_color="transparent")
+            opt.pack(fill="x", pady=2)
+            create_styled_label(opt, text=Lang.get("small_for_cutter_only", default="Small only for cutter/summaries")).pack(side="left")
+            CTkSwitch(opt, text="", variable=self.settings_vars['small_for_cutter_only'],
+                      onvalue="1", offvalue="0", switch_width=50, switch_height=25,
+                      progress_color=PURPLE_ACCENT).pack(side="right")
+            opt2 = create_styled_frame(self.small_details, fg_color="transparent")
+            opt2.pack(fill="x", pady=2)
+            create_styled_label(opt2, text=Lang.get("small_agent_until_protocol", default="Agent on small; large after protocol fail")).pack(side="left")
+            CTkSwitch(opt2, text="", variable=self.settings_vars['small_agent_until_protocol'],
+                      onvalue="1", offvalue="0", switch_width=50, switch_height=25,
+                      progress_color=PURPLE_ACCENT).pack(side="right")
+            # provider radios for small
+            create_styled_label(self.small_details, text=Lang.get("small_model_type", default="Small provider")).pack(anchor="w", pady=(6, 0))
+            s_radio = CTkScrollableFrame(self.small_details, orientation="horizontal", fg_color="transparent", height=44,
+                                         scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE)
+            s_radio.pack(fill="x", pady=4)
+            s_inner = create_styled_frame(s_radio, fg_color="transparent")
+            s_inner.pack(fill="both", expand=True)
+            for module_name, data in self.providers.items():
+                CTkRadioButton(
+                    s_inner, text=data['name'], variable=self.settings_vars['small_model_type'],
+                    value=module_name, command=self._toggle_small_model_frames,
+                    fg_color=PURPLE_ACCENT, font=FONT_REGULAR
+                ).pack(side="left", padx=4)
+            self.small_frames_container = create_styled_frame(self.small_details)
+            self.small_frames_container.pack(fill="x", pady=4)
+            self._create_small_provider_frames(self.small_frames_container)
+            st = create_styled_frame(self.small_details)
+            st.pack(fill="x", pady=4)
+            create_styled_label(st, text=Lang.get("small_token_limit", default="Small token limit")).pack(side="left", padx=(0, 8))
+            create_styled_entry(st, textvariable=self.settings_vars['small_token_limit']).pack(side="left", fill="x", expand=True)
+            btn_row = create_styled_frame(self.small_details, fg_color="transparent")
+            btn_row.pack(fill="x", pady=4)
+            create_styled_button(
+                btn_row, text=Lang.get("small_copy_from_large", default="Copy large params (except model)"),
+                command=self._copy_large_params_to_small).pack(side="left", padx=2)
+            create_styled_button(
+                btn_row, text=Lang.get("validate_small_model", default="Validate small"),
+                command=self._validate_small_model).pack(side="left", padx=2)
+            # seed small type from large if empty and enabled later
+            if not self.settings_vars['small_model_type'].get() and self.settings_vars['model_type'].get():
+                self.settings_vars['small_model_type'].set(self.settings_vars['model_type'].get())
+            self._load_small_provider_params()
+            self._toggle_small_model_frames()
+            self._toggle_small_model_section()
+        def _toggle_small_model_section(self):
+            on = self.settings_vars.get('use_small_model') and self.settings_vars['use_small_model'].get() == '1'
+            if not hasattr(self, 'small_details'):
+                return
+            try:
+                if on:
+                    self.small_details.pack(fill="x", padx=6, pady=4)
+                else:
+                    self.small_details.pack_forget()
+            except Exception:
+                pass
+        def _create_small_provider_frames(self, container):
+            try:
+                for module_name, p_data in self.providers.items():
+                    main_frame = create_styled_frame(container, fg_color=DARK_BG, border_color=WHITE, border_width=1, corner_radius=CORNER_RADIUS)
+                    self.small_model_frames[module_name] = main_frame
+                    main_frame.pack_propagate(False)
+                    main_frame.configure(height=150)
+                    params = p_data.get('params', [])
+                    scroll_frame = CTkScrollableFrame(main_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
+                    scroll_frame.pack(fill="both", expand=True, padx=8, pady=1.5)
+                    self.small_provider_param_full_paths.setdefault(module_name, {})
+                    self.small_settings_vars.setdefault(module_name, {})
+                    for param in params:
+                        def make_callback(m_name=module_name):
+                            return lambda p_name: self._on_small_param_change(p_name, m_name)
+                        create_param_widget(
+                            scroll_frame, param, self.small_settings_vars[module_name],
+                            self.small_provider_param_full_paths[module_name], make_callback())
+                    main_frame.pack(fill="x", padx=4, pady=4)
+            except Exception as e:
+                print(f"Error creating small model frames: {e}")
+        def _on_small_param_change(self, param_name, provider_name):
+            if param_name not in ["api_token", "token", "password"]:
+                return
+            val = self.small_settings_vars.get(provider_name, {}).get(param_name)
+            if not val or val.get() == "•••":
+                return
+            if param_name in ["api_token", "token"]:
+                pwd_var = self.small_settings_vars.get(provider_name, {}).get("password")
+                if pwd_var and pwd_var.get() == "•••":
+                    pwd_var.set("")
+            if param_name == "password":
+                tok_var = self.small_settings_vars.get(provider_name, {}).get("api_token") or self.small_settings_vars.get(provider_name, {}).get("token")
+                if tok_var and tok_var.get() == "•••":
+                    tok_var.set("")
+        def _toggle_small_model_frames(self):
+            selected = self.settings_vars['small_model_type'].get() if self.settings_vars.get('small_model_type') else ""
+            for name, frame in self.small_model_frames.items():
+                try:
+                    if name == selected and frame.winfo_exists():
+                        frame.pack(fill="x", padx=4, pady=4)
+                    elif frame.winfo_exists():
+                        frame.pack_forget()
+                except Exception:
+                    continue
+            self._load_small_provider_params()
+        def _apply_params_string_to_small_provider(self, provider_module: str, params_str: str):
+            if not provider_module or not params_str:
+                return
+            try:
+                params_map = dict(part.split('=', 1) for part in params_str.split(';') if '=' in part)
+                ui_vars = self.small_settings_vars.get(provider_module, {})
+                path_vars = self.small_provider_param_full_paths.get(provider_module, {})
+                provider_info = self.providers.get(provider_module, {})
+                for param_info in provider_info.get('params', []):
+                    param_name = param_info['name']
+                    value = params_map.get(param_name, '')
+                    if param_info.get('is_file'):
+                        if param_name in path_vars:
+                            path_vars[param_name].set(value)
+                    elif param_name in ui_vars:
+                        if param_name in ["api_token", "token"]:
+                            if value:
+                                self.small_real_token_values[provider_module] = value
+                                ui_vars[param_name].set("•••")
+                            else:
+                                ui_vars[param_name].set("")
+                        elif param_name == "password":
+                            self.small_real_pwd_status[provider_module] = value
+                            ui_vars[param_name].set("•••" if value == "set" else "")
+                        else:
+                            ui_vars[param_name].set(value)
+            except Exception as e:
+                print(f"small params apply error: {e}")
+        def _load_small_provider_params(self):
+            prov = self.settings_vars['small_model_type'].get() if self.settings_vars.get('small_model_type') else ""
+            pstr = self.settings_vars.get('small_model_provider_params')
+            pstr = pstr.get() if pstr is not None else ""
+            if prov and pstr:
+                self._apply_params_string_to_small_provider(prov, pstr)
+        def _build_small_connection_string(self) -> str:
+            provider_module_name = self.settings_vars['small_model_type'].get() if self.settings_vars.get('small_model_type') else ""
+            if not provider_module_name:
+                return ""
+            provider_data = self.providers.get(provider_module_name)
+            if not provider_data:
+                return ""
+            parts = []
+            self._last_small_plain_password = None
+            ui_vars = self.small_settings_vars.get(provider_module_name, {})
+            path_vars = self.small_provider_param_full_paths.get(provider_module_name, {})
+            for param in provider_data.get('params', []):
+                param_name = param['name']
+                value = ""
+                if param.get('is_file'):
+                    if param_name in path_vars:
+                        value = path_vars[param_name].get().strip()
+                elif param_name in ui_vars:
+                    value = ui_vars[param_name].get().strip()
+                if param_name in ["api_token", "token"]:
+                    if value == "•••":
+                        value = self.small_real_token_values.get(provider_module_name, "")
+                    else:
+                        raw_token = value
+                        raw_pwd = ui_vars.get("password", tk.StringVar()).get() if ui_vars.get("password") else ""
+                        if raw_pwd == "•••":
+                            raw_pwd = ""
+                        if raw_pwd and raw_token:
+                            value = encryption_utils.encrypt_token(raw_token, raw_pwd)
+                            self._last_small_plain_password = raw_pwd
+                        else:
+                            value = raw_token
+                elif param_name == "password":
+                    if value == "•••":
+                        value = self.small_real_pwd_status.get(provider_module_name, "")
+                    else:
+                        if value:
+                            self._last_small_plain_password = value
+                            value = "set"
+                        else:
+                            value = "empty"
+                if not value:
+                    default_val = param.get('default')
+                    if default_val is not None:
+                        value = str(default_val)
+                if value:
+                    parts.append(f"{param_name}={value}")
+            return ";".join(parts)
+        def _copy_large_params_to_small(self):
+            """Same provider as large → copy all params except model name into small widgets."""
+            large_type = self.settings_vars['model_type'].get()
+            if not large_type:
+                return
+            large_conn = self._build_connection_string()
+            self.settings_vars['small_model_type'].set(large_type)
+            # drop model= from copy so user must set small model (or keep if already set)
+            small_map = {}
+            for part in large_conn.split(';'):
+                if '=' not in part:
+                    continue
+                k, v = part.split('=', 1)
+                kl = k.strip().lower()
+                if kl == 'model':
+                    continue
+                small_map[kl] = v.strip()
+            # preserve existing small model name if any
+            cur_small = self._build_small_connection_string()
+            for part in cur_small.split(';'):
+                if part.lower().startswith('model='):
+                    small_map['model'] = part.split('=', 1)[1].strip()
+            if 'model' not in small_map:
+                small_map['model'] = ''  # user fills
+            pstr = ";".join(f"{k}={v}" for k, v in small_map.items())
+            self.settings_vars['small_model_provider_params'].set(pstr)
+            self._toggle_small_model_frames()
+            self._apply_params_string_to_small_provider(large_type, pstr)
+            # token limit default from large if empty-ish
+            try:
+                self.settings_vars['small_token_limit'].set(self.settings_vars['token_limit'].get())
+            except Exception:
+                pass
+        def _validate_small_model(self):
+            if self.settings_vars.get('use_small_model') and self.settings_vars['use_small_model'].get() != '1':
+                showinfo(self, Lang.get("info", default="Info"), Lang.get("small_model_disabled_hint", default="Enable small model first."))
+                return
+            model_type = self.settings_vars['small_model_type'].get()
+            connection_string = self._build_small_connection_string()
+            self.settings_vars['small_model_provider_params'].set(connection_string)
+            plain = getattr(self, '_last_small_plain_password', None)
+            valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string, plain)
+            if valid:
+                try:
+                    self.settings_vars['small_max_token_limit'].set(str(max_tokens))
+                    cur = int(self.settings_vars['small_token_limit'].get() or max_tokens)
+                    if cur > int(max_tokens):
+                        self.settings_vars['small_token_limit'].set(str(max_tokens))
+                except Exception:
+                    pass
+                if plain:
+                    encryption_utils.SESSION_PASSWORDS[f"small_{model_type}"] = plain
+                showinfo(self, Lang.get("success"), msg)
+            else:
+                showerror(self, Lang.get("validation_error"), msg)
+        def collect_dual_model_settings(self) -> dict:
+            """Settings keys for large + optional small (for save / create chat)."""
+            self._ensure_dual_model_vars()
+            large_conn = self._build_connection_string()
+            out = {
+                'model_type': self.settings_vars['model_type'].get(),
+                'model_provider_params': large_conn,
+                'token_limit': self.settings_vars['token_limit'].get(),
+                'max_token_limit': self.settings_vars.get('max_token_limit', tk.StringVar(value='8192')).get(),
+                'use_small_model': self.settings_vars['use_small_model'].get(),
+                'small_for_cutter_only': self.settings_vars['small_for_cutter_only'].get(),
+                'small_agent_until_protocol': self.settings_vars['small_agent_until_protocol'].get(),
+            }
+            if out['use_small_model'] == '1':
+                s_conn = self._build_small_connection_string()
+                out['small_model_type'] = self.settings_vars['small_model_type'].get()
+                out['small_model_provider_params'] = s_conn
+                out['small_token_limit'] = self.settings_vars['small_token_limit'].get()
+                out['small_max_token_limit'] = self.settings_vars.get('small_max_token_limit', tk.StringVar(value='8192')).get()
+                self.settings_vars['small_model_provider_params'].set(s_conn)
+            else:
+                out['small_model_type'] = self.settings_vars['small_model_type'].get() or ''
+                out['small_model_provider_params'] = self.settings_vars['small_model_provider_params'].get() or ''
+                out['small_token_limit'] = self.settings_vars['small_token_limit'].get() or ''
+                out['small_max_token_limit'] = self.settings_vars.get('small_max_token_limit', tk.StringVar(value='')).get() or ''
+            self.settings_vars['model_provider_params'].set(large_conn)
+            return out
         def _create_specific_model_frames(self, container):
             try:
                 for module_name, p_data in self.providers.items():
@@ -1199,34 +1613,108 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 tok_var = self.settings_vars[provider_name].get("api_token")
                 if not tok_var: tok_var = self.settings_vars[provider_name].get("token")
                 if tok_var and tok_var.get() == "•••": tok_var.set("")
-        def _load_provider_params_from_string(self):
-            params_str = self.settings_vars['model_provider_params'].get()
-            current_provider_module = self.settings_vars['model_type'].get()
-            if not params_str or not current_provider_module: return
+        def _get_provider_params_map(self) -> dict:
+            """JSON map provider_module → connection string (prevents cross-provider bleed)."""
+            raw = ""
+            try:
+                var = self.settings_vars.get('provider_params_by_type')
+                raw = var.get() if var is not None else ""
+            except Exception:
+                raw = ""
+            if not raw:
+                return {}
+            try:
+                data = json.loads(raw)
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+        def _set_provider_params_map(self, data: dict):
+            if 'provider_params_by_type' not in self.settings_vars:
+                self.settings_vars['provider_params_by_type'] = tk.StringVar(value="{}")
+            try:
+                self.settings_vars['provider_params_by_type'].set(json.dumps(data or {}, ensure_ascii=False))
+            except Exception:
+                self.settings_vars['provider_params_by_type'].set("{}")
+        def _remember_provider_params(self, provider_module: str, params_str: str):
+            if not provider_module:
+                return
+            m = self._get_provider_params_map()
+            if params_str:
+                m[provider_module] = params_str
+            self._set_provider_params_map(m)
+            if 'model_provider_params' in self.settings_vars and params_str is not None:
+                # worker always reads model_provider_params for the *active* provider
+                if self.settings_vars.get('model_type') and self.settings_vars['model_type'].get() == provider_module:
+                    self.settings_vars['model_provider_params'].set(params_str)
+        def _apply_params_string_to_provider(self, provider_module: str, params_str: str):
+            """Fill only the given provider's widgets from its own connection string."""
+            if not provider_module or not params_str:
+                return
             try:
                 params_map = dict(part.split('=', 1) for part in params_str.split(';') if '=' in part)
-                provider_ui_vars = self.settings_vars.get(current_provider_module, {})
-                provider_path_vars = self.provider_param_full_paths.get(current_provider_module, {})
-                provider_info = self.providers.get(current_provider_module, {})
-                if not provider_info: return
+                provider_ui_vars = self.settings_vars.get(provider_module, {})
+                provider_path_vars = self.provider_param_full_paths.get(provider_module, {})
+                provider_info = self.providers.get(provider_module, {})
+                if not provider_info:
+                    return
                 for param_info in provider_info.get('params', []):
                     param_name = param_info['name']
                     value = params_map.get(param_name, '')
-                    if param_info['is_file']:
-                        if param_name in provider_path_vars: provider_path_vars[param_name].set(value)
+                    if param_info.get('is_file'):
+                        if param_name in provider_path_vars:
+                            provider_path_vars[param_name].set(value)
                     else:
                         if param_name in provider_ui_vars:
                             if param_name in ["api_token", "token"]:
                                 if value:
-                                    self.real_token_values[current_provider_module] = value
+                                    self.real_token_values[provider_module] = value
                                     provider_ui_vars[param_name].set("•••")
-                                else: provider_ui_vars[param_name].set("")
+                                else:
+                                    provider_ui_vars[param_name].set("")
                             elif param_name == "password":
-                                self.real_pwd_status[current_provider_module] = value
-                                if value == "set": provider_ui_vars[param_name].set("•••")
-                                else: provider_ui_vars[param_name].set("")
-                            else: provider_ui_vars[param_name].set(value)
-            except (ValueError, KeyError) as e: print(f"Warning: Could not parse provider params string: {params_str}. Error: {e}")
+                                self.real_pwd_status[provider_module] = value
+                                if value == "set":
+                                    provider_ui_vars[param_name].set("•••")
+                                else:
+                                    provider_ui_vars[param_name].set("")
+                            else:
+                                provider_ui_vars[param_name].set(value)
+            except (ValueError, KeyError) as e:
+                print(f"Warning: Could not parse provider params string for {provider_module}: {params_str}. Error: {e}")
+        def _load_provider_params_for(self, provider_module: str):
+            """Load params only for one provider from namespaced map (no cross-bleed)."""
+            if not provider_module:
+                return
+            m = self._get_provider_params_map()
+            params_str = m.get(provider_module, "")
+            # Migration: if map empty for active provider, seed from model_provider_params once
+            if not params_str:
+                active = self.settings_vars.get('model_type')
+                active_name = active.get() if active is not None else ""
+                if provider_module == active_name:
+                    mp = self.settings_vars.get('model_provider_params')
+                    params_str = mp.get() if mp is not None else ""
+                    if params_str:
+                        self._remember_provider_params(provider_module, params_str)
+            if params_str:
+                self._apply_params_string_to_provider(provider_module, params_str)
+        def _load_provider_params_from_string(self):
+            """Load active provider only (compat name used across UI). Never fill other providers from active string."""
+            current = self.settings_vars['model_type'].get() if self.settings_vars.get('model_type') else ""
+            # Seed map from legacy single string if needed, then load every known entry into its own widgets
+            m = self._get_provider_params_map()
+            if not m and current:
+                mp = self.settings_vars.get('model_provider_params')
+                legacy = mp.get() if mp is not None else ""
+                if legacy:
+                    self._remember_provider_params(current, legacy)
+                    m = self._get_provider_params_map()
+            for prov, pstr in m.items():
+                if prov in self.providers:
+                    self._apply_params_string_to_provider(prov, pstr)
+            # ensure active visible fields filled
+            if current:
+                self._load_provider_params_for(current)
         def _build_connection_string(self) -> str:
             provider_module_name = self.settings_vars['model_type'].get()
             if not provider_module_name: return ""
@@ -1273,8 +1761,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     if name == selected_type and frame.winfo_exists(): frame.pack(fill="x", padx=5, pady=5)
                     elif frame.winfo_exists(): frame.pack_forget()
                 except (tk.TclError, AttributeError): continue
-            # wrap уже pack'ается в _create_specific_model_frames; здесь только show/hide
-            self._load_provider_params_from_string()
+            # only the selected provider's own cached params — never re-apply active string to another
+            self._load_provider_params_for(selected_type)
         def update_max_token_label(self):
             if hasattr(self, 'max_token_label') and self.max_token_label.winfo_exists():
                 max_limit = self.settings_vars.get('max_token_limit', tk.StringVar(value="8192")).get()
@@ -1321,7 +1809,26 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             # Выбор папки чатов — только в главных настройках (SettingsWindow), не при создании чата
             if getattr(self, '_show_chats_dir_picker', False):
                 self._build_chats_dir_picker(scrollable_frame)
+            # read-only: версия приложения (release)
+            try:
+                from cross_gpt import RELEASE_VERSION as _app_rel
+            except Exception:
+                _app_rel = "2026-07"
+            rel_frame = create_styled_frame(scrollable_frame)
+            rel_frame.pack(fill="x", pady=4)
+            create_styled_label(
+                rel_frame,
+                text=f"{Lang.get('release_version')}: {_app_rel}",
+                font=FONT_REGULAR).pack(anchor="w", padx=2)
+            # MCP: явно в шапке вкладки (также в metadata как mcp_url)
+            if 'mcp_url' not in self.settings_vars:
+                self.settings_vars['mcp_url'] = tk.StringVar(
+                    value=self.backend.get_global_settings().get('mcp_url', ''))
             metadata = self.backend.get_settings_metadata()
+            # гарантируем widget_type для mcp_url в UI даже на старых БД
+            if 'mcp_url' not in metadata:
+                metadata = dict(metadata)
+                metadata['mcp_url'] = 'entry'
             build_chat_settings_ui(scrollable_frame, self.settings_vars, metadata)
         def _build_chats_dir_picker(self, parent):
             if 'chats_dir' not in self.settings_vars:
@@ -1369,7 +1876,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 p_name = param['name'].lower()
                 if "api_token" in p_name or "token" in p_name: has_token_param = True
                 if "password" in p_name: has_pwd_param = True
-            if has_token_param and not has_pwd_param: showerror(self, Lang.get("error", "Error"), "Провайдер не валиден: отсутствует параметр password при наличии api_token."); return
+            if has_token_param and not has_pwd_param:
+                showerror(self, Lang.get("error", default="Error"), "Провайдер не валиден: отсутствует параметр password при наличии api_token."); return
             valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string, plain_password)
             if valid:
                 self.max_tokens = max_tokens
@@ -1381,10 +1889,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.token_label.configure(text=Lang.get("token_limit_info", max_tokens=self.max_tokens))
                 if plain_password: encryption_utils.SESSION_PASSWORDS[model_type] = plain_password; self.valid_password = plain_password
                 self.settings_vars['model_provider_params'].set(connection_string)
+                self._remember_provider_params(model_type, connection_string)
             else: self.validated = False; showerror(self, Lang.get("validation_error"), msg)
         def _get_default_settings(self):
             settings = self.backend.get_global_settings()
             if 'max_token_limit' not in settings: settings['max_token_limit'] = '8192'
+            if 'provider_params_by_type' not in settings: settings['provider_params_by_type'] = '{}'
             try:
                 cur = int(settings.get('token_limit', '8192'))
                 mx = int(settings['max_token_limit'])
@@ -1504,6 +2014,18 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     color = "transparent"
                 chat_button.configure(fg_color=color)
         def show_initial_settings(self): self.withdraw(); InitialSettingsWindow(self, self.backend)
+        def refresh_ui_language(self):
+            """Update main-window strings after Lang.load_language (without full UI teardown)."""
+            try:
+                self.title(Lang.get("app_title"))
+            except Exception:
+                pass
+            # placeholder / log button if present
+            try:
+                if hasattr(self, 'log_btn') and self.log_btn.winfo_exists():
+                    self.log_btn.configure(text=Lang.get("log", default="log"))
+            except Exception:
+                pass
         def setup_main_ui(self):
             for widget in self.winfo_children(): widget.destroy()
             self.grid_rowconfigure(0, weight=1)
@@ -1560,13 +2082,13 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.log_btn = create_styled_button(self.control_buttons_frame, text="log", width=20, height=20, command=self.open_log_window)
             self.log_btn.pack(side=tk.LEFT, padx=2)
             right_panel_container = create_styled_frame(self)
-            right_panel_container.grid(row=0, column=1, sticky="nsew", padx=(0, 5), pady=5)
+            right_panel_container.grid(row=0, column=1, sticky="nsew", padx=(0, 5), pady=(0, 5))
             right_panel_container.grid_columnconfigure(0, weight=1)
             right_panel_container.grid_rowconfigure(0, weight=1)
             right_panel_container.grid_rowconfigure(1, weight=0)
             # Убираем рамку у сообщений
             self.messages_bordered_frame = create_styled_frame(right_panel_container, fg_color=DARK_BG, border_width=0, corner_radius=0)
-            self.messages_bordered_frame.grid(row=0, column=0, sticky="nsew", pady=(0,5))
+            self.messages_bordered_frame.grid(row=0, column=0, sticky="nsew", pady=5)
             self.messages_bordered_frame.grid_rowconfigure(0, weight=1)
             self.messages_bordered_frame.grid_columnconfigure(0, weight=1)
             self.messages_frame = CTkScrollableFrame(self.messages_bordered_frame, scrollbar_button_color=PURPLE_ACCENT, scrollbar_button_hover_color=WHITE, fg_color="transparent", border_width=0, corner_radius=0)
@@ -1851,7 +2373,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 return
 
             attachments_paths = [str(a.resolve()) for a in self.attachments] if self.attachments else []
-            if self.waiting_for_answer.get(self.current_chat_id):
+            # Флаг ждём answer_user: снять ПОСЛЕ формирования message_data (раньше сбрасывали до проверки)
+            awaiting_user_answer = bool(self.waiting_for_answer.get(self.current_chat_id))
+            if awaiting_user_answer:
                 self.waiting_for_answer[self.current_chat_id] = False
 
             if self.backend.add_message(self.current_chat_id, text, True, attachments_paths):
@@ -1872,7 +2396,18 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.input_text.delete("1.0", "end")
                 self.adjust_input_height()
 
-                message_data = {'text': text, 'attachments': attachments_paths or None, 'command': 'answer_user' if self.waiting_for_answer.get(self.current_chat_id) else None}
+                cmd = None
+                if awaiting_user_answer:
+                    cmd = 'answer_user'
+                else:
+                    # mid-dialog inject when process already running and option on
+                    try:
+                        deliver = str(self.backend.get_chat_settings(self.current_chat_id).get('deliver_user_messages', '0')) == '1'
+                    except Exception:
+                        deliver = False
+                    if deliver and self.current_chat_id in self.chat_processes and self.chat_processes[self.current_chat_id].is_alive():
+                        cmd = 'user_inject'
+                message_data = {'text': text, 'attachments': attachments_paths or None, 'command': cmd}
                 if self.current_chat_id in self.input_queues:
                     self.input_queues[self.current_chat_id].put(message_data)
                 if self.current_chat_id not in self.chat_processes:
@@ -1881,6 +2416,27 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     self.update_chat_controls()
         def start_chat_process(self, chat_id):
             chat_settings = self.backend.get_chat_settings(chat_id)
+            # Совместимость версии релиза: спросить, если чат новее/старее/без версии
+            try:
+                from cross_gpt import RELEASE_VERSION as APP_RELEASE
+            except Exception:
+                APP_RELEASE = "2026-07"
+            chat_rel = str(chat_settings.get("release_version", "") or "").strip()
+            if chat_rel != APP_RELEASE:
+                if not chat_rel:
+                    msg = Lang.get("release_version_missing", app=APP_RELEASE)
+                elif chat_rel > APP_RELEASE:
+                    msg = Lang.get("release_version_newer", chat=chat_rel, app=APP_RELEASE)
+                else:
+                    msg = Lang.get("release_version_older", chat=chat_rel, app=APP_RELEASE)
+                if not askyesno(self, Lang.get("release_version_title"), msg):
+                    return
+                # пользователь продолжил — фиксируем текущую app-версию в чате
+                try:
+                    self.backend.set_chat_setting(chat_id, "release_version", APP_RELEASE)
+                    chat_settings["release_version"] = APP_RELEASE
+                except Exception as e:
+                    print(f"stamp release_version: {e}")
             params_str = chat_settings.get('model_provider_params', '')
             model_type = chat_settings.get('model_type', '')
             params_map = dict(part.split('=', 1) for part in params_str.split(';') if '=' in part)
@@ -1903,15 +2459,19 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                             if encrypted_token: encryption_utils.decrypt_token(encrypted_token, pwd_input)
                             encryption_utils.SESSION_PASSWORDS[chat_id] = pwd_input
                             break
-                        except Exception: showerror(self, Lang.get("error", "Error"), "Неверный пароль!")
+                        except Exception: showerror(self, Lang.get("error", default="Error"), "Неверный пароль!")
             input_queue = multiprocessing.Queue()
             output_queue = multiprocessing.Queue()
             log_queue = multiprocessing.Queue()
             current_passwords = encryption_utils.SESSION_PASSWORDS.copy()
             from cross_gpt import initialize_work
-            # Первый запуск процесса: передаём settings dict, чтобы не читать БД повторно
+            # Первый запуск: settings + another_tools в одном dict (не читать chatsettings повторно в worker)
             is_first_start = chat_id not in getattr(self, '_chat_process_started', set())
-            settings_override = dict(chat_settings) if is_first_start else None
+            settings_override = None
+            if is_first_start:
+                settings_override = dict(chat_settings)
+                # Пути enabled tools — иначе initialize_work видит tool_paths=[] («Нет обычных модулей»)
+                settings_override["another_tools"] = self.backend.get_chat_tool_paths(chat_id)
             p = multiprocessing.Process(
                 target=initialize_work,
                 args=(get_base_dir(), chat_id, input_queue, output_queue, log_queue, current_passwords, settings_override))
@@ -1934,19 +2494,25 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     if isinstance(response, dict):
                         message_text = response.get('text', '')
                         attachments = response.get('attachments')
-                        is_question = response.get('command') == 'ask_user'
+                        cmd = response.get('command')
+                        is_question = cmd in ('ask_user', 'answer_user', 'wait_user')
                     else:
                         message_text = str(response)
                         attachments = None
                         is_question = False
-                    if not message_text: continue
+                        cmd = None
+                    if not message_text and not is_question: continue
+                    # Система ждёт ответ пользователя (ask_user / end wait)
+                    if cmd in ('ask_user', 'wait_user') or is_question:
+                        self.waiting_for_answer[chat_id] = True
                     # Убираем из UI сырые маркеры команд (ask_user и т.п.), command остаётся для is_question
                     import re as _re
-                    display_text = _re.sub(r'!{2,4}\s*[\w\-]+\s*!{2,4}', '', message_text)
+                    display_text = _re.sub(r'!{2,4}\s*[\w\-]+\s*!{2,4}', '', message_text or '')
                     display_text = _re.sub(r'\n{3,}', '\n\n', display_text).strip() or message_text
-                    self.backend.add_message(chat_id, display_text, False, attachments)
-                    if chat_id == self.current_chat_id: self.add_message_to_ui(display_text, False, is_question=is_question, attachments=attachments)
-                    else: self.chat_blink_states[chat_id] = True
+                    if display_text:
+                        self.backend.add_message(chat_id, display_text, False, attachments)
+                        if chat_id == self.current_chat_id: self.add_message_to_ui(display_text, False, is_question=is_question, attachments=attachments)
+                        else: self.chat_blink_states[chat_id] = True
                     if not self.focus_get(): self.flash_window()
             except queue.Empty: pass
             if chat_id in self.chat_processes and self.chat_processes[chat_id].is_alive(): self.after(500, lambda c=chat_id: self.check_chat_responses(c))
@@ -2103,7 +2669,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 p_name = param['name'].lower()
                 if "api_token" in p_name or "token" in p_name: has_token_param = True
                 if "password" in p_name: has_pwd_param = True
-            if has_token_param and not has_pwd_param: showerror(self, Lang.get("error", "Error"), "Провайдер не валиден: отсутствует параметр password при наличии api_token."); return
+            if has_token_param and not has_pwd_param:
+                showerror(self, Lang.get("error", default="Error"), "Провайдер не валиден: отсутствует параметр password при наличии api_token."); return
             valid, msg, max_tokens = self.backend.validate_model_settings(model_type, connection_string, plain_password)
             if valid:
                 self.max_tokens = max_tokens
@@ -2115,6 +2682,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.token_label.configure(text=Lang.get("token_limit_info", max_tokens=self.max_tokens))
                 if plain_password: encryption_utils.SESSION_PASSWORDS[model_type] = plain_password; self.valid_password = plain_password
                 self.settings_vars['model_provider_params'].set(connection_string)
+                self._remember_provider_params(model_type, connection_string)
                 try:
                     if hasattr(self, 'save_btn') and self.save_btn.winfo_exists(): self.save_btn.configure(state="normal")
                 except (tk.TclError, AttributeError): pass
@@ -2138,13 +2706,19 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             try: os.makedirs(chats_dir, exist_ok=True)
             except OSError as e:
                 showerror(self, Lang.get("error"), str(e)); return
+            dual = self.collect_dual_model_settings()
+            mt = dual['model_type']
+            conn = dual['model_provider_params']
+            self._remember_provider_params(mt, conn)
             settings_to_save = {
                 'language': self.lang_var.get(),
-                'model_type': self.settings_vars['model_type'].get(),
-                'token_limit': self.settings_vars['token_limit'].get(),
-                'max_token_limit': self.settings_vars['max_token_limit'].get(),
-                'model_provider_params': self.settings_vars['model_provider_params'].get(),
+                'model_type': mt,
+                'token_limit': dual['token_limit'],
+                'max_token_limit': dual['max_token_limit'],
+                'model_provider_params': conn,
+                'provider_params_by_type': self.settings_vars.get('provider_params_by_type', tk.StringVar(value='{}')).get(),
                 'chats_dir': chats_dir}
+            settings_to_save.update({k: dual[k] for k in dual if k.startswith('small_') or k == 'use_small_model'})
             self.backend.update_global_settings(settings_to_save)
             self.on_close()
         def on_close(self):
@@ -2211,16 +2785,26 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 if not (1 <= token_limit <= max_limit): raise ValueError
             except (ValueError, TypeError):
                 showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens)); return
+            dual = self.collect_dual_model_settings()
+            conn = dual['model_provider_params']
+            self._remember_provider_params(current_model_type, conn)
             settings_to_save = {
                 'language': self.settings_vars['language'].get(),
-                'model_type': self.settings_vars['model_type'].get(),
-                'token_limit': self.settings_vars['token_limit'].get(),
-                'max_token_limit': self.settings_vars['max_token_limit'].get(),
-                'model_provider_params': self.settings_vars['model_provider_params'].get(),}
+                'model_type': dual['model_type'],
+                'token_limit': dual['token_limit'],
+                'max_token_limit': dual['max_token_limit'],
+                'model_provider_params': conn,
+                'provider_params_by_type': self.settings_vars.get('provider_params_by_type', tk.StringVar(value='{}')).get(),
+            }
+            settings_to_save.update({k: dual[k] for k in (
+                'use_small_model', 'small_model_type', 'small_model_provider_params',
+                'small_token_limit', 'small_max_token_limit',
+                'small_for_cutter_only', 'small_agent_until_protocol') if k in dual})
             metadata = self.backend.get_settings_metadata()
             for key in metadata:
                 if key in self.settings_vars: settings_to_save[key] = self.settings_vars[key].get()
-            if settings_changed: settings_to_save['model_provider_params'] = self._build_connection_string()
+            # dual model keys win over metadata pass
+            settings_to_save.update({k: dual[k] for k in dual if k.startswith('small_') or k in ('use_small_model', 'model_type', 'model_provider_params', 'token_limit', 'max_token_limit')})
             old_chats_root = self.backend.get_chats_root()
             new_chats_root = old_chats_root
             do_migrate = False
@@ -2273,6 +2857,22 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     backend.update_default_mod_enabled(mod_id, enabled)
                 if new_language != original_language:
                     Lang.load_language(new_language)
+                    # локализовать имена/описания модулей без перезапуска
+                    try:
+                        backend.rescan_and_localize_modules()
+                    except Exception as e:
+                        print(f"rescan modules on lang change: {e}")
+                    # main window chrome (title at least) after locale change
+                    if master.winfo_exists():
+                        try:
+                            master.title(Lang.get("app_title"))
+                        except Exception:
+                            pass
+                        if hasattr(master, 'refresh_ui_language'):
+                            try:
+                                master.refresh_ui_language()
+                            except Exception as e:
+                                print(f"refresh_ui_language: {e}")
                 ModuleManager().load_modules(backend, reload_m=True)
                 if master.winfo_exists() and hasattr(master, 'load_chats'):
                     backend.cache.update_chats(backend._load_chats_from_db())
@@ -2521,12 +3121,35 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 max_limit = int(self.settings_vars['max_token_limit'].get())
                 if not (1 <= token_limit <= max_limit): raise ValueError
             except (ValueError, TypeError): showerror(self, Lang.get("error"), Lang.get("token_limit_info", max_tokens=self.max_tokens)); return
-            model_config = {'model_type': self.settings_vars['model_type'].get(), 'model_provider_params': self.settings_vars['model_provider_params'].get(), 'token_limit': self.settings_vars['token_limit'].get()}
-            if settings_changed: model_config['model_provider_params'] = self._build_connection_string()
+            dual = self.collect_dual_model_settings()
+            conn = dual['model_provider_params']
+            self._remember_provider_params(current_model_type, conn)
+            model_config = {
+                'model_type': dual['model_type'],
+                'model_provider_params': conn,
+                'token_limit': dual['token_limit'],
+                'max_token_limit': dual.get('max_token_limit', ''),
+                'provider_params_by_type': self.settings_vars.get('provider_params_by_type', tk.StringVar(value='{}')).get(),
+                'use_small_model': dual.get('use_small_model', '0'),
+                'small_model_type': dual.get('small_model_type', ''),
+                'small_model_provider_params': dual.get('small_model_provider_params', ''),
+                'small_token_limit': dual.get('small_token_limit', ''),
+                'small_max_token_limit': dual.get('small_max_token_limit', ''),
+                'small_for_cutter_only': dual.get('small_for_cutter_only', '1'),
+                'small_agent_until_protocol': dual.get('small_agent_until_protocol', '0'),
+            }
             metadata = self.backend.get_settings_metadata()
             chat_config = {"language": Lang.current_language}
             for key in metadata:
                 if key in self.settings_vars: chat_config[key] = self.settings_vars[key].get()
+            chat_config['provider_params_by_type'] = model_config['provider_params_by_type']
+            for k in ('use_small_model', 'small_model_type', 'small_model_provider_params',
+                      'small_token_limit', 'small_max_token_limit',
+                      'small_for_cutter_only', 'small_agent_until_protocol'):
+                chat_config[k] = model_config.get(k, '')
+            # mcp_url всегда из вкладки настроек чата (если не в metadata — всё равно)
+            if 'mcp_url' in self.settings_vars:
+                chat_config['mcp_url'] = self.settings_vars['mcp_url'].get()
             default_mods_config = {mid: var.get() for mid, var in self.settings_vars['default_mods'].items()}
             final_custom_mods = list(self.custom_mods_for_chat) + list(self.newly_added_mods)
             settings_bundle = {"model_config": model_config, "chat_config": chat_config, "default_mods_config": default_mods_config, "custom_mods_list": final_custom_mods}
