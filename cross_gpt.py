@@ -53,6 +53,8 @@ class GlobalState:
         self.write_results = 0
         # FS: copy session touched files to chat/dialog_artifacts/ on end_dialog (off by default)
         self.fs_copy_touched_on_end = 0
+        self.fs_use_git = True  # False → plain disk file ops (no git worlds/branches)
+        self.show_message_datetime = False  # prefix agent history with [timestamp]
         self.need_owerwrite_operator = False
         self.need_owerwrite_executor = False
         self.task_delegated = False
@@ -77,6 +79,14 @@ class GlobalState:
         self.executor_recreate_count = 0
         # dual model: escalate agent from small → large after protocol fail
         self.agent_use_large = False
+        self.deliver_user_messages = False
+        # client interrupt: client written first; Ivan plain reply deferred until after Milana↔client
+        self.client_interrupt_active = False
+        self.client_interrupt_text = ''
+        self.deferred_peer_text = ''       # Ivan's message held out of DB
+        self.deferred_peer_role = ''
+        self.deferred_peer_sid = None
+        self.deferred_peer_vector_id = ''
 global_state = GlobalState()
 
 chat_path = ''
@@ -94,11 +104,21 @@ use_librarian = True
 recreate_agents = False
 # False = keep wrong-command turns in history (default off — less confusing for models)
 cut_wrong_command_history = False
+# False = command marker must start near beginning of message (start_limit=5)
+allow_command_not_at_start = False
+# filled by globalize_language_packet; fallback to what_is_func_text when empty
+what_is_func_text_not_at_start = ''
 use_old_gigo = True
 use_gigo = True
+# Old GIGO role toggles (dreamer / realist / critic); all on by default
+gigo_role_dreamer = True
+gigo_role_realist = True
+gigo_role_critic = True
 librarian_use_models = False
 module_hints_for_operator = False
 give_all_tools = False
+# optional: append operator goal (without plan) to executor system prompt
+give_operator_goal_to_executor = False
 critic_reuse_dialog = True
 one_shot_intention_permission = False
 # librarian: ходить в web_search (default off — «не работает с веб по умолчанию»)
@@ -192,9 +212,11 @@ _active_model_tier = 'large'
 use_small_model = False
 small_for_cutter_only = True  # True: cutter/summaries/save_emb only; False: all non-agent
 small_agent_until_protocol = False  # True: agent on small until protocol fail → large
-# text_cutter / incoming caps (token estimates via text_tokens_coefficient)
+# If True with small_agent_until_protocol: do NOT write protocol error to history; retry same turn on large
+small_protocol_drop_error = False
+# text_cutter caps only (token estimates via text_tokens_coefficient); not used by ask_model/agent
 text_cutter_token_limit = 2000  # max est. tokens per cutter LLM call
-max_incoming_tokens = 10000  # max est. tokens fed into cutter / ask before hard cut
+max_incoming_tokens = 10000  # max est. tokens fed into text_cutter before hard truncate
 memory_sql = None
 client = None
 milana_collection = None
@@ -231,16 +253,18 @@ def cacher(func): # Декоратор для функций с кэширова
             let_log(f"[Используется кэшированный результат для {func.__name__}]")
             return cached[1]
         global _cache_context_active
+        prev_ctx = _cache_context_active
+        _cache_context_active = True
         try:
             result = func(*args, **kwargs)
             write_cache(result)
             return result
-            _cache_context_active = False
         except Exception as e: # Сохраняем исключение в кэше без traceback
             exc_data = {'__exception__': {'type': type(e).__name__, 'message': str(e), 'traceback_str': traceback.format_exc()}}
             write_cache(exc_data)
-            _cache_context_active = False
             raise
+        finally:
+            _cache_context_active = prev_ctx
     return wrapper
 
 def load_locale(module_file, current_lang='en'): # Загружает локализацию для модуля из соответствующего файла
@@ -463,58 +487,250 @@ def send_log_to_ui(message: str):
 
 @cacher
 def get_input_message(command=None, timeout=None, wait=False):
+    """
+    Read from UI input_queue. No requeue / no queue safety.
+    If command is set: keep taking until a matching msg (other msgs are discarded).
+    """
     answer = None
-    if command: # Получаем сообщение из очереди
+    if command:
         while True:
             try:
                 msg = ui_conn[0].get(block=(timeout is not None), timeout=timeout)
-                if msg.get('command') == command: answer = msg; break
-            except Empty: pass
-            except Exception as e: let_log(f"Ошибка при получении сообщения: {e}"); break
+                if isinstance(msg, dict) and msg.get('command') == command:
+                    answer = msg
+                    break
+                # non-matching: drop (user asked not to preserve queue)
+            except Empty:
+                pass
+            except Exception as e:
+                let_log(f"Ошибка при получении сообщения: {e}")
+                break
     elif not wait:
-        try: answer = ui_conn[0].get(block=(timeout is not None), timeout=timeout)
-        except Empty: pass
-        except Exception as e: let_log(f"Ошибка при получении сообщения: {e}")
+        try:
+            answer = ui_conn[0].get(block=(timeout is not None), timeout=timeout)
+        except Empty:
+            pass
+        except Exception as e:
+            let_log(f"Ошибка при получении сообщения: {e}")
     else:
         while True:
-            try: answer = ui_conn[0].get(block=(timeout is not None), timeout=timeout); break
-            except Empty: pass
-            except Exception as e: let_log(f"Ошибка при получении сообщения: {e}"); break
+            try:
+                answer = ui_conn[0].get(block=(timeout is not None), timeout=timeout)
+                break
+            except Empty:
+                pass
+            except Exception as e:
+                let_log(f"Ошибка при получении сообщения: {e}")
+                break
     return answer
 
-def poll_user_mid_dialog_injects() -> list:
+def take_oldest_user_inject() -> str | None:
     """
-    Non-blocking: pull UI messages with command=user_inject (mid-dialog client notes).
-    Re-queues other messages so answer_user / first task are not stolen.
+    Non-blocking: take ONLY the oldest user_inject (FIFO).
+    All other queue items (including later injects) are put back in order.
     """
     if not getattr(global_state, 'deliver_user_messages', False):
-        return []
+        return None
     if not ui_conn or not ui_conn[0]:
-        return []
-    injects = []
-    kept = []
+        return None
+    buf = []
     try:
         while True:
             try:
-                msg = ui_conn[0].get_nowait()
+                buf.append(ui_conn[0].get_nowait())
             except Empty:
                 break
-            except Exception as e:
-                let_log(f"poll_user_mid_dialog_injects: {e}")
-                break
-            if isinstance(msg, dict) and msg.get('command') == 'user_inject':
-                t = (msg.get('text') or '').strip()
-                if t:
-                    injects.append(t)
-            else:
-                kept.append(msg)
+    except Exception as e:
+        let_log(f"take_oldest_user_inject drain: {e}")
+    inject = None
+    rest = []
+    for msg in buf:
+        if (
+            inject is None
+            and isinstance(msg, dict)
+            and msg.get('command') == 'user_inject'
+            and (msg.get('text') or '').strip()
+        ):
+            inject = (msg.get('text') or '').strip()
+        else:
+            rest.append(msg)
+    for m in rest:
+        try:
+            ui_conn[0].put(m)
+        except Exception as e:
+            let_log(f"take_oldest_user_inject requeue: {e}")
+    return inject
+
+def _operator_sid_for(chat_id: int) -> int:
+    """Operator chat_id is always odd in dual-chat pairs."""
+    try:
+        cid = int(chat_id)
+    except Exception:
+        return chat_id
+    return cid - 1 if cid % 2 == 0 else cid
+
+def _client_mode_tools(sid) -> dict:
+    """
+    While Milana answers the external client: ONLY skip is callable.
+    Plain text (no command) = reply to client. No end_dialog / tools / etc.
+    """
+    full = dict(global_state.tools_commands_dict.get(sid) or {})
+    skip_keys = set(getattr(global_state, 'skip_tools_keys', None) or [])
+    out = {}
+    for k, v in full.items():
+        kl = str(k).lower()
+        if k in skip_keys or 'skip' in kl or 'пропуст' in kl:
+            out[k] = v
+    # fallback: pull skip from module catalogs if missing from session dict
+    if not out:
+        catalogs = []
+        for src in (
+            getattr(global_state, 'milana_module_tools', None),
+            getattr(global_state, 'ivan_module_tools', None),
+        ):
+            if isinstance(src, dict):
+                catalogs.append(src)
+        for cat in catalogs:
+            for k, v in cat.items():
+                kl = str(k).lower()
+                if k in skip_keys or 'skip' in kl or 'пропуст' in kl:
+                    out[k] = v
+    return out
+
+def _flush_deferred_peer_to_db():
+    """Write Ivan's deferred plain reply (shared dual-chat) after client exchange."""
+    text = getattr(global_state, 'deferred_peer_text', '') or ''
+    if not text:
+        return ''
+    sid = global_state.deferred_peer_sid
+    role = global_state.deferred_peer_role or ''
+    vid = global_state.deferred_peer_vector_id or ''
+    try:
+        update_history(sid, text, role, vector_id=vid, local_message=False)
+        let_log(f"[client_interrupt] flushed deferred peer to DB sid={sid} len={len(text)}")
+    except Exception as e:
+        let_log(f"[client_interrupt] flush deferred peer: {e}")
+    out = text
+    global_state.deferred_peer_text = ''
+    global_state.deferred_peer_role = ''
+    global_state.deferred_peer_sid = None
+    global_state.deferred_peer_vector_id = ''
+    return out
+
+def _run_client_interrupt_turn(sid, inject: str, you: str) -> str:
+    """
+    Milana answers external client (plain text) or skip → back to Ivan.
+    Client already written to DB. Ivan's text is deferred until this finishes.
+    Returns talk_prompt for continuing with Ivan (deferred peer text).
+    """
+    try:
+        label = client_message_label
+    except NameError:
+        label = '[Client message]'
+    try:
+        mode_note = client_interrupt_mode_note
+    except NameError:
+        mode_note = (
+            'External client message. Reply in plain text to the client, '
+            'or !!!skip!!! to ignore and return to Ivan. No other tools.'
+        )
+    try:
+        c_role = client_role_text
+    except NameError:
+        c_role = '\nClient: '
+
+    global_state.client_interrupt_active = True
+    global_state.client_interrupt_text = inject
+
+    had_tools = sid in (global_state.tools_commands_dict or {})
+    saved_tools = global_state.tools_commands_dict.get(sid) if had_tools else None
+    restricted = _client_mode_tools(sid)
+    global_state.tools_commands_dict[sid] = restricted  # only skip (if any)
+    let_log(f"[client_interrupt] tools={list(restricted.keys())} inject={inject[:80]!r}")
+
+    def _restore_tools():
+        if had_tools:
+            global_state.tools_commands_dict[sid] = saved_tools
+        else:
+            global_state.tools_commands_dict.pop(sid, None)
+
+    def _clear_interrupt():
+        global_state.client_interrupt_active = False
+        global_state.client_interrupt_text = ''
+
+    try:
+        try:
+            from rag_constructor import get_history as _gh
+            hist = _gh(str(sid)) or []
+        except Exception:
+            hist = []
+        if hist:
+            tail = hist[-6:]
+            # roles live in role column; glued only when building text for the model
+            ctx = ''.join(f"{m.get('role', '')}{m.get('full_text', '')}" for m in tail)
+            if len(ctx) > 3000:
+                ctx = ctx[-3000:]
+            user_payload = f"Recent dialogue context:\n{ctx}\n\n{label}\n{inject}"
+        else:
+            user_payload = f"{label}\n{inject}"
+
+        try:
+            _nm = no_markdown_instruction
+        except NameError:
+            _nm = ''
+        try:
+            model_reply = ask_model(
+                user_payload,
+                system_prompt=mode_note + '\n' + _nm,
+                purpose='agent',
+            )
+        except Exception as e:
+            let_log(f"[client_interrupt] ask_model: {e}")
+            model_reply = ''
+        model_reply = remove_commands_roles(model_reply or '')
+
+        set_common_save_id()
+        vector_id_out = str(get_common_save_id())
+        global_state.stop_agent = False
+        # tools_selector sees only skip — any other !!!cmd!!! → protocol / no match
+        answer = tools_selector(model_reply, sid)
+        was_skip = bool(global_state.stop_agent)
+        global_state.stop_agent = False
+
+        try:
+            is_proto = bool(warn_command_text_1) and answer and str(answer).lstrip().startswith(str(warn_command_text_1))
+        except Exception:
+            is_proto = False
+        if is_proto:
+            let_log("[client_interrupt] protocol warn — retry")
+            global_state.client_interrupt_active = True
+            global_state.client_interrupt_text = inject
+            return ''  # stay in interrupt; deferred Ivan still held
+
+        if was_skip:
+            let_log("[client_interrupt] skip → flush Ivan, no client reply")
+            _clear_interrupt()
+            return _flush_deferred_peer_to_db()
+
+        # plain text = reply to client (no tool); ignore non-skip tool results if any
+        if answer is None:
+            body = (model_reply or '').strip()
+            if body:
+                try:
+                    send_output_message(text=body, command='client_reply')
+                except Exception as e:
+                    let_log(f"[client_interrupt] send: {e}")
+                # DB: role only in role column; full_text is pure content
+                try:
+                    update_history(sid, body, you, vector_id=vector_id_out, local_message=True)
+                except Exception as e:
+                    let_log(f"[client_interrupt] history milana: {e}")
+
+        let_log("[client_interrupt] done → flush deferred Ivan")
+        _clear_interrupt()
+        return _flush_deferred_peer_to_db()
     finally:
-        for m in kept:
-            try:
-                ui_conn[0].put(m)
-            except Exception as e:
-                let_log(f"poll_user_mid_dialog requeue: {e}")
-    return injects
+        _restore_tools()
 
 @cacher
 def _strip_ui_command_markers(text: str) -> str:
@@ -529,7 +745,8 @@ def _strip_ui_command_markers(text: str) -> str:
 # Команды, которые не кладём в embeddings диалога (шум: делегирование / create_executor / …)
 _SAVE_EMB_STRIP_COMMAND_NAMES = (
     'create_executor', 'create_exec', 'delegate_task', 'start_dialog',
-    'end_dialogue', 'end_dialog', 'need_info',
+    'end_dialogue', 'end_dialog', 'need_info', 'internal_search',
+    'нужна_информация', 'внутренний_поиск',
 )
 
 def _strip_save_emb_noise(text: str) -> str:
@@ -917,19 +1134,34 @@ def coll_exec(action, coll_name, *,
         print(f"[coll_exec] Ошибка ({action}): {e}")
         return None
 
-def load_chat_settings(chat_id): # Загрузка настроек чата из SQLite БД
+def load_chat_settings(chat_id):
+    """
+    Load chat settings from chatsettings.db (memory_sql).
+
+    IMPORTANT: uses raw cursor, NOT @cacher sql_exec.
+    First-start vs resume must not diverge because of sequential cache replay
+    (override path used to skip SELECT settings; resume path used sql_exec and
+    could get a wrong cache slot → empty model_provider_params → ollama default).
+    """
     settings = {}
-    settings_rows = sql_exec("SELECT key, value FROM settings", fetchall=True)
-    if settings_rows:
-        let_log(settings_rows)
-        let_log(type(settings_rows))
-        settings.update({row[0]: row[1] for row in settings_rows})
-    another_tools_files = []
-    default_mods = sql_exec("SELECT adress FROM default_mods WHERE enabled=?", (1,), fetchall=True)
-    if default_mods: another_tools_files.extend([row[0] for row in default_mods])
-    custom_mods = sql_exec("SELECT adress FROM custom_mods", fetchall=True)
-    if custom_mods: another_tools_files.extend([row[0] for row in custom_mods])
-    settings["another_tools"] = another_tools_files
+    try:
+        cur = memory_sql.cursor()
+        cur.execute("SELECT key, value FROM settings")
+        settings_rows = cur.fetchall() or []
+        if settings_rows:
+            let_log(f"[load_chat_settings] {len(settings_rows)} keys from DB")
+            settings.update({row[0]: row[1] for row in settings_rows if row and len(row) >= 2})
+        another_tools_files = []
+        cur.execute("SELECT adress FROM default_mods WHERE enabled=?", (1,))
+        default_mods = cur.fetchall() or []
+        another_tools_files.extend([row[0] for row in default_mods if row and row[0]])
+        cur.execute("SELECT adress FROM custom_mods")
+        custom_mods = cur.fetchall() or []
+        another_tools_files.extend([row[0] for row in custom_mods if row and row[0]])
+        settings["another_tools"] = another_tools_files
+    except Exception as e:
+        let_log(f"[load_chat_settings] FAIL: {e}")
+        raise
     return settings
 
 def load_initial_data(chat_id): # Загрузка начальных данных: задачи и вложений
@@ -943,6 +1175,53 @@ def load_initial_data(chat_id): # Загрузка начальных данны
     else: attachments = []
     return task, attachments
 
+def _load_system_texts_container(lang_code: str):
+    """
+    Load lang/{lang}/system_texts.py from disk next to the app (editable after freeze).
+    Prefer path load over frozen import so only launcher.exe is packed.
+    """
+    root = folder_path or (os.path.dirname(os.path.abspath(__file__)) if __file__ else '')
+    # Explicit dir: .../lang/{lang}  then package import lang.{lang}.system_texts still needs parent
+    lang_pkg_parent = root  # base_dir containing `lang/`
+    lang_dir = os.path.join(root, 'lang', str(lang_code or 'en'))
+    texts_py = os.path.join(lang_dir, 'system_texts.py')
+    if lang_pkg_parent and os.path.isdir(lang_pkg_parent):
+        try:
+            ap = os.path.abspath(lang_pkg_parent)
+            if ap in sys.path:
+                sys.path.remove(ap)
+            sys.path.insert(0, ap)
+        except Exception:
+            if lang_pkg_parent not in sys.path:
+                sys.path.insert(0, lang_pkg_parent)
+    if os.path.isfile(texts_py):
+        mod_name = f'lang.{lang_code}.system_texts'
+        try:
+            # ensure package parents exist for nested name
+            if 'lang' not in sys.modules:
+                import types as _types
+                _lp = _types.ModuleType('lang')
+                _lp.__path__ = [os.path.join(root, 'lang')]
+                sys.modules['lang'] = _lp
+            pkg_name = f'lang.{lang_code}'
+            if pkg_name not in sys.modules:
+                import types as _types
+                _sp = _types.ModuleType(pkg_name)
+                _sp.__path__ = [lang_dir]
+                sys.modules[pkg_name] = _sp
+            spec = importlib.util.spec_from_file_location(mod_name, texts_py)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = mod
+            spec.loader.exec_module(mod)
+            if hasattr(mod, 'system_text_container'):
+                let_log(f"[lang] path load {texts_py}")
+                return mod.system_text_container()
+        except Exception as e:
+            let_log(f"[lang] path load failed {texts_py}: {e}")
+    # fallback package import (dev / if path load failed)
+    lang_module = __import__(f'lang.{lang_code}.system_texts', fromlist=['system_text_container'])
+    return lang_module.system_text_container()
+
 def globalize_language_packet(language):
     global container
     # Определяем, какой язык загружать
@@ -950,8 +1229,7 @@ def globalize_language_packet(language):
     if do_translate and local_and_tools_translate:
         # Пытаемся загрузить целевой язык, если он есть
         try:
-            lang_module = __import__(f'lang.{target_lang}.system_texts', fromlist=['system_text_container'])
-            container = lang_module.system_text_container()
+            container = _load_system_texts_container(target_lang)
             let_log(f"Загружена локализация для целевого языка '{target_lang}'")
             # Экспортируем напрямую без перевода
             for attr in dir(container):
@@ -971,21 +1249,19 @@ def globalize_language_packet(language):
                 globals()[attr] = value
             let_log(f"Языковой пакет '{target_lang}' загружен и экспортирован")
             return
-        except ImportError:
+        except Exception:
             let_log(f"Локализация для '{target_lang}' не найдена, загружаем '{language}' и переводим")
             lang_to_load = language
     # Загружаем пакет для lang_to_load (родной язык или fallback)
     try:
-        lang_module = __import__(f'lang.{lang_to_load}.system_texts', fromlist=['system_text_container'])
-        container = lang_module.system_text_container()
-    except ImportError as e:
+        container = _load_system_texts_container(lang_to_load)
+    except Exception as e:
         let_log(f"Ошибка загрузки языкового модуля '{lang_to_load}': {str(e)}")
         try:
-            from lang.en.system_texts import system_text_container
-            container = system_text_container()
+            container = _load_system_texts_container('en')
             let_log(f"Используются тексты по умолчанию (en)")
             lang_to_load = 'en'
-        except ImportError:
+        except Exception:
             let_log("Критическая ошибка: не найден модуль с текстами!")
             return
     # Если включён перевод и мы загрузили не целевой язык, переводим строки
@@ -1100,9 +1376,12 @@ def mod_loader(adrs):
             doc_match = re.match(r'^\s*[\'"]{3}\s*\n\s*([^\n]+)\n\s*([^\n]+)', file_contents)
             if not doc_match: doc_match = re.match(r'^\s*[\'"]{3}\s*([^\n]+)\n\s*([^\n]+)', file_contents)
             if doc_match: command_name = doc_match.group(1).strip(); description = doc_match.group(2).strip()
-            # Если есть локализация, берем оттуда (теперь для любого языка)
+            # module_doc: [name, description, …] — only first two are name/desc
+            # (extra entries in some locales are alternate titles/descriptions, not command aliases)
             if locale_data:
-                if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 2: command_name = locale_data['module_doc'][0] or command_name; description = locale_data['module_doc'][1] or description
+                if 'module_doc' in locale_data and len(locale_data['module_doc']) >= 2:
+                    command_name = locale_data['module_doc'][0] or command_name
+                    description = locale_data['module_doc'][1] or description
             # Проверяем, что получили command_name и description
             if not command_name or not description: let_log(f"Модуль {mod_file} должен содержать command_name и description (первые 2 строки файла или локализацию)"); continue
             # Загружаем основной модуль
@@ -1194,6 +1473,27 @@ def system_tools_loader():
     common_dict = to_dict(common_modules, common_files)
     milana_dict = to_dict(milana_modules, milana_files)
     ivan_dict = to_dict(ivan_modules, ivan_files)
+
+    def _register_cmd_aliases(d):
+        """Legacy command names → same (desc, func). Do not grow module lists (files length must match)."""
+        # librarian rename: internal_search / внутренний_поиск
+        pairs = (
+            ('internal_search', ('need_info',)),
+            ('внутренний_поиск', ('нужна_информация',)),
+        )
+        for primary, aliases in pairs:
+            if primary not in d:
+                continue
+            for alias in aliases:
+                if alias not in d:
+                    d[alias] = d[primary]
+                    if primary in global_state.system_tools_keys and alias not in global_state.system_tools_keys:
+                        global_state.system_tools_keys.append(alias)
+                    let_log(f"✓ Alias команды: {alias} → {primary}")
+
+    for _d in (common_dict, milana_dict, ivan_dict):
+        _register_cmd_aliases(_d)
+
     # Выводим отладочную информацию
     let_log("\nЗагруженные системные команды:")
     for cmd in global_state.system_tools_keys: let_log(cmd)
@@ -1257,8 +1557,9 @@ def estimate_tokens(text) -> int:
 
 def effective_incoming_token_cap() -> int:
     """
-    Cap for text fed into model/cutter so generation still has room:
+    Cap for text fed into text_cutter only (not ask_model/agent):
     min(max_incoming_tokens, token_limit - 1000), at least 500.
+    Uses active tier token_limit so cutter still fits the model that runs purpose=cutter.
     """
     global max_incoming_tokens, token_limit
     try:
@@ -1269,12 +1570,12 @@ def effective_incoming_token_cap() -> int:
         tl = int(token_limit) if token_limit else 8192
     except (TypeError, ValueError):
         tl = 8192
-    # leave ~1000 tokens for generation / system
+    # leave ~1000 tokens for generation / system on the cutter call
     room = max(500, tl - 1000)
     return max(500, min(hard, room))
 
 def cap_text_to_tokens(text, max_tokens=None) -> str:
-    """Truncate text to approx max_tokens (chars via coefficient)."""
+    """Truncate text for text_cutter to approx max_tokens (chars via coefficient)."""
     if text is None:
         return ''
     text = str(text)
@@ -1422,8 +1723,36 @@ def _decrypt_connect_token(params_dict, session_passwords, chat_id, model_type):
         decrypted_token = params_dict.get("api_token") or params_dict.get("token", "")
     return decrypted_token
 
+def _connection_params_ready(connect_params) -> tuple:
+    """
+    True if connection string is non-empty and has model= (or model-like) value.
+    Returns (ok: bool, reason: str, model: str).
+    """
+    raw = (connect_params or "").strip()
+    if not raw:
+        return False, "пустая строка model_provider_params", ""
+    model = ""
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        if k.strip().lower() in ("model", "chat", "chat_model"):
+            model = (v or "").strip()
+            if model:
+                break
+    if not model:
+        return False, "в params нет model=...", ""
+    return True, "", model
+
 def _connect_model_backend(base_dir, model_type, connect_params, token_limit_val, session_passwords, chat_id, alias_suffix=''):
-    """Connect one provider instance; returns backend dict."""
+    """Connect one provider instance; returns backend dict. Does not call connect if params incomplete."""
+    ok, reason, model_name = _connection_params_ready(connect_params)
+    if not ok:
+        raise RuntimeError(
+            f"connect skipped ({model_type}): {reason}. "
+            f"Не вызываем provider.connect без валидной строки params."
+        )
     mod, model_type = _load_provider_module_isolated(base_dir, model_type, alias_suffix=alias_suffix)
     params_dict = {}
     for part in (connect_params or "").split(";"):
@@ -1432,6 +1761,7 @@ def _connect_model_backend(base_dir, model_type, connect_params, token_limit_val
         k, v = part.split("=", 1)
         params_dict[k.strip().lower()] = v.strip()
     decrypted_token = _decrypt_connect_token(params_dict, session_passwords, chat_id, model_type)
+    let_log(f"[model] provider.connect type={model_type} model={model_name!r} alias={alias_suffix!r}")
     model_connect = mod.connect
     sig = inspect.signature(model_connect)
     if '_decrypted_token' in sig.parameters:
@@ -1439,7 +1769,13 @@ def _connect_model_backend(base_dir, model_type, connect_params, token_limit_val
     else:
         connection_result = model_connect(connect_params)
     if not connection_result or not connection_result[0]:
-        err = connection_result[1] if connection_result and len(connection_result) > 1 else 'Unknown error'
+        # Providers return [False, token_limit_or_0, tags, error_msg] — real error is last str
+        err = 'Unknown error'
+        if connection_result:
+            if len(connection_result) >= 4 and connection_result[3]:
+                err = connection_result[3]
+            elif len(connection_result) > 1:
+                err = connection_result[1]
         raise RuntimeError(f"connect failed ({model_type}): {err}")
     tags = connection_result[2] if len(connection_result) > 2 else {}
     try:
@@ -1479,6 +1815,8 @@ def _retry_loop(get_response, is_valid, error_retry_delay=60, empty_retry_delay=
     """
     start = time.time()
     had_error = False
+    empty_streak = 0
+    empty_hint_every = 5  # after N empty replies, hint about context window
     while True:
         try:
             response = get_response()
@@ -1488,12 +1826,25 @@ def _retry_loop(get_response, is_valid, error_retry_delay=60, empty_retry_delay=
             let_log(e)
             send_ui_no_cache(f'{error_in_provider}\n{e}')
             had_error = True
+            empty_streak = 0
             time.sleep(error_retry_delay)
             continue
 
         if not is_valid(response):
-            # В UI не спамим «пустой ответ» — только в лог; UI — при реальных ошибках (сеть/лимит)
-            let_log("[WARN] Модель вернула пустой или невалидный ответ. Повторная попытка...")
+            empty_streak += 1
+            let_log(f"[WARN] Модель вернула пустой или невалидный ответ (#{empty_streak}). Повторная попытка...")
+            if empty_streak >= empty_hint_every and (empty_streak % empty_hint_every) == 0:
+                try:
+                    hint = empty_reply_context_hint
+                except NameError:
+                    hint = (
+                        "The model keeps returning empty answers. "
+                        "The context window may be too small — try increasing the model context limit."
+                    )
+                try:
+                    send_ui_no_cache(hint)
+                except Exception:
+                    pass
             time.sleep(empty_retry_delay)
             continue
 
@@ -1588,11 +1939,10 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
             system_prompt = translate_text(system_prompt, target_lang, from_lang=language)
         prompt_text = translate_text(prompt_text, target_lang, from_lang=language)
 
-    # Проверка длины контекста (per active tier + configurable incoming cap)
+    # Проверка против лимита контекста активной модели (не max_incoming_tokens — тот только для text_cutter)
     est = estimate_tokens(prompt_text)
-    inc_cap = effective_incoming_token_cap()
-    if est > inc_cap or est > token_limit - 1000:
-        let_log(f"[ask_model] ContextOverflow est={est} cap={inc_cap} token_limit={token_limit}")
+    if est > token_limit - 1000:
+        let_log(f"[ask_model] ContextOverflow est={est} token_limit={token_limit}")
         raise RuntimeError("ContextOverflowError")
     '''
     if use_user:
@@ -1629,6 +1979,7 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
     if system_prompt:
         let_log("Режим (Особый случай): system_prompt -> chat/completions")
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt_text}]
+        _validate_chat_messages(messages, context="ask_model/system_prompt")
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         generation_params.update(extra_params)
         response = _call_chat_with_retry(generation_params)
@@ -1641,6 +1992,7 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
     if all_user:
         let_log("Режим (Особый случай): all_user=True -> chat/completions")
         messages = [{"role": "user", "content": prompt_text}]
+        _validate_chat_messages(messages, context="ask_model/all_user")
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         generation_params.update(extra_params)
         response = _call_chat_with_retry(generation_params)
@@ -1658,6 +2010,7 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
             parsed_msgs = _parse_roles_to_messages_no_functions(prompt_text)
         else:
             parsed_msgs = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
+        _validate_chat_messages(parsed_msgs, context="ask_model/mode1")
         generation_params = {"prompt": _serialize_messages_to_prompt(parsed_msgs), "temperature": temperature, "max_tokens": limit or token_limit, "echo": False}
         generation_params.update(extra_params)
         result = _call_completions_with_retry(generation_params)
@@ -1670,6 +2023,7 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
         # Режим 2: Парсинг чата БЕЗ function call
         let_log("Режим 2 (do_chat_construct=2): Парсинг (без функций) -> chat/completions")
         messages = _parse_roles_to_messages_no_functions(prompt_text)
+        _validate_chat_messages(messages, context="ask_model/mode2")
         generation_params = {"messages": messages, "temperature": temperature, "max_tokens": limit or token_limit}
         generation_params.update(extra_params)
         response = _call_chat_with_retry(generation_params)
@@ -1685,6 +2039,12 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
         let_log(global_state.now_agent_id)
         # 1. Парсим историю
         messages = _parse_roles_to_messages_functions(prompt_text, global_state.now_agent_id)
+        # function-роли ломают строгое user/assistant чередование — полная проверка только без них
+        if any((m.get("role") or "").lower() == "function" for m in (messages or [])):
+            if not messages:
+                _validate_chat_messages(messages, context="ask_model/mode3")
+        else:
+            _validate_chat_messages(messages, context="ask_model/mode3")
         # 2. Получаем и форматируем доступные инструменты
         now_commands = global_state.tools_commands_dict.get(global_state.now_agent_id, {})
         let_log(now_commands)
@@ -1763,10 +2123,70 @@ def _process_chat_response(api_response):
     let_log(f"_process_chat_response: Некорректный формат ответа: {api_response}")
     raise RuntimeError("Некорректный формат ответа - невозможно извлечь содержимое")
 
+def _validate_chat_messages(messages, context="ask_model"):
+    """
+    Ожидаемая последовательность для chat/completions:
+      [system]* затем user, assistant, user, assistant, ... и последнее — user
+    (user = запрос, assistant = ответ модели в истории).
+    При нарушении — sys.exit (replay/отладка: не слать пустой/битый messages в API).
+    """
+    def _fatal(reason):
+        detail = f"[FATAL {context}] Неверная последовательность messages: {reason}"
+        let_log(detail)
+        try:
+            let_log(f"[FATAL {context}] messages={messages!r}")
+        except Exception:
+            pass
+        try:
+            send_ui_no_cache(detail)
+        except Exception:
+            pass
+        sys.exit(1)
+
+    if not messages:
+        _fatal("список пуст (часто: plain-prompt ошибочно стал system и был отброшен)")
+    # system только префиксом
+    i = 0
+    while i < len(messages) and (messages[i].get("role") or "").lower() == "system":
+        if not str(messages[i].get("content") or "").strip():
+            _fatal(f"пустое system-сообщение index={i}")
+        i += 1
+    dialog = messages[i:]
+    if not dialog:
+        _fatal("есть только system, нет user — модель не к чему отвечать")
+    expected = "user"
+    for j, msg in enumerate(dialog):
+        role = (msg.get("role") or "").lower()
+        if role == "system":
+            _fatal(f"system не в начале (dialog index={j})")
+        if role not in ("user", "assistant"):
+            # function и прочее в no_functions-парсере не ждем; functions-парсер может подменить
+            if role == "function":
+                continue
+            _fatal(f"недопустимая роль {role!r} at dialog index={j}")
+        if role != expected:
+            _fatal(f"ожидали {expected!r}, получили {role!r} at dialog index={j}")
+        if not str(msg.get("content") or "").strip() and role != "function":
+            _fatal(f"пустое content у {role} index={j}")
+        expected = "assistant" if expected == "user" else "user"
+    # для генерации последнее диалоговое (не function) должно быть user
+    last_ua = None
+    for msg in reversed(dialog):
+        r = (msg.get("role") or "").lower()
+        if r in ("user", "assistant"):
+            last_ua = r
+            break
+    if last_ua != "user":
+        _fatal(f"диалог должен заканчиваться user (запрос), сейчас last={last_ua!r}")
+
+
 def _parse_roles_to_messages_no_functions(prompt):
     """
     Полноценный парсинг текста с ролями в список сообщений для chat/completions.
-    Теперь учитывает структуру промпта из RAG конструктора.
+    Учитывает структуру промпта из RAG конструктора.
+
+    Без маркеров ролей (Милана/Иван/function) весь текст → одно user-сообщение
+    (не system: иначе «system-only» + старый odd-pop давали messages=[]).
     """
     messages = []
     remaining_prompt = prompt
@@ -1788,8 +2208,11 @@ def _parse_roles_to_messages_no_functions(prompt):
             system_content = remaining_prompt[:first_role_pos].strip()
             if system_content: messages.append({"role": "system", "content": system_content})
             remaining_prompt = remaining_prompt[first_role_pos:]
-        else: # Если ролей нет, но текст начинается не с роли - считаем системным промптом
-            if remaining_prompt.strip() and not any(remaining_prompt.strip().startswith(role) for role in roles_to_find): messages.append({"role": "system", "content": remaining_prompt.strip()}); remaining_prompt = ""
+        else:
+            # Нет маркеров диалога: один user (tools / ad-hoc ask_model без ролей)
+            if remaining_prompt.strip():
+                messages.append({"role": "user", "content": remaining_prompt.strip()})
+                remaining_prompt = ""
     # 2. Определяем роли на основе фактического содержимого и чередования
     # Ищем все вхождения ролей в оставшемся промпте
     roles_to_find = [operator_role_text, worker_role_text, func_role_text]
@@ -1808,6 +2231,8 @@ def _parse_roles_to_messages_no_functions(prompt):
         clean_content = remaining_prompt.strip()
         for role in [operator_role_text, worker_role_text]: clean_content = clean_content.replace(role, '').strip()
         messages.append({"role": "user", "content": clean_content})
+        let_log(f"Спарсено сообщений (Режим 2): {len(messages)}")
+        for i, msg in enumerate(messages): let_log(f"Сообщение {i}: {msg['role']} - {msg['content'][:100]}...")
         return messages
     # Обрабатываем найденные роли с учетом чередования
     # Теперь просто чередуем user/assistant после system
@@ -1842,9 +2267,8 @@ def _parse_roles_to_messages_no_functions(prompt):
         # Удаляем только operator и worker маркеры
         for role in [operator_role_text, worker_role_text]: clean_content = clean_content.replace(role, '').strip()
         messages.append({"role": "user", "content": clean_content})
-    # Проверка на четность количества сообщений (включая системное)
-    # Если нечетное - удаляем последнее сообщение
-    if len(messages) % 2 != 0: removed_message = messages.pop(); let_log(f"Удалено последнее сообщение (нечетное количество): {removed_message['role']} - {removed_message['content'][:100]}...")
+    # Раньше odd-pop ломал [system]→[] и [user,assistant,user]→обрезку user.
+    # Валидация — в ask_model перед вызовом API.
     let_log(f"Спарсено сообщений (Режим 2): {len(messages)}")
     for i, msg in enumerate(messages): let_log(f"Сообщение {i}: {msg['role']} - {msg['content'][:100]}...")
     return messages
@@ -2179,8 +2603,8 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
 
 def text_cutter(text, cut_message=False):
     """
-    Iterative LLM compression.
-    - Caps total input to max_incoming_tokens (and token_limit-1000).
+    Iterative LLM compression. Incoming/chunk caps live only here:
+    - Caps total input via max_incoming_tokens ∩ (token_limit−1000).
     - Pre-splits into chunks of ~text_cutter_token_limit before calling the model.
     - On ContextOverflowError still bisects (safety net).
     """
@@ -2190,7 +2614,7 @@ def text_cutter(text, cut_message=False):
     text = str(text)
     if not text.strip():
         return text
-    # hard incoming cap so cutter + generation fit active model ctx
+    # hard incoming cap so cutter input fits active model ctx (cutter-only setting)
     capped = cap_text_to_tokens(text, effective_incoming_token_cap())
     if capped is not text and len(capped) < len(text):
         let_log(f"[text_cutter] incoming cap: {len(text)}→{len(capped)} chars")
@@ -2958,9 +3382,15 @@ def gigo(base_task: str, settings: dict = None) -> str:
         let_log("[gigo] librarian enabled but no search surface — skip questions")
     minds_text = ''
     minds = []
-    roles = [gigo_dreamer, gigo_realist, gigo_critic]
-    ents_roles = ', '.join(roles) + '\n'
-    role_notes = [gigo_dreamer_note, gigo_realist_note, gigo_critic_note]
+    # Optional roles (old GIGO): each can be disabled via settings
+    roles, role_notes = [], []
+    if gigo_role_dreamer:
+        roles.append(gigo_dreamer); role_notes.append(gigo_dreamer_note)
+    if gigo_role_realist:
+        roles.append(gigo_realist); role_notes.append(gigo_realist_note)
+    if gigo_role_critic:
+        roles.append(gigo_critic); role_notes.append(gigo_critic_note)
+    ents_roles = (', '.join(roles) + '\n') if roles else ''
     # короткие ответы ролей: один локализуемый hint (без дубля write_shortly + en "10 sentences")
     try:
         role_len_hint = gigo_role_short_hint
@@ -2969,18 +3399,21 @@ def gigo(base_task: str, settings: dict = None) -> str:
             role_len_hint = write_shortly_prompt
         except NameError:
             role_len_hint = '\nRespond in at most about 10 short sentences. Be concise.\n'
-    for role, role_note in zip(roles, role_notes):
-        role_sys = gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction + role_len_hint
-        try: minds.append(ask_model(base_task + additional_info, system_prompt=role_sys))
-        except RuntimeError as e:
-            if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=role_sys))
-            else: raise
-    for role, mind in zip(roles, minds):
-        minds_text += worker_role_text + mind
-        if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
-        else:
-            minds_text += operator_role_text + gigo_next_role + role
-            if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
+    if roles:
+        for role, role_note in zip(roles, role_notes):
+            role_sys = gigo_role_answer_1 + role + role_note + gigo_role_answer_2 + '\n' + no_markdown_instruction + role_len_hint
+            try: minds.append(ask_model(base_task + additional_info, system_prompt=role_sys))
+            except RuntimeError as e:
+                if 'ContextOverflowError' in str(e): minds.append(ask_model(text_cutter(base_task + additional_info), system_prompt=role_sys))
+                else: raise
+        for role, mind in zip(roles, minds):
+            minds_text += worker_role_text + mind
+            if role == roles[-1]: minds_text += '\n' * 2 + gigo_final_role_2 + operator_role_text
+            else:
+                minds_text += operator_role_text + gigo_next_role + role
+                if len(roles) != 1 and role == roles[-2]: minds_text += gigo_final_role
+    else:
+        let_log("[gigo] all roles disabled — plan from task only")
     # Пункты плана: gigo_plan_items (настройка GIGO), иначе number_of_plan_items
     n_items = 0
     try:
@@ -3009,8 +3442,9 @@ def gigo(base_task: str, settings: dict = None) -> str:
         else: raise
     return gigo_return_1 + base_task + '\n' + gigo_return_2 + plan
 
+@cacher
 def gigo_adv(task: str, settings: dict = None) -> str:
-    """Продвинутый GIGO (идеи, фильтр, dreamer/realist/critic, синтез)."""
+    """Продвинутый GIGO (идеи, фильтр, dreamer/realist/critic, синтез). Outer cacher + nested ask_model."""
     if not use_gigo: return gigo_label_task + task
     # 1. Анализ намерения
     try: intention_text = ask_model(task, system_prompt=gigo_intention_prompt + '\n' + warn_command_text_8 + '\n' + global_state.tools_str)
@@ -3122,14 +3556,13 @@ def gigo_adv(task: str, settings: dict = None) -> str:
         else: raise
     return answer
 
+@cacher
 def critic(task: str, result: str) -> int | str:
     """
     Оценивает результат.
     - Возвращает 1, если результат приемлем, критик не уверен или произошла ошибка.
     - Возвращает строку с новой, доработанной задачей для исполнителя.
-
-    Note: @cacher снят — critic сам вызывает ask_model (@cacher); вложенный
-    cacher ломал sequence/cache.db. Кэшируются только внутренние ask_model.
+    Outer @cacher + nested ask_model (@cacher) use marker stack for multi-level replay.
     """
     if global_state.conversations % 2 == 0:
         if global_state.conversations != 0: num_critic_reaction = 1
@@ -3275,10 +3708,50 @@ def _find_command_markers(text, commands_dict, return_all=False, start_limit=Non
     if return_all: return markers
     return None
 
-def find_and_match_command(text, commands_dict): # Ищет в тексте первый маркер команды, начинающийся в первых 5 символах. Возвращает (найденный_ключ, содержимое_после_маркера) или None.
-    result = _find_command_markers(text, commands_dict, return_all=False, start_limit=5)
-    if result: key, content, _, _ = result;  return (key, content)
-    return None
+def _command_start_limit():
+    """Max marker start offset; None when allow_command_not_at_start (anywhere in message)."""
+    return None if allow_command_not_at_start else 5
+
+def find_and_match_command(text, commands_dict): # Ищет первый маркер команды (по умолчанию в первых 5 символах). Возвращает (ключ, content) или None.
+    start_limit = _command_start_limit()
+    result = _find_command_markers(text, commands_dict, return_all=False, start_limit=start_limit)
+    if result:
+        key, content, _, _ = result
+        return (key, content)
+    # Soft form !name! / ¡name¡ (single bangs) only if name is a known command
+    if not text or not commands_dict:
+        return None
+    soft_pat = (
+        r'[ \t]*[!¡]\s*([\w\-]+(?:\s+[\w\-]+)*)\s*[!¡][ \t]*'
+        if start_limit is None
+        else r'^[ \t]*[!¡]\s*([\w\-]+(?:\s+[\w\-]+)*)\s*[!¡][ \t]*'
+    )
+    m = re.search(soft_pat, text) if start_limit is None else re.match(soft_pat, text)
+    if not m:
+        return None
+    if start_limit is not None and m.start() > start_limit:
+        return None
+    raw_name = m.group(1).strip()
+    normalized_name = re.sub(r'[\s\-]+', '_', raw_name).lower()
+    found_key = None
+    for key in commands_dict:
+        if normalized_name == key.lower():
+            found_key = key
+            break
+    if not found_key and commands_dict:
+        best, best_r = None, 0.0
+        for key in commands_dict:
+            kl = key.lower()
+            if abs(len(normalized_name) - len(kl)) > 2:
+                continue
+            r = difflib.SequenceMatcher(None, normalized_name, kl).ratio()
+            if r > best_r and r >= 0.8:
+                best_r, best = r, key
+        found_key = best
+    if not found_key:
+        return None
+    content = text[m.end():].lstrip()
+    return (found_key, content)
 
 def _find_formatting_ranges(text):
     """
@@ -3386,7 +3859,7 @@ def analyze_protocol(text, now_commands={}):
     if not raw_markers: return None
     violations = []
     if len(raw_markers) > 1: violations.append(warn_command_text_2) # множественность
-    if not native_func_call: # позиция первого маркера (если не native)
+    if not native_func_call and not allow_command_not_at_start: # позиция первого маркера
         first_marker = raw_markers[0]
         if first_marker['start'] > 5: violations.append(warn_command_text_3)
     # markdown-блоки (```)
@@ -3514,7 +3987,24 @@ def tools_selector(text, sid):
                     write_cache([False, result if result is not None else ''])
                     let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН SKIP] ===")
                     return result if result is not None else ''
-    # 4) найти маркер и сопоставить с командами
+    # 4) multi-command (пока без batch-execute): если маркеров >1 — protocol, иначе 2-я уезжает в arg 1-й
+    try:
+        _raw_all = _find_any_markers(text)
+    except Exception:
+        _raw_all = []
+    if _raw_all and len(_raw_all) > 1:
+        let_log(f"[TOOLS_SELECTOR] multiple markers ({len(_raw_all)}) — protocol warn (multi-cmd later)")
+        is_warn = analyze_protocol(text, now_commands)
+        if is_warn is None:
+            # analyze_protocol always adds multi if >1; force message if empty
+            try:
+                is_warn = warn_command_text_1 + "\n" + warn_command_text_2
+            except NameError:
+                is_warn = "Protocol: only one command per message."
+        write_cache([False, is_warn])
+        let_log("=== [TOOLS_SELECTOR ЗАВЕРШЁН MULTI] ===")
+        return is_warn
+    # 5) найти маркер и сопоставить с командами
     match = find_and_match_command(text, now_commands)
     if not match: # TODO: может разделить случаи когда маркер не найден или команда не сопоставилась
         let_log("[TOOLS_SELECTOR] маркер не найден или команда не сопоставилась")
@@ -3655,15 +4145,15 @@ def agent_func(text, agent_number):
                 talk_prompt = f"[message_limit] Reached max_messages_before_answer={max_steps}. Partial:\n{talk_prompt}"
             break
         let_log(f"[DEBUG-RAG] agent_number={agent_number}, sid={sid}, step={steps}/{max_steps or '∞'}")
-        # mid-dialog client messages (optional deliver_user_messages)
-        for inject in poll_user_mid_dialog_injects():
-            note = f"[Client message]\n{inject}"
-            let_log(f"[agent_func] user_inject into sid={sid}: {inject[:120]}")
-            try:
-                update_history(sid, note, func_role_text, local_message=False)
-            except Exception as e:
-                let_log(f"[agent_func] user_inject history: {e}")
-            talk_prompt = note + '\n' + (talk_prompt or '')
+        # Operator: if client interrupt pending (Ivan deferred), handle client first
+        if agent_number and getattr(global_state, 'client_interrupt_active', False) and global_state.client_interrupt_text:
+            inject = global_state.client_interrupt_text
+            talk_prompt = _run_client_interrupt_turn(sid, inject, you)
+            if global_state.client_interrupt_active:
+                continue  # protocol retry
+            # talk_prompt is now flushed Ivan text → fall through to answer Ivan
+            if not talk_prompt:
+                talk_prompt = ''
         # Вызываем RAG-конструктор. Он сам найдет системный промпт и всю историю.
         final_prompt_for_model, _ = get_chat_context(sid, talk_prompt)
         # agent generation — purpose=agent (small if small_agent_until_protocol and not escalated)
@@ -3675,12 +4165,15 @@ def agent_func(text, agent_number):
         if answer:
             let_log(global_state.stop_agent)
             if global_state.stop_agent:
-                # skip: plain message path — drop large-escalation
+                # skip / stop_agent tool → message to peer (end this agent_func)
                 global_state.agent_use_large = False
                 talk_prompt = answer
+                if _maybe_defer_peer_for_client(sid, talk_prompt, you, vector_id_out, agent_number):
+                    talk_prompt = global_state.client_interrupt_text
+                    break
                 update_history(sid, talk_prompt, you, vector_id=vector_id_out, local_message=False)
                 break
-            # protocol warning vs successful tool
+            # protocol warning vs successful tool (tool continues loop — no client defer)
             try:
                 _is_proto = bool(warn_command_text_1) and str(answer).lstrip().startswith(str(warn_command_text_1))
             except Exception:
@@ -3688,10 +4181,12 @@ def agent_func(text, agent_number):
             if _is_proto and small_agent_until_protocol and use_small_model:
                 global_state.agent_use_large = True
                 let_log("[model] protocol fail → escalate agent to large until valid cmd/plain msg")
+                if small_protocol_drop_error:
+                    # drop bad small turn: no history write; same talk_prompt → large retry
+                    let_log("[model] small_protocol_drop_error: skip writing protocol error; retry on large")
+                    continue
             else:
-                # correct command executed → back to small for next agent turns
                 global_state.agent_use_large = False
-            # tool result or protocol warning: keep original model text as agent, answer as Function
             update_history(sid, model_reply, you, vector_id=vector_id_out)
             talk_prompt = answer
             msg_from = func_role_text
@@ -3702,10 +4197,46 @@ def agent_func(text, agent_number):
             # plain message to peer
             global_state.agent_use_large = False
             talk_prompt = model_reply
+            if _maybe_defer_peer_for_client(sid, talk_prompt, you, vector_id_out, agent_number):
+                talk_prompt = global_state.client_interrupt_text
+                break
             update_history(sid, talk_prompt, you, vector_id=vector_id_out, local_message=False)
             break
     global_state.stop_agent = False
     return talk_prompt
+
+def _maybe_defer_peer_for_client(sid, peer_text, peer_role, vector_id_out, agent_number) -> bool:
+    """
+    If executor is about to write a peer message and a client inject is waiting:
+    write client first (operator local), defer peer text (Ivan) until after Milana↔client.
+    Returns True if deferred.
+    """
+    if agent_number:  # only when current agent is Ivan (executor)
+        return False
+    if not getattr(global_state, 'deliver_user_messages', False):
+        return False
+    inject = take_oldest_user_inject()
+    if not inject:
+        return False
+    try:
+        c_role = client_role_text
+    except NameError:
+        c_role = '\nClient: '
+    op_sid = _operator_sid_for(sid)
+    try:
+        # full_text = pure client text; role marker only in role column
+        update_history(op_sid, inject, c_role, local_message=True)
+        let_log(f"[client_interrupt] client→DB op_sid={op_sid} before peer write")
+    except Exception as e:
+        let_log(f"[client_interrupt] write client: {e}")
+    global_state.deferred_peer_text = peer_text
+    global_state.deferred_peer_role = peer_role
+    global_state.deferred_peer_sid = sid
+    global_state.deferred_peer_vector_id = vector_id_out
+    global_state.client_interrupt_active = True
+    global_state.client_interrupt_text = inject
+    let_log("[client_interrupt] deferred peer plain/skip reply")
+    return True
 
 def get_user_feedback(current_task, dialog_result):
     while True:
@@ -3754,6 +4285,7 @@ def worker(really_main_task):
         global_state.critic_wants_retry = False
         global_state.main_now_task = really_main_task
         global_state.gigo_web_search_allowed = False
+        # user_inject stays in input_queue until operator agent_func takes them (no side buffer)
         let_log(f"[WORKER] Before start_dialog: main_now_task={global_state.main_now_task[:100]}, dialog_state={global_state.dialog_state}")
         talk_prompt = start_dialog(global_state.main_now_task)
         let_log(f"[WORKER] After start_dialog: talk_prompt={talk_prompt[:100] if talk_prompt else 'None'}, dialog_state={global_state.dialog_state}")
@@ -3880,6 +4412,7 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     global use_rag, clean_variables_content, filter_generations, is_save_log, use_librarian, recreate_agents, cut_wrong_command_history, use_psm
     global pipeline, get_dependency_report, change_dir, get_project_tree_json, create_experiment_branch, status_success, status_failed, status_forbidden, resolve_workspace_path, to_posix_rel, allowed_actions, normalize_action
     global use_magical_prompt, use_gigo, use_old_gigo, gigo_idea_count, gigo_plan_items, gigo_use_entropy, gigo_use_random_roles, gigo_use_filter, gigo_use_librarian
+    global gigo_role_dreamer, gigo_role_realist, gigo_role_critic
     global librarian_use_models, librarian_use_web, module_hints_for_operator, give_all_tools, critic_reuse_dialog, one_shot_intention_permission
     if session_passwords: import encryption_utils; encryption_utils.SESSION_PASSWORDS.update(session_passwords) # Загружаем пароли из родительского процесса UI в память этого процесса
     ui_conn = [input_queue, output_queue, log_queue]
@@ -3902,7 +4435,31 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     chat_path = os.path.join(chats_root, chat_id)
     filesystem_project_path = os.path.join(chat_path, 'files')
     cache_path = os.path.join(chat_path, "cache.db")
-    folder_path = base_dir # Обновляем пути для system_tools
+    folder_path = base_dir # Обновляем пути для system_tools / lang / filesystem
+    # Only launcher is frozen: editable packages live next to exe (base_dir).
+    # base_dir first so `filesystem`, `lang`, `default_tools`, `model_providers` resolve from disk.
+    try:
+        _bd = os.path.abspath(base_dir)
+        while _bd in sys.path:
+            sys.path.remove(_bd)
+        sys.path.insert(0, _bd)
+    except Exception:
+        if base_dir not in sys.path:
+            sys.path.insert(0, base_dir)
+    # Explicit editable package dirs (same pattern as system_tools)
+    for _sub in ('filesystem', 'lang', 'model_providers', 'default_tools'):
+        _p = os.path.join(folder_path, _sub)
+        if os.path.isdir(_p):
+            try:
+                while _p in sys.path:
+                    sys.path.remove(_p)
+            except Exception:
+                pass
+            # filesystem & lang are packages under base_dir — parent already on path;
+            # model_providers is also imported as model_providers.X from base_dir.
+            # Keep base_dir first; only append if needed for flat imports.
+            if _sub == 'model_providers' and _p not in sys.path:
+                sys.path.append(_p)
     sys.path = [p for p in sys.path if not p.endswith(('system_tools', 'system_tools/milana', 'system_tools/ivan'))]
     sys.path.append(os.path.join(folder_path, 'system_tools'))
     sys.path.append(os.path.join(folder_path, 'system_tools', 'milana'))
@@ -3910,6 +4467,8 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     let_log(f"Base directory: {base_dir}")
     let_log(f"Chat path: {chat_path}")
     let_log(f"Folder path: {folder_path}")
+    let_log(f"[path] filesystem={os.path.isdir(os.path.join(folder_path, 'filesystem'))} "
+            f"lang={os.path.isdir(os.path.join(folder_path, 'lang'))}")
     # === Подготовка SQLite БД ===
     init_cache_conn = connect(cache_path)
     init_cache_cursor = init_cache_conn.cursor()
@@ -3939,19 +4498,59 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     sql_exec('CREATE TABLE IF NOT EXISTS system_prompts (chat_id INTEGER PRIMARY KEY, system_prompt TEXT)''')
     ensure_agents_table()
     initial_text, fl = load_initial_data(chat_id)
-    # При первом запуске UI может передать settings_override, чтобы не читать БД повторно
+    # ALWAYS load model_* from chatsettings.db (same path first start and resume).
+    # settings_override must NOT replace model_provider_params — first start used to
+    # pass a full dict, resume used DB via @cacher sql_exec (divergent / cache-risky).
+    # Override is only used for another_tools (and optional non-model patches).
+    settings = load_chat_settings(chat_id)
     if settings_override and isinstance(settings_override, dict):
-        settings = dict(settings_override)
-        let_log("[initialize_work] settings from override dict (first start)")
+        ov_tools = settings_override.get("another_tools")
+        if ov_tools is not None:
+            settings["another_tools"] = list(ov_tools)
+        let_log(
+            f"[initialize_work] settings from chatsettings.db + another_tools from override "
+            f"(n_tools={len(settings.get('another_tools') or [])})"
+        )
     else:
-        settings = load_chat_settings(chat_id)
-        let_log("[initialize_work] settings from chatsettings.db")
+        let_log(
+            f"[initialize_work] settings from chatsettings.db only "
+            f"(n_tools={len(settings.get('another_tools') or [])})"
+        )
+    # Debug: what large will actually connect with
+    try:
+        _lp = settings.get("model_provider_params") or ""
+        _sm = settings.get("use_small_model")
+        _sp = settings.get("small_model_provider_params") or ""
+        def _mod(s):
+            for part in (s or "").split(";"):
+                if part.strip().lower().startswith("model="):
+                    return part.split("=", 1)[1].strip()
+            return ""
+        let_log(
+            f"[initialize_work] large model_type={settings.get('model_type')!r} "
+            f"large_model={_mod(_lp)!r} params_len={len(_lp)} "
+            f"use_small={_sm!r} small_model={_mod(_sp)!r}"
+        )
+    except Exception as _e:
+        let_log(f"[initialize_work] settings debug fail: {_e}")
     tool_paths = settings.get("another_tools", [])
     token_limit = int(settings.get("token_limit", 8192))
-    global_state.allow_ocr = int(settings.get("allow_ocr", 0)) == 1
+    # OCR only if user enabled it AND installer left local models
+    try:
+        from info_loaders import bundled_image_models_available
+        _models_ok = bundled_image_models_available()
+    except Exception:
+        _models_ok = False
+    _want_ocr = int(settings.get("allow_ocr", 0)) == 1
+    if _want_ocr and not _models_ok:
+        let_log("allow_ocr ignored: bundled image models missing (install without models)")
+        _want_ocr = False
+    global_state.allow_ocr = _want_ocr
     global_state.hierarchy_limit = int(settings.get("hierarchy_limit", 0))
     global_state.write_results = int(settings.get("write_results", 0)) == 1
     global_state.fs_copy_touched_on_end = int(settings.get("fs_copy_touched_on_end", 0)) == 1
+    global_state.fs_use_git = int(settings.get("fs_use_git", 1)) == 1
+    global_state.show_message_datetime = int(settings.get("show_message_datetime", 0)) == 1
     global_state.number_of_plan_items = int(settings.get("number_of_plan_items", 0))
     global_state.max_critic_reactions = int(settings.get("max_critic_reactions", 2))
     try:
@@ -3988,6 +4587,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     filter_generations = int(settings.get("filter_generations", 0)) == 1
     use_magical_prompt = int(settings.get("use_magical_prompt", 0)) == 1
     cut_wrong_command_history = int(settings.get("cut_wrong_command_history", 0)) == 1
+    global allow_command_not_at_start, give_operator_goal_to_executor
+    allow_command_not_at_start = int(settings.get("allow_command_not_at_start", 0)) == 1
+    give_operator_goal_to_executor = int(settings.get("give_operator_goal_to_executor", 0)) == 1
 
     do_translate = int(settings.get("do_translate", 0)) == 1
     target_lang = settings.get("target_lang", "None")
@@ -4003,6 +4605,9 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
     gigo_use_random_roles = int(settings.get("gigo_use_random_roles", 1)) == 1
     gigo_use_filter = int(settings.get("gigo_use_filter", 1)) == 1
     gigo_use_librarian = int(settings.get("gigo_use_librarian", 1)) == 1
+    gigo_role_dreamer = int(settings.get("gigo_role_dreamer", 1)) == 1
+    gigo_role_realist = int(settings.get("gigo_role_realist", 1)) == 1
+    gigo_role_critic = int(settings.get("gigo_role_critic", 1)) == 1
     librarian_use_models = int(settings.get("librarian_use_models", 0)) == 1
     librarian_use_web = int(settings.get("librarian_use_web", 0)) == 1
     module_hints_for_operator = int(settings.get("module_hints_for_operator", 0)) == 1
@@ -4032,15 +4637,31 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         full_path = os.path.normpath(full_path)
         another_tools_files_addresses.append(full_path)
     # === Инициализация модели (large = primary; small optional, default off) ===
-    global use_small_model, small_for_cutter_only, small_agent_until_protocol, _model_backends, emb_token_limit
+    global use_small_model, small_for_cutter_only, small_agent_until_protocol, small_protocol_drop_error
+    global _model_backends, emb_token_limit
     global do_chat_construct, native_func_call, ask_provider_model, ask_provider_model_chat, get_provider_embs
     _model_backends = {}
     use_small_model = int(settings.get("use_small_model", 0)) == 1
     small_for_cutter_only = int(settings.get("small_for_cutter_only", 1)) == 1
     small_agent_until_protocol = int(settings.get("small_agent_until_protocol", 0)) == 1
+    small_protocol_drop_error = int(settings.get("small_protocol_drop_error", 0)) == 1
     global_state.agent_use_large = False
     model_type = _normalize_provider_module_name(settings.get("model_type", "ollama_provider"))
-    connect_params = settings.get("model_provider_params", "")
+    connect_params = (settings.get("model_provider_params") or "").strip()
+    _ok_params, _why, _model_name = _connection_params_ready(connect_params)
+    let_log(
+        f"[model] large pre-connect: type={model_type} model={_model_name!r} "
+        f"params_ok={_ok_params} params_len={len(connect_params)} "
+        f"use_small_model_in_CHAT={settings.get('use_small_model')!r} "
+        f"(chatsettings only — global settings.db is NOT read here)"
+    )
+    if not _ok_params:
+        let_log(f"[model] FATAL: skip connect — {_why}")
+        raise RuntimeError(
+            f"Не вызываем connect: {_why}. "
+            f"model_provider_params в chatsettings.db этого чата пуст или без model=. "
+            f"Глобальные Настройки (settings.db) worker не читает — поправьте чат или создайте новый."
+        )
     try:
         large_backend = _connect_model_backend(
             base_dir, model_type, connect_params, token_limit,
@@ -4129,19 +4750,55 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
         filter_generations = True
     else: filter_generations = False
 
-    from filesystem import (
-        pipeline,
-        get_dependency_report,
-        change_dir,
-        get_project_tree_json,
-        create_experiment_branch,
-        #status_success,
-        #status_failed,
-        #status_forbidden,
-        resolve_workspace_path,
-        to_posix_rel,
-        allowed_actions,
-        normalize_action)
+    # No filesystem/__init__.py: import api submodule (namespace package under base_dir).
+    # Fallback: load api.py by path if package import fails (frozen edge cases).
+    try:
+        from filesystem.api import (
+            pipeline,
+            get_dependency_report,
+            change_dir,
+            get_project_tree_json,
+            create_experiment_branch,
+            resolve_workspace_path,
+            to_posix_rel,
+            allowed_actions,
+            normalize_action,
+        )
+    except ImportError as _fs_imp_err:
+        let_log(f"[filesystem] api import failed: {_fs_imp_err}; try path load")
+        _fs_api = os.path.join(base_dir, "filesystem", "api.py")
+        if not os.path.isfile(_fs_api):
+            raise
+        import types as _types
+        _fs_dir = os.path.join(base_dir, "filesystem")
+        if "filesystem" not in sys.modules:
+            _pkg = _types.ModuleType("filesystem")
+            _pkg.__path__ = [_fs_dir]
+            sys.modules["filesystem"] = _pkg
+        _spec = importlib.util.spec_from_file_location("filesystem.api", _fs_api)
+        _mod = importlib.util.module_from_spec(_spec)
+        sys.modules["filesystem.api"] = _mod
+        _spec.loader.exec_module(_mod)
+        pipeline = _mod.pipeline
+        get_dependency_report = _mod.get_dependency_report
+        change_dir = _mod.change_dir
+        get_project_tree_json = _mod.get_project_tree_json
+        create_experiment_branch = _mod.create_experiment_branch
+        resolve_workspace_path = _mod.resolve_workspace_path
+        to_posix_rel = _mod.to_posix_rel
+        allowed_actions = _mod.allowed_actions
+        normalize_action = _mod.normalize_action
+        _pkg = sys.modules.get("filesystem")
+        if _pkg is not None:
+            for _name in (
+                "pipeline", "get_dependency_report", "change_dir", "get_project_tree_json",
+                "create_experiment_branch", "resolve_workspace_path", "to_posix_rel",
+                "allowed_actions", "normalize_action", "status_success", "status_failed",
+                "status_forbidden", "copy_touched_to_folder", "make_result",
+            ):
+                if hasattr(_mod, _name):
+                    setattr(_pkg, _name, getattr(_mod, _name))
+        let_log("[filesystem] loaded via path fallback")
 
     let_log(f"\n=== ЗАГРУЗКА СПЕЦИАЛЬНЫХ МОДУЛЕЙ (до системных) ===")
     special_files = {'web_search': None, 'ask_user': None}

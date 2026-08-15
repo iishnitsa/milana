@@ -14,6 +14,8 @@ from cross_gpt import (
     find_all_commands,
     only_one_func_text,
     what_is_func_text,
+    what_is_func_text_not_at_start,
+    allow_command_not_at_start,
     last_messages_marker,
     native_func_call,
     let_log,
@@ -86,6 +88,7 @@ IMPORTANT: Once Ivan is created, NEVER use the "!!!create_executor!!!" command a
 - Ivan SUCCESSFULLY completed their part and you need a new executor for a clearly separate next subtask (but first try to have Ivan handle multiple steps).
 4. FORBIDDEN — Never recreate an executor IMMEDIATELY after they respond. A simple reply from Ivan is NOT a reason to create a new one. Continue the conversation.
 5. GREETING AFTER CREATION — After successfully creating Ivan, simply greet him in natural language (e.g., "Hello, Ivan."). Do not include any commands in your greeting.
+IMPORTANT ABOUT THE EXECUTOR: Ivan does NOT see the full client task/plan you received — only the subtask text you put after create_executor. Make that subtask self-contained; do not assume he knows the original client request or the full plan.
 6. DELEGATION — '''
         main.milana_delegation_part = '''Ivan can delegate a subtask further down the hierarchy if he cannot handle it. This creates a similar dialog which you (Milana) cannot access. Only Ivan has the right to delegate.
 '''
@@ -241,10 +244,24 @@ The task:
     # 3. Add hierarchy information if limit is greater than 1
     if global_state.hierarchy_limit > 1: full_prompt += f"\n{main.hierarchy_limit_info} {current_level}/{global_state.hierarchy_limit}.\n"
     full_prompt += no_markdown_instruction + write_shortly_prompt
+    # mid-dialog client notes when deliver_user_messages is on (plain text reply, no answer_client)
+    if getattr(global_state, 'deliver_user_messages', False):
+        try:
+            from cross_gpt import client_messages_operator_note
+            full_prompt += client_messages_operator_note
+        except Exception:
+            full_prompt += (
+                '\nThe external client may send messages while you work. '
+                'You get a special turn: reply in plain text or skip to return to Ivan.\n'
+            )
     let_log(milana_tools)
     prompt += only_one_func_text
     prompt += _format_tools_for_prompt(milana_tools)
-    if not native_func_call: prompt += what_is_func_text
+    if not native_func_call:
+        if allow_command_not_at_start and what_is_func_text_not_at_start:
+            prompt += what_is_func_text_not_at_start
+        else:
+            prompt += what_is_func_text
     # Опционально: расширенные подсказки по модулям и оператору
     if module_hints_for_operator and global_state.another_tools:
         hints = '\n'.join(

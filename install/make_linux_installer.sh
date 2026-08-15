@@ -253,9 +253,20 @@ main_installation() {
     
     # Ask about shortcuts
     SHORTCUTS=$(ask_shortcuts)
+
+    # Optional image models (BLIP + EasyOCR, ~1 GB)
+    INSTALL_MODELS=false
+    if ask_yesno "Install image recognition models?\n\nOCR / image captions (BLIP + EasyOCR).\nAdds about 1 GB on disk.\n\nWithout models, image recognition is disabled."; then
+        INSTALL_MODELS=true
+    fi
     
     # Confirmation
     local confirm_msg="Ready to install?\n\nDestination folder: $INSTALL_DIR"
+    if [ "$INSTALL_MODELS" = true ]; then
+        confirm_msg="$confirm_msg\nImage models: yes"
+    else
+        confirm_msg="$confirm_msg\nImage models: no (OCR off)"
+    fi
     
     if [ "$USE_SUDO" = true ]; then
         confirm_msg="$confirm_msg\n(Will use sudo for installation)"
@@ -277,6 +288,15 @@ main_installation() {
         show_error "Failed to extract installation files."
         rm -rf "$TMP_DIR"
         exit 1
+    fi
+
+    # Drop models from package if user declined (installer still contains them; strip before copy)
+    if [ "$INSTALL_MODELS" != true ]; then
+        show_progress "Skipping image models..."
+        rm -rf "$TMP_DIR/package/data/models" 2>/dev/null || true
+        mkdir -p "$TMP_DIR/package/data/models"
+        # marker for support / docs
+        echo "skipped" > "$TMP_DIR/package/data/models/.models_not_installed" 2>/dev/null || true
     fi
     
     # Copy to destination
@@ -372,6 +392,11 @@ EOL
     local final_msg="Installation complete!\n\n"
     final_msg="$final_msg✓ Installed to: $INSTALL_DIR\n"
     final_msg="$final_msg✓ Files copied: $(find "$INSTALL_DIR" -type f | wc -l) files\n"
+    if [ "$INSTALL_MODELS" = true ]; then
+        final_msg="$final_msg✓ Image models: installed\n"
+    else
+        final_msg="$final_msg✓ Image models: skipped (OCR disabled)\n"
+    fi
     final_msg="$final_msg✓ Command-line launcher: milana\n"
     
     if [[ "$SHORTCUTS" == *"menu"* ]] || [[ "$SHORTCUTS" == "both" ]]; then

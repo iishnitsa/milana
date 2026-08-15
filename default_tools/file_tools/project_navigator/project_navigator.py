@@ -6,20 +6,21 @@ Provides change_dir and project tree for agent-friendly navigation
 '''
 
 import json
+import os
+
 from cross_gpt import chat_path, filesystem_project_path
-from filesystem import change_dir, get_project_tree_json
+from filesystem.api import change_dir, get_project_tree_json
+from filesystem.tool_arg import one_line_arg as _one_line_arg
 
 
 def _workspace():
     if filesystem_project_path:
         return filesystem_project_path
     if chat_path:
-        import os
         project_path = os.path.join(chat_path, 'files')
         if os.path.isdir(project_path):
             return project_path
         return chat_path
-    import os
     return os.getcwd()
 
 
@@ -29,9 +30,11 @@ def main(text):
             'done_text',
             'failed_text',
             'help_text',
+            'empty_tree_text',
         )
         main.done_text = 'Готово'
         main.failed_text = 'Ошибка'
+        main.empty_tree_text = 'пусто (нет файлов или папок)'
         main.help_text = (
             "Использование:\n"
             "- cd <путь>  -> смена текущей папки\n"
@@ -42,13 +45,15 @@ def main(text):
         return
 
     workspace = _workspace()
-    raw = str(text or '').strip()
+    raw = _one_line_arg(text)
     if not raw:
         return main.help_text
 
     low = raw.lower()
-    if low.startswith('cd '):
-        target = raw[3:].strip()
+    if low.startswith('cd ') or low == 'cd':
+        target = raw[3:].strip() if low.startswith('cd ') else '.'
+        # path only — no leftover remarks
+        target = target.split()[0] if target else '.'
         result = change_dir(main.current_cwd, target, repo_path=workspace)
         if result.get('status') != 'success':
             return f"{main.failed_text}: {result.get('reason')}"
@@ -71,7 +76,9 @@ def main(text):
         )
         if result.get('status') != 'success':
             return f"{main.failed_text}: {result.get('reason')}"
-        tree = result.get('tree') or result.get('files')
+        tree = result.get('tree') if result.get('tree') is not None else result.get('files')
+        if not tree:
+            return f"{main.done_text}: {main.empty_tree_text}"
         return f"{main.done_text}: {json.dumps(tree, ensure_ascii=False)}"
 
     return main.help_text

@@ -14,7 +14,8 @@ import difflib
 import xml.etree.ElementTree as et
 
 from cross_gpt import ask_model, filesystem_project_path
-from filesystem import pipeline, status_success, status_failed, status_forbidden
+from filesystem.api import pipeline, status_success, status_failed, status_forbidden
+from filesystem.tool_arg import clean_tool_arg as _clean_tool_arg
 
 
 def _scan_table_files(root_path, max_files=500):
@@ -229,9 +230,13 @@ def main(text):
         main.prompt_pick_file = """
 Выбери один файл таблицы для запроса.
 Верни только относительный путь без пояснений.
-Запрос: """ + text + """
+Запрос: """ + (text or "") + """
 Список:"""
         return
+
+    text = _clean_tool_arg(text)
+    if not text:
+        return main.no_files_text
 
     workspace = filesystem_project_path
     files = _scan_table_files(workspace)

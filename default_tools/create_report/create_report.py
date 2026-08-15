@@ -12,13 +12,23 @@ from cross_gpt import chat_path, send_ui_no_cache
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = ('confirmation_text', 'report_created_text')
+        main.attr_names = ('confirmation_text', 'report_created_text', 'empty_report_text')
         main.confirmation_text = 'Report saved'
         main.report_created_text = 'Report created: '
+        main.empty_report_text = (
+            'Report was not created: no content was provided after the command '
+            '(only whitespace/newlines). Write the report body after !!!create_report!!!'
+        )
         return
 
+    body = (text or '').strip()
+    if not body:
+        return getattr(main, 'empty_report_text', None) or (
+            'Report was not created: nothing was passed after the command.'
+        )
+
     # Generate filename prefix from beginning of text
-    raw_prefix = text.strip()[:50]  # take first 50 characters
+    raw_prefix = body[:50]  # take first 50 characters
     # Keep only alphanumeric, spaces, underscores; replace spaces with underscore
     safe_prefix = re.sub(r'[^\w\s]', '', raw_prefix)  # remove punctuation etc.
     safe_prefix = re.sub(r'\s+', '_', safe_prefix)    # replace spaces with underscore
@@ -36,7 +46,7 @@ def main(text):
         # Ensure reports directory exists
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
-            f.write(text.strip())
+            f.write(body)
         # Маркер «для пользователя» — sidecar .for_user рядом с файлом
         try:
             with open(path + '.for_user', 'w', encoding='utf-8') as mf:
@@ -46,5 +56,6 @@ def main(text):
         send_ui_no_cache(main.report_created_text + filename, attach=[path])
     except Exception as e:
         print(f"Error: {e}")
+        return f"Report error: {e}"
 
     return main.confirmation_text

@@ -28,6 +28,21 @@ worker_role_text = '\nИван: '
 
 func_role_text = '\nФункция: '
 
+# mid-dialog: сообщения клиента (deliver_user_messages)
+client_message_label = '[Сообщение клиента]'
+client_role_text = '\nКлиент: '
+client_messages_operator_note = (
+    '\nВнешний клиент (вне иерархии) может писать во время работы. '
+    'Тогда до продолжения с Иваном у тебя отдельный ход: '
+    'ответь клиенту обычным текстом (без команды) или !!!пропустить!!! чтобы вернуться к Ивану. '
+    'Другие команды в этом ходе недоступны. Не путай клиента с Иваном.\n'
+)
+client_interrupt_mode_note = (
+    'СООБЩЕНИЕ ВНЕШНЕГО КЛИЕНТА (это не Иван). '
+    'Ответь обычным текстом клиенту или !!!пропустить!!! чтобы вернуться к Ивану без ответа. '
+    'Другие команды сейчас недоступны.'
+)
+
 start_dialog_history = 'Краткая история диалога: '
 
 make_exec_first = 'Создай исполнителя перед началом диалога'
@@ -190,6 +205,14 @@ what_is_func_text = '''
 Если собеседник начинает своё сообщение текстом "Функция: ", то это не собеседник, а системное сообщение или ответ функции, если она была тобой вызвана.
 '''
 
+# Когда allow_command_not_at_start: команда может быть после короткого вступления
+what_is_func_text_not_at_start = '''
+Чтобы вызвать команду, напиши три восклицательных знака, потом имя команды, потом ещё три восклицательных знака, а потом информацию для команды. Команда может идти после короткого вступления, но сам маркер держи вне markdown/json и не смешивай вызов с обычным ответом собеседнику так же, как при «чистом» командном сообщении.
+Не используй json и markdown для вызова функций.
+Если ты пишешь команду, предпочитай явный блок команды без длинного комментария после вызова.
+Если собеседник начинает своё сообщение текстом "Функция: ", то это не собеседник, а системное сообщение или ответ функции, если она была тобой вызвана.
+'''
+
 only_one_func_text = """
 В одном сообщении разрешена только одна команда (один вызов). Нельзя писать несколько команд (разные или одну и ту же) в одном сообщении.
 Даже если система не выдаст предупреждение о нарушении, все команды кроме первой в сообщении не будут выполнены.
@@ -218,6 +241,11 @@ error_in_provider = 'Произошла ошибка при обращении �
 
 success_in_provider = 'Ошибка исчезла, продолжаю работу'
 
+empty_reply_context_hint = (
+    'Модель несколько раз подряд вернула пустой ответ. '
+    'Возможно, ей не хватает окна контекста для текущего промпта — увеличьте лимит контекста модели (num_ctx / token_limit) и повторите.'
+)
+
 wrong_command = 'Неправильная либо отсутствующая команда'
 
 warn_command_text_1 = "Обнаружено нарушение протокола:"
@@ -232,7 +260,11 @@ warn_command_text_5 = "Команда находится внутри JSON-ст�
 
 warn_command_text_6 = "Команда находится внутри markdown-форматирования (жирный, курсив, код и т.п.)."
 
-warn_command_text_7 = 'Если вы НЕ пытались вызвать команду, используйте !!!пропустить!!! в самом начале сообщения, и затем напишите ваше сообщение ещё раз — оно будет отправлено собеседнику (например, "!!!пропустить!!! Я хочу сказать, что...").'
+warn_command_text_7 = (
+    'Не используйте !!!пропустить!!! автоматически. '
+    'Если ошибка в команде — исправьте её; если хотели обычное сообщение — отправьте его без маркеров. '
+    'Используйте !!!пропустить!!! только если системе по ошибке кажется, что обычный текст является командой.'
+)
 
 warn_command_text_8 = 'Доступные инструменты:'
 
@@ -334,6 +366,10 @@ class SystemTextContainer:
         self.operator_role_text = operator_role_text
         self.worker_role_text = worker_role_text
         self.func_role_text = func_role_text
+        self.client_message_label = client_message_label
+        self.client_role_text = client_role_text
+        self.client_messages_operator_note = client_messages_operator_note
+        self.client_interrupt_mode_note = client_interrupt_mode_note
         self.start_dialog_history = start_dialog_history
         self.make_exec_first = make_exec_first
         self.gigo_dreamer = gigo_dreamer
@@ -407,6 +443,7 @@ class SystemTextContainer:
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4
         self.what_is_func_text = what_is_func_text
+        self.what_is_func_text_not_at_start = what_is_func_text_not_at_start
         self.only_one_func_text = only_one_func_text
         self.last_messages_marker = last_messages_marker
         self.rag_context_marker = rag_context_marker
@@ -414,6 +451,7 @@ class SystemTextContainer:
         self.recent_summary_marker = recent_summary_marker
         self.error_in_provider = error_in_provider
         self.success_in_provider = success_in_provider
+        self.empty_reply_context_hint = empty_reply_context_hint
         self.wrong_command = wrong_command
         self.warn_command_text_1 = warn_command_text_1
         self.warn_command_text_2 = warn_command_text_2

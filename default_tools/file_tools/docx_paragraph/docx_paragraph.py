@@ -13,7 +13,8 @@ import zipfile
 import xml.etree.ElementTree as et
 
 from cross_gpt import ask_model, filesystem_project_path, get_embs
-from filesystem import pipeline, status_success, status_failed, status_forbidden
+from filesystem.api import pipeline, status_success, status_failed, status_forbidden
+from filesystem.tool_arg import clean_tool_arg as _clean_tool_arg
 
 
 def _scan_docx_files(root_path, max_files=400):
@@ -266,6 +267,10 @@ def main(text):
         main.edit_keywords = ('замени', 'поменя', 'измени', 'replace', 'edit')
         main.read_keywords = ('прочита', 'покажи', 'read', 'show')
         return
+
+    text = _clean_tool_arg(text)
+    if not text:
+        return main.cannot_parse_text if hasattr(main, 'cannot_parse_text') else main.no_docx_text
 
     workspace = filesystem_project_path
     candidates = _scan_docx_files(workspace)

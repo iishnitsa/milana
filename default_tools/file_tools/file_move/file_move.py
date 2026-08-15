@@ -6,8 +6,10 @@ Simple move/rename without smart matching
 '''
 
 from pathlib import Path
+
 from cross_gpt import chat_path, filesystem_project_path
-from filesystem import pipeline, status_success, status_failed, status_forbidden
+from filesystem.api import pipeline, status_success, status_failed, status_forbidden
+from filesystem.tool_arg import one_line_arg as _one_line_arg
 
 
 def _workspace():
@@ -26,14 +28,26 @@ def main(text):
         main.err_src = 'Source not found: '
         main.forbidden_text = 'Forbidden'
         return
-    raw = (text or '').strip()
-    if '->' in raw:
+    # Одна рабочая строка: отбрасываем комментарии модели после args
+    raw = _one_line_arg(text)
+    if not raw:
+        # fallback: две строки src / dst без комментариев
+        lines = [ln.strip() for ln in str(text or '').splitlines() if ln.strip()]
+        if len(lines) >= 2 and '->' not in lines[0]:
+            src, dst = lines[0], lines[1]
+        else:
+            return main.err_args
+    elif '->' in raw:
         src, dst = [p.strip() for p in raw.split('->', 1)]
     else:
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-        if len(lines) < 2:
+        # вторая строка только если это путь, не ремарка
+        lines = [ln.strip() for ln in str(text or '').splitlines() if ln.strip()]
+        if len(lines) >= 2 and not lines[1].startswith('(') and not lines[1].startswith('*'):
+            src, dst = lines[0], _one_line_arg(lines[1]) or lines[1]
+        else:
             return main.err_args
-        src, dst = lines[0], lines[1]
+    if not src or not dst:
+        return main.err_args
     workspace = _workspace()
     result = pipeline(
         None,

@@ -183,7 +183,8 @@ def check_environment():
     if getattr(sys, 'frozen', False): base_dir = os.path.dirname(os.path.abspath(sys.executable))
     else: base_dir = os.path.dirname(os.path.abspath(__file__))
     # Проверяем наличие критически важных папок
-    required_dirs = ['data', 'lang', 'default_tools', 'model_providers']
+    # Editable next to exe (only launcher.py is frozen); include filesystem
+    required_dirs = ['data', 'lang', 'default_tools', 'model_providers', 'filesystem']
     missing_dirs = []
     for dir_name in required_dirs:
         dir_path = os.path.join(base_dir, dir_name)

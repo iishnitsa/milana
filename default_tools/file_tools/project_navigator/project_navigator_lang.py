@@ -8,6 +8,7 @@ locales = {
         ],
         'main.done_text': 'Готово',
         'main.failed_text': 'Ошибка',
+        'main.empty_tree_text': 'пусто (нет файлов или папок)',
         'main.help_text': """
 Использование:
 - cd <путь>  -> смена текущей папки

@@ -30,6 +30,21 @@ worker_role_text = '\nIvan: '
 
 func_role_text = '\nFunction: '
 
+# mid-dialog client inject (deliver_user_messages)
+client_message_label = '[Client message]'
+client_role_text = '\nClient: '
+client_messages_operator_note = (
+    '\nThe external client (outside the agent hierarchy) may write while you work. '
+    'When that happens you get a special turn before continuing with Ivan: '
+    'reply to the client in plain text (no command), or !!!skip!!! to ignore and return to Ivan. '
+    'Other tools are unavailable in that turn. Do not confuse the client with Ivan.\n'
+)
+client_interrupt_mode_note = (
+    'EXTERNAL CLIENT MESSAGE (not Ivan). '
+    'Reply in plain text to the client, or !!!skip!!! to return to Ivan without answering. '
+    'No other commands are available now.'
+)
+
 start_dialog_history = 'Brief dialogue history: '
 
 make_exec_first = 'Create an executor before starting the dialogue'
@@ -192,6 +207,14 @@ If you are writing a command, write only the command, do not comment on your act
 If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message or a function response if it was called by you.
 '''
 
+# When allow_command_not_at_start: command may appear after a short preamble
+what_is_func_text_not_at_start = '''
+To call a command, write three exclamation marks, then the command name, then three more exclamation marks, and then the information for the command. The command may appear after a short preamble, but keep the marker itself outside markdown/json and do not mix it with a normal reply to the peer in the same way as a pure command message.
+Do not use json or markdown to call functions.
+If you are writing a command, prefer a clear command block without long commentary after the call.
+If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message or a function response if it was called by you.
+'''
+
 only_one_func_text = """
 Only one command (one call) per message is allowed. Do not write multiple commands (different or the same) in one message.
 Even if the system does not issue a protocol violation warning, all commands except the first one in the message will not be executed.
@@ -220,6 +243,11 @@ error_in_provider = 'An error occurred while accessing the model provider. Infin
 
 success_in_provider = 'The error has been resolved, continuing work'
 
+empty_reply_context_hint = (
+    'The model has returned empty answers several times in a row. '
+    'Its context window may be too small for the current prompt — try increasing the model context limit (num_ctx / token_limit) and retry.'
+)
+
 wrong_command = 'Wrong or missing command'
 
 warn_command_text_1 = "Protocol violation detected:"
@@ -234,7 +262,11 @@ warn_command_text_5 = "Command is inside a JSON structure. Use pure !!!command!!
 
 warn_command_text_6 = "Command is inside markdown formatting (bold, italic, code, etc.)."
 
-warn_command_text_7 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
+warn_command_text_7 = (
+    'Do not use !!!skip!!! automatically. '
+    'If the command is invalid, fix it; if you intended a normal message, send it without any command marker. '
+    'Use !!!skip!!! only when the system mistakenly interprets a normal message as a command.'
+)
 
 warn_command_text_8 = 'Available tools:'
 
@@ -337,6 +369,10 @@ class SystemTextContainer:
         self.operator_role_text = operator_role_text
         self.worker_role_text = worker_role_text
         self.func_role_text = func_role_text
+        self.client_message_label = client_message_label
+        self.client_role_text = client_role_text
+        self.client_messages_operator_note = client_messages_operator_note
+        self.client_interrupt_mode_note = client_interrupt_mode_note
         self.start_dialog_history = start_dialog_history
         self.make_exec_first = make_exec_first
         self.gigo_dreamer = gigo_dreamer
@@ -410,6 +446,7 @@ class SystemTextContainer:
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4
         self.what_is_func_text = what_is_func_text
+        self.what_is_func_text_not_at_start = what_is_func_text_not_at_start
         self.only_one_func_text = only_one_func_text
         self.last_messages_marker = last_messages_marker
         self.rag_context_marker = rag_context_marker
@@ -417,6 +454,7 @@ class SystemTextContainer:
         self.recent_summary_marker = recent_summary_marker
         self.error_in_provider = error_in_provider
         self.success_in_provider = success_in_provider
+        self.empty_reply_context_hint = empty_reply_context_hint
         self.wrong_command = wrong_command
         self.warn_command_text_1 = warn_command_text_1
         self.warn_command_text_2 = warn_command_text_2

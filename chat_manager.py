@@ -107,9 +107,22 @@ def update_history(chat_id: int, message_text: str, role: str, vector_id='', loc
 
     Shared (local_message=False): при force_vectorize/overflow векторизуется.
     Internal без overflow — embedding не пишется.
+
+    If show_message_datetime: prefix full_text with [YYYY-MM-DD HH:MM:SS] so agents see time.
     """
     let_log(f"Updating history for chat: {chat_id} with role: {role}")
     str_chat_id = str(chat_id)
+
+    # Agents see datetime on messages when option is on (not only human UI)
+    try:
+        if getattr(global_state, 'show_message_datetime', False) and message_text is not None:
+            import time as _time
+            ts = _time.strftime("%Y-%m-%d %H:%M:%S")
+            # avoid double-prefix
+            if not str(message_text).lstrip().startswith("["):
+                message_text = f"[{ts}] {message_text}"
+    except Exception:
+        pass
 
     did_vectorize = False
     if use_rag:

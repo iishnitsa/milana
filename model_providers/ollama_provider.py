@@ -199,7 +199,8 @@ def connect(connection_string, timeout=30):
     global _last_llm_num_ctx, _last_think_value, _last_llm_cpu
     global filter_think_tag
 
-    # Параметры по умолчанию (только необходимые)
+    # Defaults for UI / incomplete connection strings (user may not have this model).
+    # Caller (initialize_work / _connect_model_backend) must not call connect with empty string.
     params = {
         "url": "http://localhost:11434",
         "model": "ministral-3:8b",
@@ -214,17 +215,20 @@ def connect(connection_string, timeout=30):
         "filter_think_tag": "false",
     }
     # --- Разбор строки подключения ---
-    for part in connection_string.split(";"):
+    raw = (connection_string or "").strip()
+    for part in raw.split(";"):
         part = part.strip()
-        if not part or "=" not in part: continue
+        if not part or "=" not in part:
+            continue
         key, value = part.split("=", 1)
         key = key.strip().lower()
         value = value.strip()
-        if key in params: params[key] = value
+        # apply known keys + any extra so model= always wins over default when present
+        params[key] = value
     # === НОРМАЛИЗАЦИЯ ===
-    params["url"] = normalize_url(params["url"], default_port=11434)
-    params["model"] = normalize_model(params["model"])
-    params["emb_model"] = normalize_model(params["emb_model"])
+    params["url"] = normalize_url(params.get("url") or "http://localhost:11434", default_port=11434)
+    params["model"] = normalize_model(params.get("model") or "ministral-3:8b")
+    params["emb_model"] = normalize_model(params.get("emb_model") or "all-minilm:latest")
     base_url = params["url"].strip('/')
     emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"

@@ -1,6 +1,6 @@
 '''
 end_dialogue
-gets the final result and ends the dialogue
+gets the final result and ends the dialogue. REQUIRED: after the command write the full result text for the client (non-empty). Empty body is rejected.
 '''
 
 import time
@@ -24,10 +24,19 @@ base_dir = os.path.join(chat_path, "results")
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = ('end_dialog_return', 'got_client_answer')
+        main.attr_names = ('end_dialog_return', 'got_client_answer', 'empty_result_text')
         main.end_dialog_return = 'Response saved.'
         main.got_client_answer = "The client's response was received:"
+        main.empty_result_text = (
+            "End dialogue was called without a result. "
+            "Write the final answer for the client after the command, for example: "
+            "!!!end_dialogue!!! Here is the full result..."
+        )
         return
+    text = (text or '').strip()
+    if not text:
+        let_log('end_dialog: empty result rejected')
+        return main.empty_result_text
     let_log('\n' + '='*60)
     let_log('ЗАВЕРШЕНИЕ ДИАЛОГА')
     let_log(f"Current hierarchy ID: {global_state.now_try}")
@@ -63,7 +72,7 @@ def main(text):
     # Setting: fs_copy_touched_on_end (default off). Auto-promote merge is TODO.
     try:
         if getattr(global_state, 'fs_copy_touched_on_end', False):
-            from filesystem import copy_touched_to_folder
+            from filesystem.api import copy_touched_to_folder
             sess = str(getattr(global_state, 'now_try', 'default') or 'default')
             snap = copy_touched_to_folder(sess, label=sess)
             let_log(f"[fs] copy_touched_on_end: {snap.get('dest')} files={snap.get('copied')}")

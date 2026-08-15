@@ -177,8 +177,21 @@ def set_session(repo_path: Union[str, Path], session_id: str, *, actor_id: str =
 
 
 def _session_id(repo_path: str, explicit: Optional[str] = None) -> str:
+    """Resolve session for pipeline/copy_touched.
+
+    Prefer explicit → agent ``global_state.now_try`` (dialog try id) → registry → default.
+    Binding writes to now_try fixes fs_copy_touched_on_end empty files when tools omit session_id.
+    """
     if explicit:
         return explicit
+    try:
+        import cross_gpt as cg  # local import: package may load before worker
+
+        nt = getattr(getattr(cg, "global_state", None), "now_try", None)
+        if nt is not None and str(nt).strip() != "":
+            return str(nt)
+    except Exception:
+        pass
     return _SESSIONS.get(repo_path, "default")
 
 
@@ -358,6 +371,230 @@ def normalize_action(action):
     }.get(a, a)
 
 
+def _effective_use_git(use_git_kw: bool) -> bool:
+    """Setting fs_use_git=0 forces plain disk (no git worlds/branches)."""
+    try:
+        import cross_gpt as cg
+        if int(getattr(cg.global_state, "fs_use_git", 1) or 0) == 0:
+            return False
+    except Exception:
+        pass
+    return bool(use_git_kw)
+
+
+def _safe_rel(path_text, workspace: Path) -> Optional[str]:
+    if path_text is None or str(path_text).strip() == "":
+        return None
+    try:
+        p = Path(str(path_text))
+        if not p.is_absolute():
+            full = (workspace / p).resolve()
+        else:
+            full = p.resolve()
+        rel = full.relative_to(workspace)
+        return rel.as_posix()
+    except Exception:
+        return None
+
+
+def _pipeline_plain_disk(
+    actor_func=None,
+    filename=None,
+    for_actor=None,
+    action: str = "create",
+    handler_arg=None,
+    workspace: Path = None,
+    *,
+    session_id: Optional[str] = None,
+    staging: Optional[str] = None,
+    content: Optional[Union[str, bytes]] = None,
+    force: bool = False,
+    query: Optional[str] = None,
+    include_disk: bool = False,
+    mode: str = "both",
+    **_ignored: Any,
+) -> Dict[str, Any]:
+    """
+    Plain filesystem ops without git/worlds: direct files under workspace.
+    Same result shape as git pipeline for tools.
+    """
+    action = normalize_action(action or "create")
+    if action == "write":
+        action = "edit" if filename else "create"
+    ws = Path(workspace).resolve()
+    ws.mkdir(parents=True, exist_ok=True)
+    sid = _session_id(str(ws), session_id)
+    staging_mode = staging or _DEFAULT_STAGING
+
+    def _abs(rel: str) -> Path:
+        return (ws / rel).resolve()
+
+    # tree / search (disk only)
+    if action == "tree":
+        files = []
+        for root, _dirs, names in os.walk(ws):
+            for n in names:
+                fp = Path(root) / n
+                try:
+                    files.append(fp.relative_to(ws).as_posix())
+                except Exception:
+                    pass
+        return make_result(status_success, "ok", action, files=files)
+    if action == "search":
+        q = (query or "").lower()
+        hits = []
+        if q:
+            for root, _dirs, names in os.walk(ws):
+                for n in names:
+                    if q in n.lower():
+                        try:
+                            hits.append((Path(root) / n).relative_to(ws).as_posix())
+                        except Exception:
+                            pass
+        return make_result(status_success, "ok", action, matches=hits)
+
+    source_rel = _safe_rel(filename, ws)
+    if filename and source_rel is None:
+        return make_result(status_forbidden, "path outside project", action)
+    target_rel = None
+    if action in ("copy", "move"):
+        target_rel = _safe_rel(for_actor, ws)
+        if for_actor and target_rel is None:
+            return make_result(status_forbidden, "path outside project", action)
+    elif action == "create":
+        target_rel = _safe_rel(for_actor, ws) if for_actor else source_rel
+        if for_actor and target_rel is None:
+            return make_result(status_forbidden, "path outside project", action)
+        source_rel = target_rel or source_rel
+    elif action == "edit" and for_actor:
+        alt = _safe_rel(for_actor, ws)
+        if for_actor and alt is None:
+            return make_result(status_forbidden, "path outside project", action)
+        if alt:
+            target_rel = alt
+
+    op_path = target_rel or source_rel
+    if action in ("read", "edit", "delete", "copy", "move") and not source_rel:
+        return make_result(status_failed, "path not specified", action)
+    if action == "create" and not op_path:
+        return make_result(status_failed, "path not specified", action)
+    if action in ("copy", "move") and not target_rel:
+        return make_result(status_failed, "target path not specified", action)
+
+    if action == "delete":
+        p = _abs(source_rel)
+        if not p.exists():
+            return make_result(status_failed, "not found", action, path=source_rel)
+        try:
+            if p.is_dir():
+                import shutil
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+            return make_result(status_success, "ok", action, path=source_rel)
+        except Exception as e:
+            return make_result(status_failed, str(e), action, path=source_rel)
+
+    if action == "copy":
+        import shutil
+        src, dst = _abs(source_rel), _abs(target_rel)
+        if not src.exists():
+            return make_result(status_failed, "not found", action, path=source_rel)
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+            return make_result(status_success, "ok", action, source_path=source_rel, target_path=target_rel)
+        except Exception as e:
+            return make_result(status_failed, str(e), action)
+
+    if action == "move":
+        import shutil
+        src, dst = _abs(source_rel), _abs(target_rel)
+        if not src.exists():
+            return make_result(status_failed, "not found", action, path=source_rel)
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+            return make_result(status_success, "ok", action, source_path=source_rel, target_path=target_rel)
+        except Exception as e:
+            return make_result(status_failed, str(e), action)
+
+    if action == "read":
+        p = _abs(source_rel)
+        if not p.exists() or not p.is_file():
+            return make_result(status_failed, "not found", action, path=source_rel)
+        try:
+            data = p.read_bytes()
+        except Exception as e:
+            return make_result(status_failed, str(e), action, path=source_rel)
+        if callable(actor_func):
+            err, _, out = _run_actor_on_bytes(
+                workspace=ws, session_id=sid, rel_path=source_rel, action="read",
+                data=data, actor_func=actor_func, handler_arg=handler_arg, staging=staging_mode,
+            )
+            if err:
+                return err
+            d = make_result(status_success, operation_success_text(), action, path=source_rel)
+            d["data"] = out.get("data")
+            return d
+        d = make_result(status_success, operation_success_text(), action, path=source_rel)
+        try:
+            d["text"] = data.decode("utf-8")
+        except Exception:
+            d["text"] = None
+        return d
+
+    if action in ("create", "edit"):
+        path = op_path or source_rel
+        p = _abs(path)
+        existing = b""
+        if p.exists() and p.is_file():
+            try:
+                existing = p.read_bytes()
+            except Exception:
+                existing = b""
+        if content is not None:
+            existing = content.encode("utf-8") if isinstance(content, str) else content
+        elif isinstance(handler_arg, dict) and "content" in handler_arg and not callable(actor_func):
+            c = handler_arg.get("content")
+            existing = c.encode("utf-8") if isinstance(c, str) else (c or b"")
+        new_bytes = existing
+        actor_out: Dict[str, Any] = {}
+        if callable(actor_func):
+            seed = existing
+            if action == "create" and not seed and isinstance(handler_arg, dict):
+                c = handler_arg.get("content")
+                if isinstance(c, str):
+                    seed = c.encode("utf-8")
+                elif c is not None:
+                    seed = bytes(c)
+            err, new_bytes, actor_out = _run_actor_on_bytes(
+                workspace=ws, session_id=sid, rel_path=path, action=action,
+                data=seed or b"", actor_func=actor_func, handler_arg=handler_arg, staging=staging_mode,
+            )
+            if err:
+                return err
+            if new_bytes is None:
+                return make_result(status_failed, "actor produced no content", action, path=path)
+        elif isinstance(handler_arg, dict) and "content" in handler_arg:
+            c = handler_arg.get("content")
+            new_bytes = c.encode("utf-8") if isinstance(c, str) else (c or b"")
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(new_bytes if new_bytes is not None else b"")
+        except Exception as e:
+            return make_result(status_failed, str(e), action, path=path)
+        d = make_result(status_success, operation_success_text(), action, path=path, source_path=path, target_path=path)
+        if actor_out.get("data") is not None:
+            d["data"] = actor_out["data"]
+        return d
+
+    return make_result(status_failed, f"unsupported action (plain fs): {action}", action)
+
+
 def _pipeline_impl(
     actor_func=None,
     filename=None,
@@ -399,6 +636,24 @@ def _pipeline_impl(
 
     workspace = Path(repo_path).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
+
+    if not _effective_use_git(use_git):
+        return _pipeline_plain_disk(
+            actor_func=actor_func,
+            filename=filename,
+            for_actor=for_actor,
+            action=action,
+            handler_arg=handler_arg,
+            workspace=workspace,
+            session_id=session_id,
+            staging=staging,
+            content=content,
+            force=force,
+            query=query,
+            include_disk=include_disk,
+            mode=mode,
+        )
+
     core = get_project(workspace)
     sid = _session_id(str(workspace), session_id)
     core.session(sid)

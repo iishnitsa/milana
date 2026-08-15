@@ -9,7 +9,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from cross_gpt import chat_path, status_failed
+
+from cross_gpt import chat_path, filesystem_project_path, status_failed
+from filesystem.tool_arg import one_line_arg as _one_line_arg
+
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -18,16 +21,18 @@ def main(text):
         main.err_args = 'Provide a relative file path to run.'
         main.err_file = 'File not found: '
         return
-    raw = (text or '').strip()
+    raw = _one_line_arg(text)
     if not raw:
         return main.err_args
     parts = raw.split()
     rel = parts[0]
     args = parts[1:]
-    root = Path(chat_path or '.').resolve()
+    root = Path(filesystem_project_path or (Path(chat_path or '.') / 'files')).resolve()
+    if not filesystem_project_path and chat_path:
+        root = (Path(chat_path).resolve() / 'files')
     path = Path(rel)
     if not path.is_absolute():
-        path = (root / 'files' / rel).resolve()
+        path = (root / rel).resolve()
     if not path.exists() or not path.is_file():
         return main.err_file + str(path)
     cmd = [sys.executable, str(path)] + args if path.suffix == '.py' else [str(path)] + args
