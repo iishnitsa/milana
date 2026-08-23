@@ -145,6 +145,14 @@ default_handlers_names = { # это из настроек должно выгр�
     'xlsx': 'process_excel',
     'xls': 'process_excel',}
 # Список важных функций и модулей
+# Importing any of these from a default_tool makes tools_selector treat the tool as
+# "system": main() result is NOT cached; body re-runs on resume (nested @cacher still applies).
+#
+# TODO(system-classify): revisit this list. UI helpers like send_output_message /
+# send_log_to_ui / get_input_message are already @cacher themselves — listing them
+# here forces modules such as create_report into "system" replay just because they
+# notify the UI. Candidates to drop from important_functions (keep real state/LLM
+# APIs): send_output_message, send_log_to_ui, maybe get_input_message.
 important_functions = [
     'cacher',
     'read_cache',
@@ -1804,7 +1812,17 @@ def _connect_model_backend(base_dir, model_type, connect_params, token_limit_val
                 err = connection_result[3]
             elif len(connection_result) > 1:
                 err = connection_result[1]
-        raise RuntimeError(f"connect failed ({model_type}): {err}")
+        msg = f"connect failed ({model_type}): {err}"
+        # Always surface to chat UI (not cacheable — connect must re-run after fix)
+        try:
+            send_ui_no_cache(msg)
+        except Exception:
+            pass
+        try:
+            send_log_to_ui(msg)
+        except Exception:
+            pass
+        raise RuntimeError(msg)
     tags = connection_result[2] if len(connection_result) > 2 else {}
     try:
         tl = int(token_limit_val)
@@ -4787,6 +4805,10 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
                     let_log(f"[model] small connected: {small_backend['model_type']} token_limit={small_backend['token_limit']}")
                 except Exception as se:
                     let_log(f"[model] small connect failed, continue large-only: {se}")
+                    try:
+                        send_ui_no_cache(f"[model] small connect failed, continue large-only: {se}")
+                    except Exception:
+                        pass
                     use_small_model = False
                     traceback.print_exc()
         # re-activate large as default after small connect (small connect may touch globals)
@@ -4806,13 +4828,26 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
                 )
                 let_log(err)
                 try:
+                    send_ui_no_cache(err)
+                except Exception:
+                    pass
+                try:
                     send_log_to_ui(err)
                 except Exception:
                     pass
                 traceback.print_exc()
                 return
     except Exception as e:
-        let_log(f"Ошибка инициализации модели: {str(e)}")
+        err = f"Ошибка инициализации модели: {str(e)}"
+        let_log(err)
+        try:
+            send_ui_no_cache(err)
+        except Exception:
+            pass
+        try:
+            send_log_to_ui(err)
+        except Exception:
+            pass
         traceback.print_exc()
         return
     # === Загрузка языка, модели и инструментов ===

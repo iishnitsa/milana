@@ -180,7 +180,33 @@ The task:
 """
         return
     let_log('начинается диалог')
-    if global_state.hierarchy_limit != 0 and global_state.hierarchy_limit == get_level(): return main.conversations_limit_reached_text
+    # D17: get_level() is already 1 at root (now_try '/' or '/:0'), and worker ALWAYS
+    # calls start_dialog first with conversations==0. Blocking on level==limit alone
+    # kills the very first dialog when hierarchy_limit=1.
+    # Only block nested start_dialog (delegation): conversations>0 (or agents already exist).
+    _has_dialogs = (
+        global_state.conversations > 0
+        or bool(getattr(global_state, 'tools_commands_dict', None))
+    )
+    if (
+        global_state.hierarchy_limit != 0
+        and _has_dialogs
+        and global_state.hierarchy_limit == get_level()
+    ):
+        msg = main.conversations_limit_reached_text
+        # Stop worker from calling agent_func on empty nested chat
+        global_state.dialog_state = False
+        global_state.dialog_result = msg
+        let_log(
+            f"[start_dialog] hierarchy_limit={global_state.hierarchy_limit} == get_level() "
+            f"(conversations={global_state.conversations}) → dialog_state=False, no deeper dialog"
+        )
+        try:
+            from cross_gpt import send_output_message
+            send_output_message(text=msg)
+        except Exception as e:
+            let_log(f"[start_dialog] send limit message failed: {e}")
+        return msg
     global_state.dialog_ended = False
     if global_state.critic_wants_retry: global_state.critic_wants_retry = False
     else:

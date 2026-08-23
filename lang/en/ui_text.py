@@ -260,7 +260,7 @@ TEXTS = {
     # ===== CHAT SETTINGS DESCRIPTIONS (*_desc) =====
     "use_rag_desc": "Enables advanced dialogue memory via RAG (Retrieval-Augmented Generation). Lets the model recall earlier messages for more contextual answers.",
     "filter_generations_desc": "Automatically cleans generated messages of extra noise, leaving the main answer. Improves dialogue readability.",
-    "hierarchy_limit_desc": "Maximum nesting depth of the agent hierarchy. Affects how deep a task is processed and how many iterations run. NOTE: the limit does not work correctly yet (e.g. value 1) — leave 0 for now; fix planned for a later release.",
+    "hierarchy_limit_desc": "Max agent hierarchy depth. 0 = unlimited. 1 = one root dialog (no deeper delegation). The worker's first start_dialog always runs; blocking applies only when trying to go deeper than the limit.",
     "use_librarian_desc": "Activates the Librarian module, which helps structure and store important dialogue information for later use.",
     "recreate_agents_desc": "When the task changes, recreate agents instead of reusing existing ones. Keeps each new task execution clean.",
     "skip_nested_images_desc": "Skip processing images nested in other files (e.g. PDF or DOCX). Speeds up work with many attachments.",

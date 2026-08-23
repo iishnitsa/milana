@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cross_gpt import chat_path, global_state, confirm_shell_command
+from cross_gpt import chat_path, global_state, confirm_shell_command, cacher
 
 # --- module-level helpers (not redefined on every main call) ---
 
@@ -77,11 +77,13 @@ def shell_argv(command: str):
     return ["/bin/bash", "-c", command], True
 
 
+@cacher
 def execute_command(command: str, work_dir: Path, timeout_text: str, exception_text: str) -> str:
+    """Run shell once; cached so resume after confirm does not re-execute."""
     argv, _posix = shell_argv(command)
     try:
         result = subprocess.run(
-            argv, cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            argv, cwd=str(work_dir), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=60, encoding='utf-8', errors='replace')
         return result.stdout or ''
     except subprocess.TimeoutExpired:

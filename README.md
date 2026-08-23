@@ -1,7 +1,7 @@
 <p align="center"><img src="data/icons/icon.png" alt="Milana Logo" width="120"></p>
 <h1 align="center"><span style="color: #5200ff;">Milana</span></h1>
 <p align="center"><strong>Autonomous · Independent · Free · For Mere Mortals</strong></p>
-<p align="center"><img src="https://img.shields.io/badge/Discord-iishnitsa_milana-5865F2?logo=discord&logoColor=white" alt="Discord"></p>
+<p align="center">Discord: iishnitsa_milana</p>
 
 [Features (+video demo)](#features-and-use-cases) | [How It Works](#how-it-works) | [History](#history-and-project-details) | [Installation](#installation-for-users-or-in-venv-for-windowsmacoslinux-or-exe-build) | [How to Use](#how-to-use) | [Module Development](#how-to-develop-modules) | [Provider Development](#how-to-develop-model-providers) | [Third-Party Modules and Providers](#third-party-modules)
 
@@ -17,10 +17,10 @@ Requires only a connection to a model, which can also run locally. Agent memory 
 No request limits, file upload limits, paid subscription tiers, or regional restrictions.
 
 ## For Mere Mortals
-Just run the .exe installer; no console required.
+Just run the Windows installer or the Linux `.run` installer; no console required.
 
 ## Optimized for Weak Models
-Initially, I was limited by an old laptop, and then I grew to like it. I have to write detailed prompts and create special user-friendly conditions. It spends an incredibly small number of tokens on medium-complexity tasks. More to come.
+Initially, I was limited by an old laptop, and then I grew to like it. I write detailed prompts, add hints when the model makes protocol mistakes, and allow some leniency for weak models (typos in commands, softer recovery). It spends an incredibly small number of tokens on medium-complexity tasks. More to come.
 
 ## Universal
 Supports any sufficiently smart instruct model. The model doesn't necessarily need agentic or tool-calling capabilities, nor does it need to strictly follow specific standards.
@@ -29,19 +29,16 @@ Supports any sufficiently smart instruct model. The model doesn't necessarily ne
 The prototype is far from an attractive state, but I will constantly improve it, putting my soul and vision into it.
 
 ## Features and Use Cases
-Module support allows the system to do anything, even turning on a kettle. At the moment, I've written a few modules; the truly useful ones are web search, deep research, and report generation. I haven't finished the command-line work yet.
-You can write your own module using the documentation below. It's not difficult.
-In the future, I will add compatibility with popular standards such as MCP.
+Module support allows the system to do anything, even turning on a kettle. Useful built-ins include web search (multi-line queries), deep research, report generation, cross-platform `shell_cmd`, and file tools on the new `filesystem` API. Optional MCP URL loads remote tools. You can write your own module using the documentation below.
 
 The request I used to debug the system was related to progress in Alzheimer's treatment, as this ambiguous topic requires meticulous study. Literally, it was:
-`
+
+```
 perform a meta-study on the entire study of alzheimer's and drugs for this disease, draw conclusions about what alzheimer's is according to the most likely theory (this can be found out by comparing many works), about scandals, about misconceptions, etc., in order to get the most reliable information about what alzheimer's is and how to treat it
 periodically make reports on the information found and the conclusions drawn
-`
-Unfortunately, `ministral-3` responses are quite unstable, cloud `qwen3.5:2b` was unavailable, and there was no time for GPU-based work; the demo was recorded on `qwen3.5:cloud`, which isn't very cheap. In the future, I will disable thinking for the model in some places and record a demo on a weaker `Qwen3.5`.
-With these settings, I obtained the following result, consisting of several reports and a final answer, though a demo with link-only access is better:
-[Milana 04 2026 demo YouTube](https://www.youtube.com/watch?v=USj5WB6UfME)
-Currently, interaction with the PC is limited. The command-line module doesn't inspire confidence, and direct advanced file handling hasn't been implemented. But! Both command line and file handling are in the plans. I won't say exactly what I'm going to do, but it will be a very clever and fault-tolerant system, also adapted for weak models.
+```
+
+**Demo (08 2026):** will be recorded on Ollama `gemma3:4b` (easy default). That model is **not very stable** for this workload — for real use we recommend **`gemma4:e2b`** or **`gemma4:e4b`** (pull them in Ollama yourself). Older demo (04 2026, cloud Qwen): [YouTube](https://www.youtube.com/watch?v=USj5WB6UfME).
 
 ## How It Works
 ```mermaid
@@ -66,6 +63,8 @@ flowchart TD
 ```
 The system begins by receiving a client task, which enters the GIGO block where three roles—Dreamer, Realist, and Critic—trigger sequentially to form a structured action plan. Based on this plan, a Milana agent-operator is created to select the necessary tools, followed by the creation of an Ivan executor with its own toolset, and a dialogue begins between them to execute the task. If during the dialogue the executor realizes it cannot handle the task, it can delegate it to a new level, returning the process to the GIGO block to create a nested dialogue. When the dialogue is finished and a result is obtained, it is passed to the Critic, who evaluates its quality (up to two attempts are given by default). Depending on the evaluation: on full success, the result is returned to the client; if unsure, human verification is required; if the result is unsatisfactory but attempts remain, a refined task is formed and the process returns to executor creation; if both attempts fail, the task with the critic's comments is returned to the level above (to the superior agent or the original client).
 
+File tools go through the local `filesystem` API (per-dialog session, optional git/worlds, import-on-read) so agents can touch the project safely without a separate “manual FS” step — details in the filesystem spoiler under History.
+
 <details>
 <summary>History and Project Details</summary>
 One day I was talking to ChatGPT, asking for help in developing a project. In response, I received an implementation plan. At first, I fed the tasks from the plan to ChatGPT one by one, and then I had the idea to make it talk to itself.
@@ -89,20 +88,59 @@ While I was preparing the release for December 2025, I realized that a hierarchi
 I see a significant problem with data exchange between hierarchy levels and between dialogues within the same hierarchy level. I tried to solve this by saving the entire dialogue in embeddings after its completion so that a librarian could later extract information from it. I also need to figure out automatic safe creation, reading, editing, and deletion of files during operation, as well as automatic aggregation of file access. I will experiment with combining structures.
 
 **upd2 05 2026**
-The 05 2026 release is mostly bug fixes, minor refinements, and a redesign. I also worked hard to fix the data exchange problem. Now agents can get information about other dialogues, both existing and deleted. For the next release, I will focus on file handling and plan to make the hierarchy structure a bit more advanced, while also leaving room for non-hierarchical structures.
+The 05 2026 release is mostly bug fixes, minor refinements, and a redesign. I also worked hard to fix the data exchange problem. Now agents can get information about other dialogues, both existing and deleted.
 
-I removed "10,000 monkeys" and the best-solution selection. It was highly underdeveloped, very costly, and slow, which doesn't align with the philosophy of a cheap system on fast small models. I will decide to add it in the distant future.
+I removed "10,000 monkeys" and the best-solution selection. It was highly underdeveloped, very costly, and slow, which doesn't align with the philosophy of a cheap system on fast small models.
 
-My own command protocol and response system turned out to be even better than standard ones. True, I had to tinker with writing instructions for the model on correct command usage. Now the system doesn't depend on whether the model natively supports function calling. It doesn't depend on which calling standard the model was trained on. Standardization is a common problem among agents; sometimes the model tries to call a tool but triggers a parsing error due to a mismatch. Sometimes the agent simply refuses to work with the model. I still left the native call option but haven't tested it. In the future, I will work on debugging native calls and automatic standard detection, but for now, I recommend not enabling this option.
+My own command protocol and response system turned out to be even better than standard ones. True, I had to tinker with writing instructions for the model on correct command usage. Now the system doesn't depend on whether the model natively supports function calling. I still left the native call option but haven't tested it thoroughly — for now, I recommend not enabling it.
 
-The project is very raw, but I decided to release it to avoid getting bogged down in endless refinement. I'll be happy to hear your ideas, bug reports, and suggestions. I have many interesting ideas for the future! Versions will be marked with the publication date.
+**upd3 08 2026**
+- New `filesystem/` API for tools (worlds / dual-write / optional git); see spoiler below.
+- Cross-platform `shell_cmd` (old per-OS cmd modules removed).
+- Optional image OCR models in the installer; on Linux OCR defaults need **AVX2** (otherwise the switch stays off).
+- Optional small/large dual-model setup; agent personalities; translation; MCP URL for remote tools.
+- Soft protocol hints / leniency when weak models misuse commands; hierarchy level limit (0 = unlimited).
+- Linux self-extracting `.run` installer; Windows Inno Setup bump; UI preload and theme/scale polish.
+- Default Ollama chat model hint: `gemma3:4b` (demo); prefer `gemma4:e2b` / `gemma4:e4b` for stability.
+
+The project is still raw. I'll be happy to hear your ideas, bug reports, and suggestions. Versions are marked with the publication date.
+</details>
+
+<details>
+<summary>filesystem/ (product modules)</summary>
+
+Editable after freeze (loaded from `base_dir` like `default_tools`). Namespace package: import **submodules**, not package root. No `__init__.py`.
+
+| Module | Role |
+|--------|------|
+| `core.py` | worlds, dual-write, import-on-read, last_seen |
+| `api.py` | `pipeline`, navigator helpers, lazy init, optional `@cacher` |
+| `tool_arg.py` | `one_line_arg` / `clean_tool_arg` |
+
+```python
+from filesystem.api import pipeline, change_dir, …
+from filesystem.tool_arg import one_line_arg
+```
+
+`cross_gpt.initialize_work` puts `base_dir` on `sys.path`. **Do not** add `--hidden-import filesystem*` to the freeze: only `launcher.py` is in the exe; `filesystem/` stays editable next to the binary.
+
+Behaviour:
+- **Main-first** — no auto fork on hierarchy
+- **Import-on-read** — pull missing path from other world / disk
+- **No auto-merge** on end_dialog
+- **Session default** — when tools omit `session_id`, pipeline uses `global_state.now_try`
+- **Optional** `fs_copy_touched_on_end` → `chat/dialog_artifacts/…` (default off)
+- **Optional** `fs_use_git` (default on). Off → plain disk CRUD without git/worlds
+- **Lazy init** on first API call
+- **create_report** does not use this package
 </details>
 
 <details>
 <summary>Installation for Users or in Venv for Windows/macOS/Linux or .exe Build</summary>
 **Installation for Users**
 
-Just run `MilanaSetup.exe`. For Linux, unpack the Linux version, grant execution permission to the `Milana` file, and run it.
+- **Windows:** run `MilanaSetup.exe` (optional task: image recognition models ~1 GB).
+- **Linux:** run the self-extracting `.run` installer (optional models question). Menu/desktop shortcuts are offered. **OCR / image recognition on Linux needs AVX2**; without AVX2 the “recognize images” switch stays disabled even if models are installed.
 
 <details>
 <summary>Installation Windows/macOS/Linux Venv, `.exe` or `ELF` Build</summary>
@@ -124,40 +162,39 @@ Before installation, you need:
 - python tk packages, e.g., `sudo pacman -S tk` (if you forgot to install them, clear the pyenv cache `pyenv uninstall 3.13.7`, install the packages, and try again), otherwise the interface won't work
 
 Run `linux_macos.sh` in the `install` folder.
-To compile a binary `ELF`, use the `build_linux.sh` script.
+To compile a binary `ELF`, use `buildlinux.sh`, then pack with `make_linux_installer.sh` for a `.run`.
 </details>
 </details>
 </details>
 
 <details>
 <summary>How to Use</summary>
-1. Run Milana and configure the model. Models like `qwen3.5` are recommended.
-2. Select a model provider (Ollama, GPT4All, or OpenAI). For Ollama, download the models (e.g., `qwen3.5:2b` and `all-minilm:latest`). Click `Validate model` and save the settings.
+1. Run Milana and configure the model. Prefer **`gemma4:e2b` / `gemma4:e4b`** (Ollama). Default field may show `gemma3:4b` (fine for a quick try / demo, less stable).
+2. Select a model provider (Ollama, llama.cpp, OpenAI-compatible, Grok/xAI, …). For Ollama also pull `all-minilm:latest` (embeddings). Click `Validate model` and save.
+3. Optionally enable a **small model** for cheaper non-agent steps; set **agent personalities** / translation / **MCP URL** if needed.
 4. Enable the necessary modules in the settings.
-6. Create a chat, enter a task, and send the message.
+5. Create a chat, enter a task, and send the message.
 
-Chat Settings
-- Hierarchy level limit: default 0, unlimited.
-- Maximum critic reactions: default 2, 0 to disable. This is the final result evaluation option triggered at the end of any dialogue between agents at any hierarchy level. Its request for refinement recreates the dialogue with a new, refined task.
-- Use advanced dialogue memory: enabled by default. Dialogue memory will use retrieval of relevant old messages using a vector database when the entire dialogue doesn't fit in the context. Similar to RAG. The mode where advanced memory is disabled is not programmed very well; disabling it is not recommended.
-- Clear generations: disabled by default. Intended to help very small (1b or old 7b) models when the model violates the command call protocol or when generation breakdown occurs (the model starts generating a repeating phrase of several words many times or until the context runs out). It doesn't work very well yet and is usually not needed.
-- Record log: enabled by default. Records almost every step in the code; quickly reaches 100 MB in a few hours. Disable it if you won't be analyzing or sharing the incorrect behavior of this prototype with me.
-- Record results: disabled by default. If the prototype refuses to create reports despite the connected module, or if you just want to see the program's operation, enable it. The result of each completed dialogue between agents will be recorded.
-- Use Librarian: disabled by default. A module that may sometimes work incorrectly. It searches through all internal data (from user files, past dialogues, and internet searches), as well as the internet if available. Usually, disabling it is not required.
-- Recreate agents with a new task: disabled by default. When you receive a response in the chat, the last agent dialogue is already finished. Your response to the message will start a new dialogue with the initial task, the result, and your response. If you enable this parameter, the dialogue will not end and be recreated; your response will go to the operator in response to the dialogue completion request.
-- Skip nested images: disabled by default. If an image is nested in an archive, docx, or pdf (including pdfs found by the system on the internet), it doesn't process it. Helps filter out junk images. But it might skip important information if, for example, text in a pdf is stored as a scanned image.
+Chat Settings (selection)
+- Hierarchy level limit: default 0 = unlimited. `1` = one root dialog (no deeper delegation).
+- Maximum critic reactions: default 2, 0 to disable.
+- Use advanced dialogue memory (RAG): enabled by default; disabling is not recommended.
+- Deliver user messages mid-dialog / client inject: optional.
+- Recognize images (OCR): needs bundled models; on Linux also **AVX2**.
+- MCP URL: optional remote tools list.
+- Record log / results, Librarian, recreate agents, skip nested images — as before.
 
 **Note:**
-- For stable operation, use a model more powerful than the one whose result you didn't like. The system is not perfect, but `qwen3.5` with 7 or 2 billion parameters is usually enough.
-- Only `Ollama` and `GPT4All` providers are well-tested.
-- If you encounter errors, send to Discord `iishnitsa_milana`: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other relevant files from the chat folder where the problem occurred, with a detailed description.
+- For stable operation, use a stronger model than the one that failed you. Demo default `gemma3:4b` is weak; **`gemma4:e2b` / `gemma4:e4b` recommended**.
+- Best-tested provider path today: **Ollama** (also llama.cpp / scripted / cloud OpenAI-style).
+- If you encounter errors, send to Discord **iishnitsa_milana**: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other relevant files from the chat folder, with a detailed description.
 </details>
 
 <details>
 <summary>How to Develop Modules</summary>
 A module consists of:
-- A main file (e.g., `linux_cmd.py`).
-- An optional localization file with the same name ending in `_lang` in the same folder (e.g., `linux_cmd_lang.py`).
+- A main file (e.g., `shell_cmd.py`).
+- An optional localization file with the same name ending in `_lang` in the same folder (e.g., `shell_cmd_lang.py`).
 
 **Module Structure:**
 ```python
@@ -221,64 +258,37 @@ Progress saving is done through caching:
 - Inside operations that change the system state, if they don't directly relate to changing the system state (e.g., `ask_model` inside `start_dialog`).
 
 Caching is forbidden for operations:
-- Changing the system state (e.g., `start_dialog`, so that during replay the system is brought to the state it was in at the time of shutdown).
-- Located outside functions that change the system state, at any nesting level.
-- Located inside or outside functions that use caching, at any nesting level; currently, the caching system does not support nesting.
+- Changing the system state (e.g. outer `@cacher` on `start_dialog` / `end_dialog` / hierarchy helpers) — those must re-run so RAM/DB reach the pre-crash state. Mark such helpers with `@no_cache` if needed.
+- Anything that would change the **number** of cached slots between the original run and resume (unstable branching).
 
-The system caches many different types of data, except classes and functions. Exceptions will be saved to the cache and re-thrown.
-The `pickle` library is used for serialization.
+**Nesting is supported:** outer `@cacher` may call inner `@cacher` (marker stack / `\x02` descent). Do **not** call `@no_cache` functions from inside an active `@cacher` body.
+
+The system caches many types of data (not classes/functions). Exceptions are stored and re-thrown on replay. Serialization uses `pickle`.
 
 The caching system consists of:
-- `read_cache`: reads the cache from the database by `id` from the `cache_counter` variable, returns `[True, deserialized_value]` where `deserialized_value` is the required value, then increments the counter by 1; otherwise returns `[False]` and does not increment the counter if the record is not found, meaning the cache has ended.
-- `write_cache`: writes the value and increments the counter.
-- `cacher`: uses `read_cache` and `write_cache` automatically; used via the `@cacher` decorator.
+- `read_cache` / `write_cache` — sequential slots in `cache.db` (`cache_counter`).
+- `cacher` — `@cacher` decorator around those.
+- On resume, `left_cache_counter` is set from `COUNT(*)` so the worker replays until the miss point.
 
-In most cases, you will only need `cacher`.
+In most cases you only need `@cacher`. Manual `read_cache`/`write_cache` only when necessary (e.g. `tools_selector`); any sequence break breaks resume.
 
-Use manual control with `read_cache` and `write_cache` only in case of extreme necessity and with great caution! Any violation of the sequence will lead to an immediate exception or the inability to continue work after shutdown.
+If your tool does **not** import “important” APIs from `cross_gpt` (`ask_model`, `sql_exec`, …), `tools_selector` caches the whole `main()` result automatically.
 
-Correct sequence:
-- read/read when the cache is not exhausted.
-- read/write when the cache is exhausted.
+If you **do** import those APIs, the tool is treated as “system”: `main()` re-runs on resume; put `@cacher` on expensive / non-idempotent pieces inside (LLM, HTTP, shell execute, file write).
 
-Always read first, then, if `[False]` is received, write.
-**Example: read/read/read/read/write/read/write**
-
-If you don't use system functions that use the decorator, don't use caching. In this case, the system will automatically cache the result of your tool's execution and, upon restart, use the cached result without running the tool.
-
-If you use system functions that have a decorator but you need caching to avoid repeated computations or to avoid getting different data upon program restart, cache some actions separately, as in the example below.
-
-Allowed:
 ```python
 from cross_gpt import cacher, ask_model
 
 @cacher
-def get_weather(): return '+10, windy'
-
-ask_model(get_weather())
-```
-Not allowed:
-```python
-from cross_gpt import cacher, ask_model
-
-@cacher
-def get_weather(): return ask_model('+10, windy')
-
-get_weather()
+def get_weather():
+    return ask_model('…')  # OK: nested slots; keep a stable call count
 ```
 
-If you don't need caching of the module's result or data inside it in any case, and the module must run upon system restart, write, for example, `from cross_gpt import *` or `from cross_gpt import ask_model`; the system will take this into account.
+List of common decorated helpers:
+- `ask_model`, `get_embs`, `text_cutter`, `sql_exec`, `coll_exec`
+- `get_input_message`, `send_output_message` (UI chat queue; cached)
+- `let_log` / `send_log_to_ui` — **not** `@cacher` (debug only; `send_ui_no_cache` for errors that must always show)
 
-List of available and safe-to-use functions that have a decorator:
-- `ask_model`: query the LLM.
-- `get_embs`: generate embeddings.
-- `text_cutter`: summarize and reduce text size.
-- `get_input_message`: get a message from the user sent **after** calling this function.
-- `send_output_message`: send a message to the chat with the user.
-- `send_log_to_ui`: send a message to the log window.
-
-Logging functions `let_log('text')` and `send_log_to_ui` are not decorated and do not affect the operation of saves; use them for debugging.
-Descriptions of how to use all listed functions will be in the section below.
 Everything else is at your own risk.
 </details>
 <details>
@@ -378,7 +388,7 @@ result = coll_exec(
 `result` will be a dictionary with keys 'documents', 'metadatas', 'distances'.
 
 #### 3. Built-in Search Modules
-The `librarian` and `simple_web_search` modules, although they don't have a decorator, use cached core functions internally. **Their calls also cannot be wrapped in the `@cacher` decorator at any nesting level** within your scripts, otherwise caching will break.
+The `librarian` and `simple_web_search` modules use cached core functions internally. Prefer not wrapping whole system-tool `main` bodies in another outer `@cacher`; nest `@cacher` only around stable expensive helpers.
 
 * `librarian`
     Intelligent database search. Searches first in system memory (`milana_collection`), then in user data (`user_collection`). If the internet is enabled and nothing is found, it automatically triggers a web search if available (if you've connected `simple_web_search.py` or another module ending in `_web_search.py`). Returns formatted snippets with sources.

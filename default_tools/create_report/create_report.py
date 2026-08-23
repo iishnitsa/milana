@@ -8,7 +8,30 @@ Recommended if you want to record detailed results — for now, you'll find them
 import os
 import re
 from datetime import datetime
-from cross_gpt import chat_path, send_output_message
+from cross_gpt import chat_path, send_output_message, cacher
+
+# TODO(system-classify): importing send_output_message marks this module "system"
+# via important_functions → tools_selector does NOT cache main()'s return value,
+# so resume re-runs main. File write must have its own @cacher (below).
+# Revisit: drop send_output_message (and maybe others) from important_functions
+# so non-state UI sends don't force system-tool replay.
+
+
+@cacher
+def _write_report_file(body: str, reports_dir: str, safe_prefix: str):
+    """Persist report + .for_user sidecar. Cached so resume does not create a new file."""
+    filename = f"{safe_prefix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+    path = os.path.join(reports_dir, filename)
+    os.makedirs(reports_dir, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(body)
+    try:
+        with open(path + '.for_user', 'w', encoding='utf-8') as mf:
+            mf.write('for_user=1\n')
+    except Exception:
+        pass
+    return path, filename
+
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -39,20 +62,9 @@ def main(text):
         # limit length to 30 characters
         safe_prefix = safe_prefix[:30]
 
-    filename = f"{safe_prefix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
-    path = os.path.join(chat_path, "reports", filename)
-
+    reports_dir = os.path.join(chat_path, "reports")
     try:
-        # Ensure reports directory exists
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(body)
-        # Маркер «для пользователя» — sidecar .for_user рядом с файлом
-        try:
-            with open(path + '.for_user', 'w', encoding='utf-8') as mf:
-                mf.write('for_user=1\n')
-        except Exception:
-            pass
+        path, filename = _write_report_file(body, reports_dir, safe_prefix)
         # Cached UI send — resume must not re-push the same report bubble
         send_output_message(text=main.report_created_text + filename, attachments=[path])
     except Exception as e:

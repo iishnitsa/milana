@@ -3198,7 +3198,8 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             btn_text = "╰ " + Lang.get("chats_dir", default="chats_dir")
             title_btn = CTkButton(
                 frame, text=btn_text, anchor="w", fg_color="transparent",
-                hover_color=PURPLE_ACCENT, corner_radius=CORNER_RADIUS, font=FONT_REGULAR, height=27)
+                hover_color=PURPLE_ACCENT, corner_radius=CORNER_RADIUS, font=FONT_REGULAR,
+                height=27, text_color=WHITE)
             title_btn.grid(row=0, column=0, sticky="ew", padx=(0, 10))
             path_row = create_styled_frame(frame)
             path_row.grid(row=0, column=1, sticky="ew")
