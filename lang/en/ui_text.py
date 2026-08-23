@@ -26,7 +26,7 @@ TEXTS = {
 
     # Chat Context Menu
     "active_chat_delete_title": "Active Chat",
-    "active_chat_delete_message": "Chat '{chat_name}' is active. Delete?",
+    "active_chat_delete_message": "Chat '{chat_name}' is running. Stop it and delete?",
     "delete_chat_confirm_title": "Delete Chat",
     "delete_chat_confirm_message": "Are you sure you want to delete chat '{chat_name}'?",
 
@@ -260,7 +260,7 @@ TEXTS = {
     # ===== CHAT SETTINGS DESCRIPTIONS (*_desc) =====
     "use_rag_desc": "Enables advanced dialogue memory via RAG (Retrieval-Augmented Generation). Lets the model recall earlier messages for more contextual answers.",
     "filter_generations_desc": "Automatically cleans generated messages of extra noise, leaving the main answer. Improves dialogue readability.",
-    "hierarchy_limit_desc": "Maximum nesting depth of the agent hierarchy. Affects how deep a task is processed and how many iterations run.",
+    "hierarchy_limit_desc": "Maximum nesting depth of the agent hierarchy. Affects how deep a task is processed and how many iterations run. NOTE: the limit does not work correctly yet (e.g. value 1) — leave 0 for now; fix planned for a later release.",
     "use_librarian_desc": "Activates the Librarian module, which helps structure and store important dialogue information for later use.",
     "recreate_agents_desc": "When the task changes, recreate agents instead of reusing existing ones. Keeps each new task execution clean.",
     "skip_nested_images_desc": "Skip processing images nested in other files (e.g. PDF or DOCX). Speeds up work with many attachments.",

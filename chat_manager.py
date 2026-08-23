@@ -132,8 +132,13 @@ def update_history(chat_id: int, message_text: str, role: str, vector_id='', loc
         # Сразу в Chroma — только по явному force (обратная совместимость / критичные пути)
         if force_vectorize:
             did_vectorize = vectorize_message(vector_id, message_text, role, local_message, chat_id)
-    else:
-        pass
+    elif not local_message:
+        # RAG-off shared peer: still need vector_id so the stub row can resolve
+        # full_text/role (otherwise history becomes "NoneNone" → FATAL only-system).
+        # Does not touch Chroma / RAG-on path.
+        if not vector_id:
+            set_common_save_id()
+            vector_id = str(get_common_save_id())
 
     is_vec_flag = bool(did_vectorize)
 

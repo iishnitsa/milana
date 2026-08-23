@@ -12,6 +12,46 @@ def get_base_dir():
 
 def resource_path(relative_path): return os.path.join(get_base_dir(), relative_path)
 
+
+def find_resource(*parts):
+    """Resolve a resource trying several roots (frozen exe dir, ui.py dir, _MEIPASS, cwd)."""
+    rel = os.path.join(*parts) if parts else ""
+    candidates = []
+    try:
+        candidates.append(os.path.join(get_base_dir(), rel))
+    except Exception:
+        pass
+    try:
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), rel))
+    except Exception:
+        pass
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, rel))
+    try:
+        # PyInstaller onedir sometimes keeps assets next to _internal
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.join(exe_dir, rel))
+        candidates.append(os.path.join(exe_dir, "_internal", rel))
+        parent = os.path.dirname(exe_dir)
+        if parent:
+            candidates.append(os.path.join(parent, rel))
+    except Exception:
+        pass
+    try:
+        candidates.append(os.path.join(os.getcwd(), rel))
+    except Exception:
+        pass
+    seen = set()
+    for c in candidates:
+        n = os.path.normpath(c)
+        if n in seen:
+            continue
+        seen.add(n)
+        if os.path.isfile(n):
+            return n
+    return os.path.normpath(candidates[0]) if candidates else rel
+
 def bundled_image_models_available():
     """Local BLIP+EasyOCR under data/models (optional installer component)."""
     try:
@@ -51,73 +91,154 @@ def normalize_chats_dir(path_value):
 
 # ====== ЗАСТАВКА (использует только лёгкие модули) ======
 def show_splash(app_ready_event: multiprocessing.Event):
+    def _safe_destroy_splash(win, extra_quit=None):
+        """Destroy splash without TclError if widgets already gone / callbacks race."""
+        try:
+            if win is not None and win.winfo_exists():
+                win.destroy()
+        except tk.TclError:
+            pass
+        except Exception:
+            pass
+        if extra_quit is not None:
+            try:
+                extra_quit()
+            except Exception:
+                pass
+
+    def _load_splash_image(icon_path, bg_rgb, max_size, master):
+        """Load icon; flatten alpha onto bg_rgb so PhotoImage is reliable. master=Tk for ImageTk."""
+        img = Image.open(icon_path)
+        ratio = min(max_size / max(img.width, 1), max_size / max(img.height, 1))
+        if ratio < 1:
+            img = img.resize(
+                (max(1, int(img.width * ratio)), max(1, int(img.height * ratio))),
+                Image.LANCZOS,
+            )
+        if img.mode in ("RGBA", "LA") or ("transparency" in getattr(img, "info", {})):
+            rgba = img.convert("RGBA")
+            canvas = Image.new("RGB", rgba.size, bg_rgb)
+            canvas.paste(rgba, mask=rgba.split()[-1])
+            img = canvas
+        else:
+            img = img.convert("RGB")
+        # Prefer ImageTk bound to master; fallback via temp PNG + tk.PhotoImage
+        try:
+            return ImageTk.PhotoImage(img, master=master)
+        except Exception as e1:
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            try:
+                img.save(tmp_path, format="PNG")
+                return tk.PhotoImage(file=tmp_path, master=master)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    # Windows: keep classic resource_path (splash already worked there).
+    # Linux: try several roots — frozen/install layouts differ.
     if sys.platform.startswith("win32"):
         icon_path = resource_path(os.path.join("data", "icons", "icon.png"))
-        if not os.path.exists(icon_path): print(f"Иконка для сплэша не найдена: {icon_path}"); return
+    else:
+        icon_path = find_resource("data", "icons", "icon.png")
+    if not os.path.isfile(icon_path):
+        icon_path = None
+
+    if sys.platform.startswith("win32"):
         root = tk.Tk()
         root.withdraw()
         splash = tk.Toplevel(root)
         splash.overrideredirect(True)
-        splash.configure(bg='black')
+        # Win: black key + transparentcolor (unchanged working path). Flatten alpha onto black for PhotoImage.
+        bg_color = "black"
+        splash.configure(bg=bg_color)
         sw, sh = 800, 600
         try:
-            img = Image.open(icon_path)
-            sw = splash.winfo_screenwidth()
-            sh = splash.winfo_screenheight()
-            max_ratio = 0.3
-            max_size = int(min(sw, sh) * max_ratio)
-            ratio = min(max_size / img.width, max_size / img.height)
-            if ratio < 1: img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-            img_tk = ImageTk.PhotoImage(img)
-            w, h = img_tk.width(), img_tk.height()
-            label = tk.Label(splash, image=img_tk, bg='black')
-            label.image = img_tk
+            splash.update_idletasks()
+            sw = max(splash.winfo_screenwidth(), 320)
+            sh = max(splash.winfo_screenheight(), 240)
+            max_size = max(64, int(min(sw, sh) * 0.3))
+            if icon_path:
+                img_tk = _load_splash_image(icon_path, (0, 0, 0), max_size, splash)
+                w, h = img_tk.width(), img_tk.height()
+                label = tk.Label(splash, image=img_tk, bg=bg_color, borderwidth=0, highlightthickness=0)
+                label.image = img_tk
+            else:
+                raise FileNotFoundError("icon missing")
         except Exception as e:
-            print(f"Splash image load failed: {e}")
             w, h = 400, 300
-            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg='black', fg='white')
+            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg=bg_color, fg="white")
         x, y = (sw - w) // 2, (sh - h) // 2
         splash.geometry(f"{w}x{h}+{x}+{y}")
         label.pack()
-        splash.attributes('-topmost', True)
-        splash.attributes('-transparentcolor', 'black')
+        splash.attributes("-topmost", True)
+        try:
+            splash.attributes("-transparentcolor", "black")
+        except Exception:
+            pass
         def poll():
-            if app_ready_event.is_set(): splash.after(500, lambda: (splash.destroy(), root.quit()))
-            else: splash.after(50, poll)
+            try:
+                if not splash.winfo_exists():
+                    return
+                if app_ready_event.is_set():
+                    splash.after(500, lambda: _safe_destroy_splash(splash, root.quit))
+                else:
+                    splash.after(50, poll)
+            except tk.TclError:
+                try:
+                    root.quit()
+                except Exception:
+                    pass
         splash.after(50, poll)
         root.mainloop()
     else:
-        icon_path = resource_path(os.path.join("data", "icons", "icon.png"))
-        if not os.path.exists(icon_path): print(f"Иконка для сплэша не найдена: {icon_path}"); return
         splash = tk.Tk()
+        splash.withdraw()  # avoid green flash at (0,0) before center geometry
         splash.overrideredirect(True)
-        bg_color = '#1da244'
+        # Linux: no reliable transparentcolor; green panel + flattened icon
+        bg_color = "#1da244"
+        bg_rgb = (29, 162, 68)
         splash.configure(bg=bg_color)
         sw, sh = 800, 600
         try:
-            img = Image.open(icon_path)
-            sw = splash.winfo_screenwidth()
-            sh = splash.winfo_screenheight()
-            max_ratio = 0.3
-            max_size = int(min(sw, sh) * max_ratio)
-            ratio = min(max_size / img.width, max_size / img.height)
-            if ratio < 1: img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-            img_tk = ImageTk.PhotoImage(img)
-            w, h = img_tk.width(), img_tk.height()
-            label = tk.Label(splash, image=img_tk, bg=bg_color)
-            label.image = img_tk
+            splash.update_idletasks()
+            sw = max(splash.winfo_screenwidth(), 320)
+            sh = max(splash.winfo_screenheight(), 240)
+            max_size = max(64, int(min(sw, sh) * 0.3))
+            if icon_path:
+                img_tk = _load_splash_image(icon_path, bg_rgb, max_size, splash)
+                w, h = img_tk.width(), img_tk.height()
+                label = tk.Label(splash, image=img_tk, bg=bg_color, borderwidth=0, highlightthickness=0)
+                label.image = img_tk
+            else:
+                raise FileNotFoundError("icon missing")
         except Exception as e:
-            print(f"Splash image load failed: {e}")
             w, h = 400, 300
-            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg=bg_color, fg='white')
+            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg=bg_color, fg="white")
         splash.configure(bg=bg_color)
         x, y = (sw - w) // 2, (sh - h) // 2
         splash.geometry(f"{w}x{h}+{x}+{y}")
         label.pack()
-        splash.attributes('-topmost', True)
+        splash.attributes("-topmost", True)
+        try:
+            splash.deiconify()
+            splash.lift()
+        except Exception:
+            pass
         def poll():
-            if app_ready_event.is_set(): splash.after(500, splash.destroy)
-            else: splash.after(50, poll)
+            try:
+                if not splash.winfo_exists():
+                    return
+                if app_ready_event.is_set():
+                    splash.after(500, lambda: _safe_destroy_splash(splash))
+                else:
+                    splash.after(50, poll)
+            except tk.TclError:
+                pass
         splash.after(50, poll)
         splash.mainloop()
 
@@ -1331,10 +1452,19 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         def init_settings_db(self):
             Path("data").mkdir(exist_ok=True)
             db_path = self.db_path
+            is_new_db = not Path(db_path).exists()
             self.sql_exec(db_path, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, widget_type TEXT DEFAULT 'entry')")
             self.sql_exec(db_path, """CREATE TABLE IF NOT EXISTS default_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE, enabled INTEGER DEFAULT 0, lang TEXT DEFAULT 'en')""")
             self.sql_exec(db_path, """CREATE TABLE IF NOT EXISTS custom_mods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, adress TEXT UNIQUE, enabled INTEGER DEFAULT 1, lang TEXT DEFAULT 'en')""")
-            self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'en')")
+            # Count existing keys — do NOT silently upgrade old settings.db on every start
+            try:
+                _cnt_row = self.sql_exec(db_path, "SELECT COUNT(*) FROM settings", fetchone=True)
+                settings_rows = int(_cnt_row[0]) if _cnt_row and _cnt_row[0] is not None else 0
+            except Exception:
+                settings_rows = 0
+            seed_defaults = is_new_db or settings_rows <= 1
+            if seed_defaults:
+                self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'en')")
             providers = ProviderManager().get_providers()
             default_provider = list(providers.keys())[0] if providers else ""
             # allow_ocr: needs local models + (on Linux) AVX2
@@ -1401,7 +1531,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "small_agent_until_protocol": "0",
                 "text_cutter_token_limit": "2000",
                 "max_incoming_tokens": "10000",
-                "release_version": "2026-07",
+                "release_version": "2026-08",
                 "shell_skip_confirm": "0",
                 "mcp_url": "",
                 "max_executor_recreates": "0",
@@ -1413,8 +1543,6 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "fs_use_git": "1",
                 "small_protocol_drop_error": "0",
                 }
-            for key, value in defaults.items(): self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-            # Устанавливаем widget_type для известных ключей
             widget_type_map = {
                 "use_rag": "switch",
                 "filter_generations": "switch",
@@ -1478,10 +1606,53 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "fs_use_git": "switch",
                 "small_protocol_drop_error": "switch",
                 }
-            for key, wtype in widget_type_map.items(): self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
-        def _load_settings_metadata_from_db(self): # Возвращает список кортежей (key, widget_type) для всех записей settings.
+            # Seed ONLY new/empty DB — no silent upgrade of old settings.db every launch
+            if seed_defaults:
+                for key, value in defaults.items():
+                    self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+                for key, wtype in widget_type_map.items():
+                    self.sql_exec(db_path, "UPDATE settings SET widget_type = ? WHERE key = ?", (wtype, key))
+        def _load_settings_metadata_from_db(self): # Возвращает dict key -> widget_type; RAM overlay without writing settings.db.
             rows = self.sql_exec(self.db_path, "SELECT key, widget_type FROM settings", fetchall=True) or []
-            return {row[0]: row[1] for row in rows}
+            meta = {row[0]: (row[1] or "entry") for row in rows}
+            # Display hints for known keys even on old DBs (no silent UPDATE)
+            known = {
+                "use_rag": "switch", "filter_generations": "switch", "write_log": "switch",
+                "write_results": "switch", "fs_copy_touched_on_end": "switch",
+                "copy_user_attachments_to_files": "switch", "use_librarian": "switch",
+                "recreate_agents": "switch", "skip_nested_images": "switch",
+                "cut_wrong_command_history": "switch", "allow_ocr": "switch",
+                "do_translate": "switch", "local_and_tools_translate": "switch",
+                "use_local_cache": "switch", "use_global_cache": "switch",
+                "use_psm": "switch", "use_magical_prompt": "switch",
+                "use_gigo": "switch", "use_old_gigo": "switch",
+                "gigo_use_entropy": "switch", "gigo_use_filter": "switch",
+                "gigo_use_librarian": "switch", "show_message_datetime": "switch",
+                "librarian_use_models": "switch", "module_hints_for_operator": "switch",
+                "give_all_tools": "switch", "critic_reuse_dialog": "switch",
+                "one_shot_intention_permission": "switch", "target_lang": "entry",
+                "gigo_plan_items": "entry", "hierarchy_limit": "entry",
+                "max_critic_reactions": "entry", "max_messages_before_answer": "entry",
+                "max_executor_recreates": "entry", "number_of_plan_items": "entry",
+                "librarian_use_web": "switch", "save_emb_dialog": "switch",
+                "tools_no_examples": "switch", "allow_command_not_at_start": "switch",
+                "give_operator_goal_to_executor": "switch", "deliver_user_messages": "switch",
+                "use_small_model": "switch", "small_for_cutter_only": "switch",
+                "small_agent_until_protocol": "switch", "small_model_type": "entry",
+                "small_model_provider_params": "entry", "small_token_limit": "entry",
+                "small_max_token_limit": "entry", "text_cutter_token_limit": "entry",
+                "max_incoming_tokens": "entry", "shell_skip_confirm": "switch",
+                "mcp_url": "entry", "gigo_idea_count": "entry", "chats_dir": "entry",
+                "ui_light_theme": "switch", "ui_scale": "slider",
+                "gigo_role_dreamer": "switch", "gigo_role_realist": "switch",
+                "gigo_role_critic": "switch", "fs_use_git": "switch",
+                "small_protocol_drop_error": "switch",
+            }
+            for key, wtype in known.items():
+                if key in meta:
+                    meta[key] = wtype
+                # do not invent missing keys here — only overlay type for existing rows
+            return meta
         def get_settings_metadata(self): return self.cache.get_settings_metadata(self)
         def generate_id(self, length=12): return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
         def get_chats_root(self):
@@ -1624,7 +1795,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             try:
                 from cross_gpt import RELEASE_VERSION as _app_rel
             except Exception:
-                _app_rel = '2026-07'
+                _app_rel = '2026-08'
             all_settings['release_version'] = _app_rel
             for key, value in all_settings.items(): self.sql_exec(settings_db, "INSERT INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
             default_mods = ModuleManager().get_default_modules()
@@ -1978,7 +2149,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
         # mid-dialog client
         'deliver_user_messages': 'client',
         # UI
-        'show_message_datetime': 'ui',
+        'show_message_datetime': 'agents',
         'ui_light_theme': 'ui',
         'ui_scale': 'ui',
     }
@@ -2416,6 +2587,20 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             try:
                 if on:
                     self.small_details.pack(fill="x", padx=6, pady=4)
+                    # Ensure provider frames visible immediately (not only after re-select)
+                    try:
+                        if not self.settings_vars['small_model_type'].get() and self.settings_vars['model_type'].get():
+                            self.settings_vars['small_model_type'].set(self.settings_vars['model_type'].get())
+                    except Exception:
+                        pass
+                    try:
+                        self._load_small_provider_params()
+                    except Exception:
+                        pass
+                    try:
+                        self._toggle_small_model_frames()
+                    except Exception:
+                        pass
                 else:
                     self.small_details.pack_forget()
             except Exception:
@@ -2983,7 +3168,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             try:
                 from cross_gpt import RELEASE_VERSION as _app_rel
             except Exception:
-                _app_rel = "2026-07"
+                _app_rel = "2026-08"
             rel_frame = create_styled_frame(scrollable_frame)
             rel_frame.pack(fill="x", pady=4)
             create_styled_label(
@@ -3271,10 +3456,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.title(Lang.get("app_title"))
             except Exception:
                 pass
+            # Keep icon glyphs on send/settings; only relocalize textual controls
             for attr, key, default in (
                 ('log_btn', 'log', 'log'),
-                ('send_btn', 'send', 'Send'),
-                ('settings_btn', 'settings', 'Settings'),
             ):
                 try:
                     w = getattr(self, attr, None)
@@ -3282,6 +3466,16 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                         w.configure(text=Lang.get(key, default=default))
                 except Exception:
                     pass
+            try:
+                if hasattr(self, 'send_btn') and self.send_btn.winfo_exists():
+                    self.send_btn.configure(text="↑")
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'settings_btn') and self.settings_btn.winfo_exists():
+                    self.settings_btn.configure(text="☰")
+            except Exception:
+                pass
             try:
                 if hasattr(self, 'input_text') and self.input_text.winfo_exists():
                     # placeholder if supported
@@ -3297,6 +3491,21 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.update_chat_controls()
             except Exception:
                 pass
+            # Rebuild preloaded settings/create so tab labels pick up new language
+            try:
+                for attr in ('settings_window', 'create_chat_window'):
+                    w = getattr(self, attr, None)
+                    if w is not None:
+                        try:
+                            if w.winfo_exists():
+                                w.destroy()
+                        except Exception:
+                            pass
+                        setattr(self, attr, None)
+                if hasattr(self, 'preload_settings_and_create_chat') and self.backend.is_main_config_complete():
+                    self.preload_settings_and_create_chat()
+            except Exception as e:
+                print(f"refresh_ui_language preload rebuild: {e}")
         def setup_main_ui(self):
             for widget in self.winfo_children():
                 try:
@@ -3363,6 +3572,19 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.messages_bordered_frame, fg_color="transparent", border_width=0, corner_radius=0)
             self.messages_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
             self.messages_bordered_frame.bind("<Configure>", self._on_message_container_resize)
+            # After window resize, recompute message scrollbar thumb size/position
+            def _on_messages_canvas_configure(event=None):
+                try:
+                    if hasattr(self, '_sync_messages_scrollbar'):
+                        self.after(30, self._sync_messages_scrollbar)
+                except Exception:
+                    pass
+            try:
+                canvas = getattr(self.messages_frame, '_parent_canvas', None)
+                if canvas is not None:
+                    canvas.bind('<Configure>', _on_messages_canvas_configure, add='+')
+            except Exception:
+                pass
             self.input_outer_frame = create_styled_frame(right_panel_container)
             self.input_outer_frame.grid(row=1, column=0, sticky="ew")
             self.input_outer_frame.grid_columnconfigure(0, weight=0)
@@ -3446,20 +3668,18 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.stop_btn.pack_forget()
             self.play_btn.pack_forget()
             self.log_btn.pack_forget()
+            # No chat selected / empty chat: do not show Play (start)
             if not self.current_chat_id:
-                self.play_btn.pack(side=tk.LEFT, padx=2)
-                self.play_btn.configure(state="disabled")
                 return
             has_messages = len(self.backend.get_messages(self.current_chat_id)) > 0
             is_active = self.current_chat_id in self.chat_processes
             if is_active:
                 self.stop_btn.pack(side=tk.LEFT, padx=2)
                 self.log_btn.pack(side=tk.LEFT, padx=2)
-                self.play_btn.pack_forget()
-            else:
+            elif has_messages:
                 self.play_btn.pack(side=tk.LEFT, padx=2)
-                self.play_btn.configure(state="normal" if has_messages else "disabled")
-                self.log_btn.pack_forget()
+                self.play_btn.configure(state="normal")
+            # else: empty chat — no play button
         def stop_chat(self):
             if self.current_chat_id and self.current_chat_id in self.chat_processes: self.terminate_chat_process(self.current_chat_id); self.update_chat_controls()
         def resume_chat(self):
@@ -3485,13 +3705,40 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             if hasattr(self, 'attachment_overlay_frame') and self.attachment_overlay_frame and self.attachment_overlay_frame.winfo_exists(): self.attachment_overlay_frame.destroy()
             self.attachment_overlay_frame = None
             if not self.attachments: return
-            self.attachment_overlay_frame = create_styled_frame(self.messages_bordered_frame, fg_color=DARK_BG, border_color=PURPLE_ACCENT, border_width=1, corner_radius=CORNER_RADIUS)
+            # Border follows attachment count (not always max); no "attachments" title plate
+            self.attachment_overlay_frame = create_styled_frame(
+                self.messages_bordered_frame, fg_color=DARK_BG, border_color=DARK_SECONDARY,
+                border_width=1, corner_radius=CORNER_RADIUS)
+            n = len(self.attachments)
+            row_h = 30
+            required_height = max(40, 8 + n * row_h)
+            try:
+                parent_height = max(self.messages_bordered_frame.winfo_height(), 80)
+            except Exception:
+                parent_height = 200
+            final_height = min(required_height, int(parent_height * 0.5))
+            self.attachment_overlay_frame.configure(height=final_height)
             self.attachment_overlay_frame.place(relx=0.5, y=5, anchor='n', relwidth=0.75)
-            header_text = f"{Lang.get('attachments')}"
+            try:
+                self.attachment_overlay_frame.pack_propagate(False)
+            except Exception:
+                pass
             inner_frame = create_styled_frame(self.attachment_overlay_frame, fg_color=DARK_SECONDARY, corner_radius=CORNER_RADIUS)
-            inner_frame.pack(fill="both", expand=True, padx=0, pady=0)
-            scrollable_container = create_scrollable_frame(inner_frame, fg_color="transparent", label_text=header_text, label_text_color=WHITE)
-            scrollable_container.pack(fill="both", expand=True, padx=5, pady=5)
+            inner_frame.pack(fill="both", expand=True, padx=2, pady=2)
+            scrollable_container = create_scrollable_frame(inner_frame, fg_color="transparent")
+            scrollable_container.pack(fill="both", expand=True, padx=4, pady=4)
+            # gray track + purple/orange thumb (not black/white hole)
+            try:
+                sb = getattr(scrollable_container, '_scrollbar', None)
+                if sb is not None:
+                    sb.configure(
+                        fg_color=DARK_SECONDARY,
+                        button_color=PURPLE_ACCENT,
+                        button_hover_color=WHITE,
+                        width=effective_scrollbar_width(),
+                        corner_radius=50)
+            except Exception:
+                pass
             for i, attachment in enumerate(self.attachments):
                 att_frame = create_styled_frame(scrollable_container)
                 att_frame.pack(fill="x", pady=2, padx=2)
@@ -3501,12 +3748,11 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 try:
                     if not self.attachment_overlay_frame or not self.attachment_overlay_frame.winfo_exists(): return
                     self.attachment_overlay_frame.update_idletasks()
-                    required_height = 35 + len(self.attachments) * 30
-                    parent_height = self.messages_bordered_frame.winfo_height()
-                    max_height = parent_height * 0.5
-                    final_height = min(required_height, max_height)
-                    self.attachment_overlay_frame.configure(height=final_height)
-                except Exception: pass
+                    req = max(40, 8 + len(self.attachments) * 30)
+                    ph = max(self.messages_bordered_frame.winfo_height(), 80)
+                    self.attachment_overlay_frame.configure(height=min(req, int(ph * 0.5)))
+                except Exception:
+                    pass
             self.after(50, _update_height)
         def remove_attachment(self, index):
             self.attachments.pop(index)
@@ -3610,13 +3856,6 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             for chat in chats:
                 self._pack_chat_row(chat)
             self.chats_list_frame.update_idletasks()
-            self._scroll_chat_list_to_bottom()
-            # layout after first paint often resets yview — re-pin bottom
-            for delay in (40, 120, 300, 700):
-                try:
-                    self.after(delay, self._scroll_chat_list_to_bottom)
-                except Exception:
-                    pass
             chat_ids = [c["id"] for c in chats]
             if current_selection not in chat_ids:
                 self.on_chat_select(first_chat_id) if first_chat_id else self.clear_chat_view()
@@ -3626,6 +3865,13 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     self._draw_chat_list_brace()
             except Exception:
                 pass
+            # Pin list to bottom AFTER select/layout (select used to leave viewport at top)
+            self._scroll_chat_list_to_bottom()
+            for delay in (30, 80, 160, 350, 700, 1200):
+                try:
+                    self.after(delay, self._scroll_chat_list_to_bottom)
+                except Exception:
+                    pass
         def open_folder(self, chat_id, folder_name):
             folder_path = self.backend.chat_folder(chat_id) / folder_name
             if not folder_path.exists(): showinfo(self, Lang.get("info"), Lang.get("folder_not_found", folder_name=folder_name)); return
@@ -3642,9 +3888,27 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             chat_name = ""
             for chat in self.backend.get_chats():
                 if chat['id'] == chat_id: chat_name = chat['name']; break
-            if chat_id in self.chat_processes: showwarning(self, Lang.get("active_chat_delete_title"), Lang.get("active_chat_delete_message", chat_name=chat_name)); return
-            if askyesno(self, Lang.get("delete_chat_confirm_title"), Lang.get("delete_chat_confirm_message", chat_name=chat_name)):
-                if self.backend.delete_chat(chat_id): self.load_chats()
+            if chat_id in self.chat_processes:
+                if not askyesno(
+                    self,
+                    Lang.get("active_chat_delete_title"),
+                    Lang.get("active_chat_delete_message", chat_name=chat_name),
+                ):
+                    return
+                try:
+                    self.terminate_chat_process(chat_id)
+                except Exception as e:
+                    print(f"terminate before delete: {e}")
+            elif not askyesno(
+                self,
+                Lang.get("delete_chat_confirm_title"),
+                Lang.get("delete_chat_confirm_message", chat_name=chat_name),
+            ):
+                return
+            if self.backend.delete_chat(chat_id):
+                if self.current_chat_id == chat_id:
+                    self.clear_chat_view()
+                self.load_chats()
         def on_chat_select(self, chat_id):
             if chat_id == self.current_chat_id: return
             if chat_id in self.waiting_for_answer: del self.waiting_for_answer[chat_id]
@@ -3966,7 +4230,18 @@ def run_main_app(app_ready_event: multiprocessing.Event):
 
                 self.attachments.clear()
                 self.show_attachments()
-                self.add_message_to_ui(text, True, attachments=attachments_paths)
+                show_dt = self.backend.get_global_settings().get("show_message_datetime", "0") == "1"
+                live_ts = None
+                if show_dt:
+                    try:
+                        msgs = self.backend.get_messages(self.current_chat_id)
+                        if msgs:
+                            live_ts = msgs[-1].get("timestamp")
+                    except Exception:
+                        live_ts = None
+                self.add_message_to_ui(
+                    text, True, attachments=attachments_paths,
+                    timestamp=live_ts, show_datetime=show_dt)
                 self.input_text.delete("1.0", "end")
                 self.adjust_input_height()
 
@@ -3994,7 +4269,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             try:
                 from cross_gpt import RELEASE_VERSION as APP_RELEASE
             except Exception:
-                APP_RELEASE = "2026-07"
+                APP_RELEASE = "2026-08"
             chat_rel = str(chat_settings.get("release_version", "") or "").strip()
             if chat_rel != APP_RELEASE:
                 if not chat_rel:
@@ -4097,8 +4372,21 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     display_text = _re.sub(r'\n{3,}', '\n\n', display_text).strip() or message_text
                     if display_text:
                         self.backend.add_message(chat_id, display_text, False, attachments)
-                        if chat_id == self.current_chat_id: self.add_message_to_ui(display_text, False, is_question=is_question, attachments=attachments)
-                        else: self.chat_blink_states[chat_id] = True
+                        if chat_id == self.current_chat_id:
+                            show_dt = self.backend.get_global_settings().get("show_message_datetime", "0") == "1"
+                            live_ts = None
+                            if show_dt:
+                                try:
+                                    msgs = self.backend.get_messages(chat_id)
+                                    if msgs:
+                                        live_ts = msgs[-1].get("timestamp")
+                                except Exception:
+                                    live_ts = None
+                            self.add_message_to_ui(
+                                display_text, False, is_question=is_question, attachments=attachments,
+                                timestamp=live_ts, show_datetime=show_dt)
+                        else:
+                            self.chat_blink_states[chat_id] = True
                     if not self.focus_get(): self.flash_window()
             except queue.Empty: pass
             if chat_id in self.chat_processes and self.chat_processes[chat_id].is_alive(): self.after(500, lambda c=chat_id: self.check_chat_responses(c))
@@ -4215,21 +4503,25 @@ def run_main_app(app_ready_event: multiprocessing.Event):
 
     class CustomMessageBox(BaseTopLevel):
         def __init__(self, parent, title, message, buttons):
-            # Compact size fitted to text (not huge empty dialog)
+            # Compact size fitted to text — set final geometry before show (no square→shrink jump)
             msg = str(message or "")
             lines = msg.split("\n") if msg else [""]
             max_line = max((len(l) for l in lines), default=12)
-            # ~7px per char, clamp width
             width = min(max(260, max_line * 7 + 48), 420)
             wrap = max(width - 48, 180)
             chars_per = max(wrap // 7, 16)
             wrapped = 0
             for l in lines:
                 wrapped += max(1, (len(l) + chars_per - 1) // chars_per) if l else 1
-            # text block + title bar + buttons + padding
             height = min(max(96 + wrapped * 17 + 44, 110), 360)
             super().__init__(parent)
+            try:
+                self.withdraw()
+            except Exception:
+                pass
+            self._preload = False
             self.title(title)
+            self._default_geometry = f"{width}x{height}"
             self.geometry(f"{width}x{height}")
             self.minsize(min(width, 240), 96)
             self.maxsize(480, 420)
@@ -4254,25 +4546,46 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.bind("<Escape>", lambda e: self.on_close())
             self.transient(parent)
             self.protocol("WM_DELETE_WINDOW", self.on_close)
-            self.after(10, self.setup_and_center)
-            # after layout, shrink height if content smaller than estimate
-            def _fit():
-                try:
-                    self.update_idletasks()
-                    need_h = message_label.winfo_reqheight() + btn_frame.winfo_reqheight() + 36
-                    need_w = max(message_label.winfo_reqwidth() + 36, 240)
-                    need_h = min(max(need_h, 100), 400)
-                    need_w = min(max(need_w, 240), 480)
-                    self.geometry(f"{need_w}x{need_h}")
-                except Exception:
-                    pass
-            self.after(30, _fit)
+            try:
+                self.update_idletasks()
+                need_h = message_label.winfo_reqheight() + btn_frame.winfo_reqheight() + 36
+                need_w = max(message_label.winfo_reqwidth() + 36, 240)
+                need_h = min(max(need_h, 100), 400)
+                need_w = min(max(need_w, 240), 480)
+                self._default_geometry = f"{need_w}x{need_h}"
+                self.geometry(f"{need_w}x{need_h}")
+            except Exception:
+                pass
+            try:
+                center_window(self)
+            except Exception:
+                pass
+            try:
+                setup_icon(self)
+            except Exception:
+                pass
+            try:
+                self.deiconify()
+                self.lift()
+                self.grab_set()
+            except Exception:
+                pass
         def set_result(self, value):
             self.result = value
             self.on_close()
         def on_close(self):
             if self.result is None: is_yesno = any(b[0].lower() == 'no' for b in []); self.result = False if is_yesno else None
-            super().on_close()
+            try:
+                self.grab_release()
+            except Exception:
+                pass
+            try:
+                self.destroy()
+            except Exception:
+                pass
+        def setup_and_center(self):
+            # skip BaseTopLevel delayed center (would re-show / jump)
+            return
 
     class InitialSettingsWindow(BaseTopLevel, DynamicModelUI):
         def __init__(self, master, backend):
@@ -4281,8 +4594,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self.master = master
             self.backend = backend
             self.title("Setup")
-            self.geometry("500x450")
-            self.minsize(500, 450)
+            # Slightly smaller than before; model step scrolls so provider fields stay reachable
+            self._default_geometry = "460x400"
+            self.geometry("460x400")
+            self.minsize(420, 360)
             self.configure(fg_color=DARK_BG)
             self.max_tokens = 8192
             self.validated = False
@@ -4298,24 +4613,70 @@ def run_main_app(app_ready_event: multiprocessing.Event):
 
         def show_step1_language(self):
             self._clear_step_widgets()
-            self.lang_var = tk.StringVar(value=Lang.current_language or "en")
+            prev_lang = self.lang_var.get() if hasattr(self, 'lang_var') else (Lang.current_language or "en")
+            self.lang_var = tk.StringVar(value=prev_lang or "en")
+            gs = self.backend.get_global_settings()
+            prev_theme = self.theme_var.get() if hasattr(self, 'theme_var') else str(gs.get("ui_light_theme", "0") or "0")
+            prev_scale = self.scale_var.get() if hasattr(self, 'scale_var') else str(gs.get("ui_scale", "100") or "100")
+            self.theme_var = tk.StringVar(value=str(prev_theme or "0"))
+            self.scale_var = tk.StringVar(value=str(prev_scale or "100"))
             container = create_styled_frame(self)
-            container.pack(expand=True, fill='both')
+            container.pack(expand=True, fill='both', padx=16, pady=12)
             lang_frame = create_styled_frame(container)
-            lang_frame.pack(pady=10)
+            lang_frame.pack(pady=8, fill="x")
             create_styled_label(lang_frame, text=f"{Lang.get('language')}:").pack(side='left', padx=(0, 10))
             lang_combo = CTkOptionMenu(lang_frame, variable=self.lang_var, values=list(Lang.available_languages.keys()), **OPTIONMENU_THEME)
             lang_combo.pack(side='left')
+            # Theme under language
+            theme_frame = create_styled_frame(container)
+            theme_frame.pack(pady=8, fill="x")
+            create_styled_label(theme_frame, text=Lang.get("ui_light_theme", default="Light theme")).pack(side='left', padx=(0, 10))
+            CTkSwitch(
+                theme_frame, text="", variable=self.theme_var,
+                onvalue="1", offvalue="0", switch_width=50, switch_height=25,
+                progress_color=PURPLE_ACCENT, font=FONT_REGULAR,
+            ).pack(side='right')
+            # Scale under theme
+            scale_frame = create_styled_frame(container)
+            scale_frame.pack(pady=8, fill="x")
+            create_styled_label(scale_frame, text=Lang.get("ui_scale", default="UI scale")).pack(side='left', padx=(0, 10))
+            idx0 = ui_scale_pct_to_index(self.scale_var.get())
+            n_steps = max(1, len(UI_SCALE_STEPS) - 1)
+            def _on_init_scale(v, sv=self.scale_var):
+                try:
+                    sv.set(str(ui_scale_index_to_pct(v)))
+                except Exception:
+                    pass
+            scale_slider = CTkSlider(
+                scale_frame, from_=0, to=n_steps, number_of_steps=n_steps,
+                command=_on_init_scale, width=140, height=18,
+                progress_color=PURPLE_ACCENT, button_color=WHITE,
+                button_hover_color=PURPLE_ACCENT,
+            )
+            scale_slider.set(float(idx0))
+            scale_slider.pack(side='right', padx=(0, 4))
             create_styled_button(container, text="→", command=self.show_step2_model).pack(pady=20)
         def show_step2_model(self):
             Lang.load_language(self.lang_var.get())
+            # Apply theme/scale early so wizard and main UI match choice
+            try:
+                apply_ui_theme(str(self.theme_var.get()) == "1")
+            except Exception:
+                pass
+            try:
+                apply_ui_scale(clamp_ui_scale_pct(self.scale_var.get()))
+            except Exception:
+                pass
             self.title(Lang.get("initial_settings_title"))
             self.backend.rescan_and_localize_modules()
             ModuleManager().load_modules(self.backend)
             self._clear_step_widgets()
             self.settings_vars = self._get_default_settings()
+            # Keep theme/scale vars in settings for save
+            self.settings_vars['ui_light_theme'] = self.theme_var
+            self.settings_vars['ui_scale'] = self.scale_var
             btn_frame = create_styled_frame(self)
-            btn_frame.pack(side="bottom", fill="x", pady=(0, 20), padx=20)
+            btn_frame.pack(side="bottom", fill="x", pady=(0, 12), padx=16)
             self.validate_btn = create_styled_button(btn_frame, text=Lang.get("validate_model"), command=self.validate_model)
             self.validate_btn.pack(side="left")
             back_btn = create_styled_button(btn_frame, text="←", command=self.show_step1_language)
@@ -4323,8 +4684,9 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             next_btn = create_styled_button(btn_frame, text="→", command=self.show_step3_chats_dir)
             next_btn.pack(side="right")
             self._init_next_to_chats_btn = next_btn
-            main_frame = create_styled_frame(self)
-            main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+            # Outer scroll so provider params / token fields stay reachable in smaller window
+            main_frame = create_scrollable_frame(self, fg_color="transparent")
+            main_frame.pack(fill="both", expand=True, padx=12, pady=8)
             self._create_model_ui(main_frame)
             self._load_provider_params_from_string()
         def show_step3_chats_dir(self):
@@ -4424,9 +4786,20 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 'max_token_limit': dual['max_token_limit'],
                 'model_provider_params': conn,
                 'provider_params_by_type': self.settings_vars.get('provider_params_by_type', tk.StringVar(value='{}')).get(),
-                'chats_dir': chats_dir}
+                'chats_dir': chats_dir,
+                'ui_light_theme': (self.theme_var.get() if hasattr(self, 'theme_var') else
+                                   self.settings_vars.get('ui_light_theme', tk.StringVar(value='0')).get()),
+                'ui_scale': str(clamp_ui_scale_pct(
+                    self.scale_var.get() if hasattr(self, 'scale_var') else
+                    self.settings_vars.get('ui_scale', tk.StringVar(value='100')).get())),
+            }
             settings_to_save.update({k: dual[k] for k in dual if k.startswith('small_') or k == 'use_small_model'})
             self.backend.update_global_settings(settings_to_save)
+            try:
+                apply_ui_theme(settings_to_save.get('ui_light_theme') == '1')
+                apply_ui_scale(clamp_ui_scale_pct(settings_to_save.get('ui_scale', '100')))
+            except Exception:
+                pass
             self.on_close()
         def on_close(self):
             super().on_close()
@@ -4438,6 +4811,12 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                     except Exception:
                         pass
                     self.master.setup_main_ui()
+                    # Preload settings/create immediately after wizard (normally skipped on first run)
+                    try:
+                        if hasattr(self.master, 'preload_settings_and_create_chat'):
+                            self.master.after(50, self.master.preload_settings_and_create_chat)
+                    except Exception as e:
+                        print(f"post-wizard preload: {e}")
                     try:
                         self.master.bring_to_front()
                     except Exception:

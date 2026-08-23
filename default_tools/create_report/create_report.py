@@ -8,7 +8,7 @@ Recommended if you want to record detailed results — for now, you'll find them
 import os
 import re
 from datetime import datetime
-from cross_gpt import chat_path, send_ui_no_cache
+from cross_gpt import chat_path, send_output_message
 
 def main(text):
     if not hasattr(main, 'attr_names'):
@@ -53,7 +53,8 @@ def main(text):
                 mf.write('for_user=1\n')
         except Exception:
             pass
-        send_ui_no_cache(main.report_created_text + filename, attach=[path])
+        # Cached UI send — resume must not re-push the same report bubble
+        send_output_message(text=main.report_created_text + filename, attachments=[path])
     except Exception as e:
         print(f"Error: {e}")
         return f"Report error: {e}"

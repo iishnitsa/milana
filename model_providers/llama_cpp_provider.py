@@ -22,7 +22,6 @@ emb_token_limit = 4096
 
 do_chat_construct = True
 native_func_call = False
-is_thinking = False
 filter_think_tag = False
 _last_think_content = None
 
@@ -339,12 +338,13 @@ def connect(connection_string: str, timeout=None) -> Tuple[bool, int, Dict[str, 
     Пример:
       url=http://localhost:8080; model=Bonsai-8B-Q1_0.gguf;
       use_ollama_embs=true; ollama_url=http://localhost:11434; ollama_emb_model=all-minilm:latest;
-      chat_template=true; native_func_call=false; is_thinking=false; filter_think_tag=false
+      chat_template=true; native_func_call=false; filter_think_tag=false
     """
     global session, ollama_session, base_url, ollama_base_url, chat_model, emb_model, ollama_emb_model
     global token_limit, emb_token_limit, tags, request_timeout, use_ollama
-    global do_chat_construct, native_func_call, is_thinking, filter_think_tag
+    global do_chat_construct, native_func_call, filter_think_tag
 
+    # is_thinking removed: never sent to server; use filter_think_tag for <think> strip.
     params = {
         "url": "http://localhost:8080",
         "model": "bonsai-8b",
@@ -357,7 +357,6 @@ def connect(connection_string: str, timeout=None) -> Tuple[bool, int, Dict[str, 
         "timeout": "",
         "chat_template": "true",
         "native_func_call": "false",
-        "is_thinking": "false",
         "filter_think_tag": "false",
     }
     for part in (connection_string or "").split(";"):
@@ -388,7 +387,6 @@ def connect(connection_string: str, timeout=None) -> Tuple[bool, int, Dict[str, 
     do_chat_construct = params["chat_template"].lower().strip() == "true"
     native_func_call = params["native_func_call"].lower().strip() == "true"
     use_ollama = params["use_ollama_embs"].lower().strip() == "true"
-    is_thinking = params["is_thinking"].lower().strip() == "true"
     filter_think_tag = params["filter_think_tag"].lower().strip() == "true"
 
     timeout_str = params["timeout"].strip()
@@ -515,8 +513,13 @@ def connect(connection_string: str, timeout=None) -> Tuple[bool, int, Dict[str, 
             )
         except Exception as e:
             ollama_session = None
-            let_log(f"Ollama emb connect failed (можно ollama=False + emb на llama-server): {e}")
-            # не валим connect — chat всё равно работает
+            err = (
+                f"Ollama emb connect failed (use_ollama_embs=true): {e}. "
+                f"Задайте рабочий ollama_url/ollama_emb_model или use_ollama_embs=false."
+            )
+            let_log(err)
+            # D13: не продолжаем молча — embeddings обязательны при use_ollama_embs
+            return False, token_limit, tags, err
 
     tags = {
         "bos": "", "eos": "",
@@ -535,7 +538,7 @@ def connect(connection_string: str, timeout=None) -> Tuple[bool, int, Dict[str, 
         f"(explicit={explicit_ctx}, props={props_ctx}, models={models_ctx}); "
         f"ollama={use_ollama} ollama_url={ollama_base_url} ollama_emb={ollama_emb_model}; "
         f"chat_template={do_chat_construct} native_func_call={native_func_call} "
-        f"is_thinking={is_thinking} filter_think_tag={filter_think_tag}"
+        f"filter_think_tag={filter_think_tag}"
     )
     return True, token_limit, tags, warn
 
@@ -563,6 +566,12 @@ def disconnect() -> bool:
     emb_model = None
     return closed
 
+def _is_thinking_param_key(key: str) -> bool:
+    """D15: never forward think/thinking/reasoning keys to the server."""
+    k = (key or "").lower()
+    return ("think" in k) or ("reasoning" in k)
+
+
 def ask_model(generation_params: Dict[str, Any]) -> str:
     """Генерация через /v1/completions."""
     global _last_think_content
@@ -580,8 +589,12 @@ def ask_model(generation_params: Dict[str, Any]) -> str:
         "echo": False,
     }
     for key in ["frequency_penalty", "presence_penalty", "repeat_penalty"]:
-        if key in generation_params:
+        if key in generation_params and not _is_thinking_param_key(key):
             payload[key] = generation_params[key]
+    # Strip any accidental think/reasoning keys from payload
+    for k in list(payload.keys()):
+        if _is_thinking_param_key(k):
+            payload.pop(k, None)
 
     let_log(f"ask_model: запрос к {url}")
     data = _request_with_backoff("POST", url, json_payload=payload)
@@ -614,6 +627,10 @@ def ask_model_chat(generation_params: Dict[str, Any]) -> Dict[str, Any]:
             payload["tools"] = generation_params["tools"]
         if "tool_choice" in generation_params:
             payload["tool_choice"] = generation_params["tool_choice"]
+    # D15: never send think/thinking/reasoning to server
+    for k in list(payload.keys()):
+        if _is_thinking_param_key(k):
+            payload.pop(k, None)
 
     let_log(f"ask_model_chat: {url} native_func_call={native_func_call}")
     data = _request_with_backoff("POST", url, json_payload=payload)
@@ -656,8 +673,8 @@ def _parse_embedding_vector(data: dict) -> Optional[List[float]]:
 def create_embeddings(text: str) -> List[float]:
     """
     Как openai_provider:
-      1) если ollama=True и ollama_session — POST ollama_url/api/embeddings {model, prompt}
-      2) иначе / fallback: llama-server /v1/embeddings {model, input}
+      1) если use_ollama_embs=True — только Ollama /api/embeddings (без silent fallback)
+      2) иначе: llama-server /v1/embeddings
     """
     if not session:
         raise RuntimeError("llama.cpp клиент не инициализирован. Сначала вызовите connect().")
@@ -668,8 +685,13 @@ def create_embeddings(text: str) -> List[float]:
 
     last_err = None
 
-    # --- 1) Ollama (предпочтительно при ollama=True) ---
-    if use_ollama and ollama_session and ollama_base_url:
+    # --- 1) Ollama required path when use_ollama_embs=True (D13: no silent llama.cpp fallback) ---
+    if use_ollama:
+        if not (ollama_session and ollama_base_url):
+            raise RuntimeError(
+                "use_ollama_embs=true, но Ollama emb session не инициализирована. "
+                "Переподключите модель или выставьте use_ollama_embs=false."
+            )
         try:
             t = text
             if len(t) > 2000:
@@ -693,8 +715,12 @@ def create_embeddings(text: str) -> List[float]:
         except Exception as e:
             last_err = e
             let_log(f"create_embeddings ollama fail: {e}")
+        raise RuntimeError(
+            f"Ollama embeddings failed (no fallback to llama.cpp): {last_err}. "
+            f"Пример: use_ollama_embs=true;ollama_url=http://localhost:11434;ollama_emb_model=all-minilm:latest"
+        )
 
-    # --- 2) llama.cpp local embeddings (ollama=False или fallback) ---
+    # --- 2) llama.cpp local embeddings (only when use_ollama_embs=false) ---
     try:
         model = emb_model or chat_model
         url = f"{base_url.rstrip('/')}/v1/embeddings"
@@ -717,5 +743,7 @@ def create_embeddings(text: str) -> List[float]:
 
     raise RuntimeError(
         f"Не удалось получить эмбеддинг: {last_err}. "
-        f"Пример: ollama=True;ollama_url=http://localhost:11434;ollama_emb_model=all-minilm:latest"
+        f"Пример: use_ollama_embs=false + llama-server --embeddings, "
+        f"или use_ollama_embs=true;ollama_url=http://localhost:11434;ollama_emb_model=all-minilm:latest"
     )
+

@@ -294,6 +294,8 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
 
     # Создаём копию истории и добавляем временное сообщение (текущий запрос)
     mutable_history = list(history)
+    # NEXT RELEASE: id=0 + filter `m['id'] > last_global_id` drops this temp when
+    # last_global_id==0; get_chat_context often omits role. Do not "fix" lightly (RAG-on).
     temp_msg = {
         'id': 0,  # специальный ID, который не сохраняется
         'role': role or '',
@@ -304,7 +306,9 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
     mutable_history.append(temp_msg)
 
     # Общее количество токенов всей истории (включая временное)
-    total_history_tokens = _calculate_tokens("".join([f"{m['role']}{m['full_text']}" for m in mutable_history]))
+    total_history_tokens = _calculate_tokens(
+        "".join([f"{(m.get('role') or '')}{(m.get('full_text') or '')}" for m in mutable_history])
+    )
 
     history_was_truncated = total_history_tokens > available_for_history
 
@@ -370,7 +374,13 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
         let_log(f"##### [{chat_id}] ВНИМАНИЕ: Нет места для истории. Пропускаем. #####")
     else:
         for msg in reversed(history_to_use):
-            msg_str = f"{msg['role']}{msg['full_text']}"
+            # Skip unresolved stubs (role/full_text None) — avoids "NoneNone" in prompt
+            role_s = msg.get('role') or ''
+            text_s = msg.get('full_text') or ''
+            if not role_s and not text_s:
+                let_log(f"Пропуск пустого/нерезолвленного сообщения id={msg.get('id')} vector_id={msg.get('vector_id')!r}")
+                continue
+            msg_str = f"{role_s}{text_s}"
             msg_tokens = _calculate_tokens(msg_str)
             if (history_token_count + msg_tokens) <= available_for_history:
                 history_strings_list.append(msg_str)
@@ -382,7 +392,7 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
                 if ENABLE_ON_THE_FLY_COMPRESSION and not msg.get('is_compressed'):
                     let_log(f"Запуск сжатия 'на лету' для ID {msg['id']}...")
                     compressed_msg = _compress_message_in_db(msg)
-                    msg_str_compressed = f"{compressed_msg['role']}{compressed_msg['full_text']}"
+                    msg_str_compressed = f"{compressed_msg.get('role') or ''}{compressed_msg.get('full_text') or ''}"
                     msg_tokens_compressed = _calculate_tokens(msg_str_compressed)
                     if (history_token_count + msg_tokens_compressed) <= available_for_history:
                         let_log(f"Сжатое сообщение ID {msg['id']} (токены: {msg_tokens_compressed:.0f}) теперь помещается.")

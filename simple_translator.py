@@ -239,6 +239,12 @@ def translate_texts(texts, to_lang, from_lang='auto'):
     Возвращает список переводов в том же порядке.
     """
     if not texts: return []
+    # Guard invalid target language (avoids cryptic GetLanguageMapError from translators)
+    if to_lang in (None, "", "None", "none"):
+        raise ValueError(
+            f"translate_texts: invalid to_lang={to_lang!r}. "
+            f"Set target_lang to a real code (en, ru, …) or disable do_translate."
+        )
     result = []
     to_translate = []
     indices = []

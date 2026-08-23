@@ -143,7 +143,9 @@ show_error() {
 ask_yesno() {
     local msg="$1"
     if [ "$USE_GUI" = "zenity" ]; then
-        zenity --question --title="Milana Setup" --text="$msg" --width=450
+        # Force English Yes/No labels regardless of system locale
+        LC_MESSAGES=C zenity --question --title="Milana Setup" --text="$msg" \
+            --ok-label=Yes --cancel-label=No --width=450
     else
         local ans
         read -p "$msg (y/N): " ans
@@ -221,12 +223,9 @@ ask_shortcuts() {
 }
 
 show_progress() {
+    # Echo only — avoid flashing empty zenity --progress windows
     local msg="$1"
-    if [ "$USE_GUI" = "zenity" ]; then
-        echo "10" | zenity --progress --title="Milana Setup" --text="$msg" --width=450 --auto-close --no-cancel --percentage=10 --auto-kill
-    else
-        echo "$msg..."
-    fi
+    echo "$msg..."
 }
 
 # ----------------------------------------------------------------------
@@ -352,7 +351,7 @@ EOL
         fi
     fi
     
-    # Create Desktop shortcut
+    # Create Desktop shortcut (match Applications menu: StartupWMClass, Path, trusted)
     if [[ "$SHORTCUTS" == *"desktop"* ]] || [[ "$SHORTCUTS" == "both" ]] || [ "$SHORTCUTS" = "desktop" ]; then
         show_progress "Creating desktop shortcut..."
         mkdir -p "$desktop_dir"
@@ -364,11 +363,17 @@ Type=Application
 Name=Milana
 Comment=Milana AI Assistant
 Exec=$INSTALL_DIR/Milana
+Path=$INSTALL_DIR
 Icon=$INSTALL_DIR/data/icons/icon.png
 Terminal=false
 Categories=Utility;Office;
+StartupWMClass=Milana
 EOL
         chmod +x "$desktop_shortcut"
+        # Mark as trusted so GNOME/etc. allow launching from Desktop (ignore gio errors)
+        if command -v gio &> /dev/null; then
+            gio set "$desktop_shortcut" metadata::trusted true 2>/dev/null || true
+        fi
     fi
     
     # Create symbolic link in ~/.local/bin

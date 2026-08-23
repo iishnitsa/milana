@@ -31,14 +31,12 @@ BASE_BACKOFF = 2.0        # Основание экспоненты
 llm_cpu = False
 emb_cpu = True
 offload_on_boot = False
-is_thinking = False
 default_num_ctx = None     # заданный в строке подключения контекст (если есть)
 filter_think_tag = False   # флаг фильтрации тегов <think>
 _last_think_content = None # последнее извлечённое содержимое think
 
 # Прошлые состояния для детекта изменений
 _last_llm_num_ctx = None
-_last_think_value = None
 _last_llm_cpu = None
 
 def normalize_url(url, default_port, default_scheme="http"):
@@ -190,20 +188,21 @@ def connect(connection_string, timeout=30):
     """
     Подключение к серверу Ollama API.
     Формат строки подключения:
-    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest;
-     llm_cpu=false; emb_cpu=true; offload_on_boot=false; is_thinking=false; num_ctx=...; filter_think_tag=false"
+    "url=http://localhost:11434; model=gemma3:4b; emb_model=all-minilm:latest;
+     llm_cpu=false; emb_cpu=true; offload_on_boot=false; num_ctx=...; filter_think_tag=false"
     """
     global session, base_url, default_chat_model, token_limit, emb_token_limit
     global emb_model, do_chat_construct, native_func_call, tags, model_template_info
-    global llm_cpu, emb_cpu, offload_on_boot, is_thinking, default_num_ctx
-    global _last_llm_num_ctx, _last_think_value, _last_llm_cpu
+    global llm_cpu, emb_cpu, offload_on_boot, default_num_ctx
+    global _last_llm_num_ctx, _last_llm_cpu
     global filter_think_tag
 
     # Defaults for UI / incomplete connection strings (user may not have this model).
     # Caller (initialize_work / _connect_model_backend) must not call connect with empty string.
+    # is_thinking removed: never sent to server (server chooses); use filter_think_tag for <think> strip.
     params = {
         "url": "http://localhost:11434",
-        "model": "ministral-3:8b",
+        "model": "gemma3:4b",
         "emb_model": "all-minilm:latest",
         "chat_template": "True",
         "native_func_call": "False",
@@ -211,7 +210,6 @@ def connect(connection_string, timeout=30):
         "llm_cpu": "false",
         "emb_cpu": "true",
         "offload_on_boot": "false",
-        "is_thinking": "false",
         "filter_think_tag": "false",
     }
     # --- Разбор строки подключения ---
@@ -227,7 +225,7 @@ def connect(connection_string, timeout=30):
         params[key] = value
     # === НОРМАЛИЗАЦИЯ ===
     params["url"] = normalize_url(params.get("url") or "http://localhost:11434", default_port=11434)
-    params["model"] = normalize_model(params.get("model") or "ministral-3:8b")
+    params["model"] = normalize_model(params.get("model") or "gemma3:4b")
     params["emb_model"] = normalize_model(params.get("emb_model") or "all-minilm:latest")
     base_url = params["url"].strip('/')
     emb_model = params["emb_model"]
@@ -238,7 +236,6 @@ def connect(connection_string, timeout=30):
     llm_cpu = params["llm_cpu"].lower().strip() == "true"
     emb_cpu = params["emb_cpu"].lower().strip() == "true"
     offload_on_boot = params["offload_on_boot"].lower().strip() == "true"
-    is_thinking = params["is_thinking"].lower().strip() == "true"
     filter_think_tag = params["filter_think_tag"].lower().strip() == "true"
 
     # Обработка num_ctx
@@ -340,7 +337,6 @@ def connect(connection_string, timeout=30):
 
         # Сохраняем начальные состояния
         _last_llm_num_ctx = default_num_ctx
-        _last_think_value = is_thinking
         _last_llm_cpu = llm_cpu
 
         return [True, token_limit, tags]
@@ -365,12 +361,10 @@ def _check_and_reload_model():
     Если что-то изменилось — выгружает модель (keep_alive=0),
     чтобы следующий запрос подхватил новые параметры.
     """
-    global _last_llm_num_ctx, _last_think_value, _last_llm_cpu
+    global _last_llm_num_ctx, _last_llm_cpu
     need_reload = False
 
     if _last_llm_num_ctx != default_num_ctx:
-        need_reload = True
-    if is_thinking and _last_think_value != is_thinking:
         need_reload = True
     if _last_llm_cpu != llm_cpu:
         need_reload = True
@@ -393,7 +387,6 @@ def _check_and_reload_model():
         finally:
             # Обновляем сохранённые состояния в любом случае
             _last_llm_num_ctx = default_num_ctx
-            _last_think_value = is_thinking
             _last_llm_cpu = llm_cpu
 
 def _extract_think(text):
@@ -575,6 +568,12 @@ def _request_with_backoff(api_url, json_payload):
 
     raise RuntimeError("Превышено максимальное количество попыток")
 
+def _is_thinking_param_key(key):
+    """D15: never forward think/thinking/reasoning keys to the server."""
+    k = (key or "").lower()
+    return ("think" in k) or ("reasoning" in k)
+
+
 def ask_model(generation_params):
     global _last_think_content, filter_think_tag
     if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
@@ -597,12 +596,7 @@ def ask_model(generation_params):
         ctx = default_num_ctx if default_num_ctx else token_limit
         ollama_params["options"]["num_ctx"] = ctx
 
-        # Пробрасываем think, если модель это поддерживает
-        '''
-        if is_thinking:
-            think_value = generation_params.get("think", False)  # По умолчанию запрещаем думать
-            ollama_params["think"] = think_value
-        '''
+        # D15: do NOT send think/thinking/reasoning — let server choose defaults
 
         # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
         if not _skip_num_predict and "max_tokens" in generation_params:
@@ -617,12 +611,19 @@ def ask_model(generation_params):
             "repeat_penalty": "repeat_penalty",
             "stop": "stop"}
         for param, value in generation_params.items():
-            if param in ["prompt", "max_tokens", "think"]:
+            if param in ["prompt", "max_tokens", "think"] or _is_thinking_param_key(param):
                 continue
             if param in param_mapping:
                 ollama_params["options"][param_mapping[param]] = value
             else:
                 ollama_params["options"][param] = value
+        # Strip think/reasoning from top-level and options
+        for k in list(ollama_params.keys()):
+            if _is_thinking_param_key(k):
+                ollama_params.pop(k, None)
+        for k in list(ollama_params.get("options", {}).keys()):
+            if _is_thinking_param_key(k):
+                ollama_params["options"].pop(k, None)
 
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model: Получен ответ, длина: {len(str(data))} символов")
@@ -663,12 +664,7 @@ def ask_model_chat(generation_params):
         ctx = default_num_ctx if default_num_ctx else token_limit
         ollama_params["options"]["num_ctx"] = ctx
 
-        '''
-        # Пробрасываем think, если модель это поддерживает
-        if is_thinking:
-            think_value = generation_params.get("think", False)  # По умолчанию запрещаем думать
-            ollama_params["think"] = think_value
-        '''
+        # D15: do NOT send think/thinking/reasoning — let server choose defaults
 
         # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
         if not _skip_num_predict and "max_tokens" in generation_params:
@@ -684,12 +680,19 @@ def ask_model_chat(generation_params):
             "stop": "stop"
         }
         for param, value in generation_params.items():
-            if param in ["messages", "model", "max_tokens", "think"]:
+            if param in ["messages", "model", "max_tokens", "think"] or _is_thinking_param_key(param):
                 continue
             if param in param_mapping:
                 ollama_params["options"][param_mapping[param]] = value
             else:
                 ollama_params["options"][param] = value
+        # Strip think/reasoning from top-level and options
+        for k in list(ollama_params.keys()):
+            if _is_thinking_param_key(k):
+                ollama_params.pop(k, None)
+        for k in list(ollama_params.get("options", {}).keys()):
+            if _is_thinking_param_key(k):
+                ollama_params["options"].pop(k, None)
 
         # --- ВЫЗОВ _request_with_backoff С ЛОГИРОВАНИЕМ ---
         try:

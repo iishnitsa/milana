@@ -126,7 +126,7 @@ librarian_use_web = False
 # translation flags (defaults; initialize_work overwrites from settings)
 do_translate = False
 # версия релиза (совместимость чатов)
-RELEASE_VERSION = "2026-07"
+RELEASE_VERSION = "2026-08"
 local_and_tools_translate = False
 target_lang = 'en'
 use_local_cache = False
@@ -482,8 +482,29 @@ def send_ui_no_cache(t, attach=None, comm=''):
     except: pass
 
 def send_log_to_ui(message: str):
-    try: ui_conn[2].put(message)
-    except Exception as e: let_log(f"Failed to send log to UI: {e}")
+    """Send text to UI log window; prefix with current agent name/role when known."""
+    try:
+        text = message if message is not None else ''
+        # Avoid double-prefix if caller already tagged the line
+        if not (isinstance(text, str) and text.lstrip().startswith('[')):
+            try:
+                aid = getattr(global_state, 'now_agent_id', None)
+                if aid is not None:
+                    role = _agent_role_for_id(aid)
+                    # Prefer localized display name from role markers (Милана/Ivan/…)
+                    marker = ''
+                    try:
+                        marker = operator_role_text if role == 'operator' else worker_role_text
+                    except NameError:
+                        marker = ''
+                    name = (marker or '').strip().rstrip(':').strip() or role
+                    if name:
+                        text = f'[{name}] {text}'
+            except Exception:
+                pass
+        ui_conn[2].put(text)
+    except Exception as e:
+        let_log(f"Failed to send log to UI: {e}")
 
 @cacher
 def get_input_message(command=None, timeout=None, wait=False):
@@ -764,7 +785,9 @@ def _strip_save_emb_noise(text: str) -> str:
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
     return cleaned
 
+@cacher
 def send_output_message(text=None, attachments=None, command=None):
+    """Send to UI chat queue; cached so resume does not re-deliver the same bubble."""
     display = _strip_ui_command_markers(text) if text else ''
     message_data = {'text': display, 'attachments': attachments or None, 'command': command}
     try: ui_conn[1].put(message_data)
@@ -1538,8 +1561,13 @@ def get_embs(text):
                 let_log(f"[get_embs] Ошибка (попытка {attempt+1}/3): {e}")
                 time.sleep(0.5 * (attempt + 1))
                 continue
-    let_log(f"[get_embs] не удалось получить embedding: {last_err}")
-    return []
+    err_msg = f"[get_embs] не удалось получить embedding: {last_err}"
+    let_log(err_msg)
+    try:
+        send_log_to_ui(err_msg)
+    except Exception:
+        pass
+    raise RuntimeError(err_msg)
 
 def get_token_limit(): return token_limit
 
@@ -2062,16 +2090,37 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
         # Вызов с бесконечными ретраями (включая пустые ответы)
         response = _call_chat_with_retry(generation_params)
         
-        # 5. Обрабатываем ответ как словарь
+        # 5. Обрабатываем ответ как словарь (OpenAI choices или Ollama message)
         let_log(response)
-        if "choices" not in response or not response["choices"]:
-            let_log("ask_model: Некорректный формат ответа - нет choices")
-            raise RuntimeError("Некорректный формат ответа - нет choices")
-        choice = response["choices"][0]
-        message = choice.get("message", {})
-        response_content = message.get("content", "") or ""
-        tool_calls = message.get("tool_calls")
-        
+        if not isinstance(response, dict):
+            err = f"ask_model: Некорректный формат ответа - ожидался dict, получено {type(response).__name__}"
+            let_log(err)
+            try:
+                send_log_to_ui(err)
+            except Exception:
+                pass
+            raise RuntimeError(err)
+
+        tool_calls = None
+        response_content = ""
+        if "choices" in response and response["choices"]:
+            choice = response["choices"][0]
+            message = choice.get("message", {}) if isinstance(choice, dict) else {}
+            response_content = message.get("content", "") or ""
+            tool_calls = message.get("tool_calls")
+        else:
+            # Soft path: Ollama-style / empty choices — try extract text, else clear RuntimeError
+            try:
+                response_content = _process_chat_response(response) or ""
+            except RuntimeError:
+                err = "ask_model: Некорректный формат ответа - нет choices (и нет извлекаемого message/response)"
+                let_log(err)
+                try:
+                    send_log_to_ui(err)
+                except Exception:
+                    pass
+                raise RuntimeError(err)
+
         if tool_calls:
             for tool_call in tool_calls:
                 function_name = tool_call['function']['name']
@@ -2085,14 +2134,14 @@ def _ask_model_impl(prompt_text, system_prompt: str = None, all_user: bool = Fal
                 response_content = marker + response_content
             if do_translate and not local_and_tools_translate:
                 response_content = translate_text(response_content, language, from_lang=target_lang)
-            send_log_to_ui(result)
+            send_log_to_ui(response_content)
             return response_content
         elif response_content:
             if do_translate and not local_and_tools_translate:
                 response_content = translate_text(response_content, language, from_lang=target_lang)
-            send_log_to_ui(result)
+            send_log_to_ui(response_content)
             return response_content
-        send_log_to_ui(result)
+        send_log_to_ui(response_content)
         return response_content
 
 def _process_chat_response(api_response):
@@ -2415,6 +2464,7 @@ def _format_tools_for_api(commands_dict):
         tools_list.append(tool_definition)
     return tools_list
 
+@cacher
 def parse_prompt_response(add_prompt, info, default_value=0):
     system_prompt = add_prompt + yes_no_instruction
     try: response = ask_model(info, system_prompt=system_prompt)
@@ -2601,6 +2651,7 @@ def split_text_with_cutting(text, min_chunk_percentage=0.8):
         current_pos = split_pos
     return chunks if chunks else None
 
+@cacher
 def text_cutter(text, cut_message=False):
     """
     Iterative LLM compression. Incoming/chunk caps live only here:
@@ -4238,6 +4289,7 @@ def _maybe_defer_peer_for_client(sid, peer_text, peer_role, vector_id_out, agent
     let_log("[client_interrupt] deferred peer plain/skip reply")
     return True
 
+@cacher
 def get_user_feedback(current_task, dialog_result):
     while True:
         ims = get_input_message()
@@ -4593,6 +4645,24 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
 
     do_translate = int(settings.get("do_translate", 0)) == 1
     target_lang = settings.get("target_lang", "None")
+    # D10: target_lang None/"None"/empty with translate on → soft-disable (avoid GetLanguageMapError)
+    if do_translate and target_lang in (None, "", "None", "none"):
+        _tl_err_ru = (
+            f"[переводчик] ОШИБКА: do_translate включён, но target_lang={target_lang!r}. "
+            f"Укажите код языка (en, ru, fr, …) в настройках чата. Перевод отключён."
+        )
+        _tl_err_en = (
+            f"[translator] ERROR: do_translate is on but target_lang={target_lang!r}. "
+            f"Set a language code (en, ru, fr, …) in chat settings. Translation disabled."
+        )
+        _tl_msg = _tl_err_ru if str(settings.get("language", "ru")).lower().startswith("ru") else _tl_err_en
+        let_log(_tl_err_ru)
+        let_log(_tl_err_en)
+        try:
+            send_log_to_ui(_tl_msg)
+        except Exception:
+            pass
+        do_translate = False
     local_and_tools_translate = int(settings.get("local_and_tools_translate", 0)) == 1
     use_local_cache = int(settings.get("use_local_cache", 1)) == 1
     use_global_cache = int(settings.get("use_global_cache", 0)) == 1
@@ -4721,6 +4791,26 @@ def initialize_work(base_dir, chat_id, input_queue, output_queue, log_queue, ses
                     traceback.print_exc()
         # re-activate large as default after small connect (small connect may touch globals)
         _activate_model_tier('large')
+        # D13: brief embeddings probe when RAG/embs needed — fail early with clear error
+        _need_embs = bool(use_rag) or int(settings.get("save_emb_dialog", 0) or 0) == 1 or bool(use_librarian)
+        if _need_embs and get_provider_embs:
+            try:
+                _probe = get_provider_embs("emb_probe")
+                if _probe is None or (isinstance(_probe, (list, tuple)) and len(_probe) == 0):
+                    raise RuntimeError("embeddings probe returned empty vector")
+                let_log(f"[model] embeddings probe ok dim={len(_probe) if hasattr(_probe, '__len__') else '?'}")
+            except Exception as emb_e:
+                err = (
+                    f"[model] FATAL: embeddings недоступны (RAG/librarian/save_emb требуют emb): {emb_e}. "
+                    f"Проверьте ollama emb / llama-server --embeddings / use_ollama_embs."
+                )
+                let_log(err)
+                try:
+                    send_log_to_ui(err)
+                except Exception:
+                    pass
+                traceback.print_exc()
+                return
     except Exception as e:
         let_log(f"Ошибка инициализации модели: {str(e)}")
         traceback.print_exc()

@@ -280,7 +280,7 @@ The task:
     update_history(global_state.conversations, make_exec_first, func_role_text)
     from cross_gpt import set_agent_tools
     set_agent_tools(global_state.conversations, milana_tools, role='operator')
-    # Generate initial response
+    # Generate initial response (agent dialogue → large model via purpose='agent')
     try:
         talk_prompt = ask_model(
             system_role_text +
@@ -288,7 +288,8 @@ The task:
             last_messages_marker +
             func_role_text +
             make_exec_first +
-            operator_role_text)
+            operator_role_text,
+            purpose='agent')
     except:
         try:
             talk_prompt = ask_model(
@@ -297,7 +298,8 @@ The task:
                 last_messages_marker +
                 func_role_text +
                 make_exec_first +
-                operator_role_text)
+                operator_role_text,
+                purpose='agent')
         except: raise
     update_history(global_state.conversations, talk_prompt, operator_role_text)
     let_log("НАЧАЛЬНЫЙ ОТВЕТ МИЛАНЫ:")
@@ -324,7 +326,8 @@ The task:
             history_for_model +
             func_role_text +
             last_talk_prompt +
-            operator_role_text)
+            operator_role_text,
+            purpose='agent')
     except:
         history_for_model = start_dialog_history + text_cutter(history_for_model)
         try:
@@ -335,7 +338,8 @@ The task:
                 history_for_model +
                 func_role_text +
                 last_talk_prompt +
-                operator_role_text)
+                operator_role_text,
+                purpose='agent')
         except Exception as e:
             try:
                 talk_prompt = ask_model(
@@ -345,7 +349,8 @@ The task:
                     history_for_model +
                     func_role_text +
                     text_cutter(last_talk_prompt) +
-                    operator_role_text)
+                    operator_role_text,
+                    purpose='agent')
             except: raise
     let_log(f"[DBG_HISTORY_WRITE] target_chat={global_state.conversations - 1}, current_conv={global_state.conversations}")
     update_history(global_state.conversations - 1, last_talk_prompt, func_role_text)
