@@ -100,11 +100,6 @@ echo.
 echo Dependencies installed.
 echo.
 
-REM 5) Optional package checks
-"!VENV_DIR!\Scripts\python.exe" -c "import torch; print('PyTorch:', torch.__version__)" 2>nul || echo PyTorch not found
-"!VENV_DIR!\Scripts\python.exe" -c "import transformers; print('Transformers OK')" 2>nul || echo Transformers not found
-echo.
-
 REM ============= GENERATE LAUNCHER (line by line) =============
 cd /d "!PROJECT_DIR!"
 

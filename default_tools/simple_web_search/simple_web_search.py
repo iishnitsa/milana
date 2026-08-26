@@ -1,6 +1,6 @@
 '''
 search_web
-send 1 search query after the command; returns summaries of several websites
+send search query after the command (one query per line for multi-search); returns summaries of several websites
 Simple web search
 Uses AI to summarize the results
 '''
@@ -334,56 +334,70 @@ def get_page_text(url):
 def main(text):
     if not hasattr(main, 'attr_names'):
         let_log('INITIALIZATION')
-        main.attr_names = ('search_error_msg', 'used_links_header')
+        main.attr_names = ('search_error_msg', 'used_links_header', 'query_section_header')
         main.search_error_msg = 'Search error: '
         main.used_links_header = 'Used links:'
+        main.query_section_header = 'Query:'
         return
     let_log('WEB SEARCH CALLED')
     let_log(f'Search query: {text}')
+    # Multiple non-empty lines → separate DDG queries; one line → single search as before
+    queries = [q.strip() for q in str(text or '').splitlines() if q.strip()]
+    if not queries:
+        return found_info_1
+    # cap multi to avoid runaway fan-out
+    if len(queries) > 8:
+        let_log(f'[main] Truncating queries {len(queries)} → 8')
+        queries = queries[:8]
+
     @cacher
-    def pages_handler(text):
-        let_log(f'[pages_handler] Starting search for: {text[:100]}...')
-        # Добавляем общий try-except, чтобы при любой ошибке возвращать пустой список
+    def pages_handler(query, target_sites=10):
+        let_log(f'[pages_handler] Starting search for: {query[:100]}... target={target_sites}')
         try:
-            TARGET_SUCCESSFUL_SITES = 10
-            MAX_ADDITIONAL_REQUESTS = 5  # Максимальное количество дополнительных запросов к поисковику
-            MAX_TOTAL_LINKS = 30  # Максимальное общее количество ссылок для обработки
+            TARGET_SUCCESSFUL_SITES = max(2, int(target_sites))
+            MAX_ADDITIONAL_REQUESTS = 5
+            MAX_TOTAL_LINKS = 30
             all_links = []
-            successful_texts = []  # Список успешных текстов [(url, text), ...]
-            processed_links = set()  # Множество обработанных ссылок
-            additional_requests_made = 0  # Счетчик дополнительных запросов
-            # Функция для получения дополнительных ссылок
+            successful_texts = []
+            processed_links = set()
+            additional_requests_made = 0
             def get_more_links(count):
                 nonlocal additional_requests_made
-                if additional_requests_made >= MAX_ADDITIONAL_REQUESTS: let_log(f'[get_more_links] Reached max additional requests ({MAX_ADDITIONAL_REQUESTS})'); return []
+                if additional_requests_made >= MAX_ADDITIONAL_REQUESTS:
+                    let_log(f'[get_more_links] Reached max additional requests ({MAX_ADDITIONAL_REQUESTS})')
+                    return []
                 try:
                     additional_requests_made += 1
                     let_log(f'[get_more_links] Making additional request #{additional_requests_made} for {count} links')
-                    # Запрашиваем на count больше, так как некоторые могут не сработать
-                    new_links = fetch_links_ddg(text, max_results=count + 2)
-                    # Исключаем уже обработанные ссылки
+                    new_links = fetch_links_ddg(query, max_results=count + 2)
                     fresh_links = [link for link in new_links if link not in processed_links]
                     let_log(f'[get_more_links] Got {len(fresh_links)} fresh links out of {len(new_links)}')
                     return fresh_links
-                except Exception as e: let_log(f'[get_more_links] Error: {e}'); return []
-            # Получаем первоначальные ссылки
+                except Exception as e:
+                    let_log(f'[get_more_links] Error: {e}')
+                    return []
             try:
                 let_log('[main] Fetching initial links')
-                initial_links = fetch_links_ddg(text, LINKS_PER_ENGINE)
+                initial_links = fetch_links_ddg(query, LINKS_PER_ENGINE)
                 all_links.extend(initial_links)
                 let_log(f'[main] Initial links count: {len(initial_links)}')
-            except Exception as e:  let_log(f'{main.search_error_msg}{str(e)}'); return [] # возвращаем пустой список при ошибке
-            if not all_links: let_log('[main] No links found'); return [] # возвращаем пустой список, если нет ссылок
-            # Основной цикл обработки ссылок
+            except Exception as e:
+                let_log(f'{main.search_error_msg}{str(e)}')
+                return []
+            if not all_links:
+                let_log('[main] No links found')
+                return []
             link_index = 0
             let_log(f'[main] Starting main loop, target successful sites: {TARGET_SUCCESSFUL_SITES}')
             while len(successful_texts) < TARGET_SUCCESSFUL_SITES and link_index < len(all_links):
-                # Проверяем, не превысили ли максимальное количество ссылок
-                if len(processed_links) >= MAX_TOTAL_LINKS: let_log(f'[main] Reached max total links limit ({MAX_TOTAL_LINKS})'); break
+                if len(processed_links) >= MAX_TOTAL_LINKS:
+                    let_log(f'[main] Reached max total links limit ({MAX_TOTAL_LINKS})')
+                    break
                 link = all_links[link_index]
                 let_log(f'[main] Processing link #{link_index + 1}/{len(all_links)}: {link[:100]}...')
-                # Пропускаем уже обработанные ссылки (на всякий случай)
-                if link in processed_links: let_log(f'[main] Link already processed, skipping'); link_index += 1; continue
+                if link in processed_links:
+                    link_index += 1
+                    continue
                 page_text = get_page_text(link)
                 processed_links.add(link)
                 if page_text:
@@ -391,33 +405,55 @@ def main(text):
                     let_log(f'[main] Success! Got text from {link[:100]}... (total successful: {len(successful_texts)})')
                 else:
                     let_log(f'[main] No text from {link[:100]}...')
-                    # Если текст не получен, запрашиваем дополнительную ссылку
                     if len(successful_texts) < TARGET_SUCCESSFUL_SITES:
                         additional_links = get_more_links(1)
-                        if additional_links: all_links.extend(additional_links); let_log(f'[main] Added {len(additional_links)} more links, total links now: {len(all_links)}')
+                        if additional_links:
+                            all_links.extend(additional_links)
+                            let_log(f'[main] Added {len(additional_links)} more links, total links now: {len(all_links)}')
                 link_index += 1
-                # Пауза между запросами (кроме последнего)
                 if link_index < len(all_links) and link_index < MAX_TOTAL_LINKS:
                     sleep_time = random.uniform(2, 4)
                     let_log(f'[main] Sleeping for {sleep_time:.1f}s before next request')
                     time.sleep(sleep_time)
-            # Возвращаем список успешных текстов (без сокращения)
-            if not successful_texts: let_log('[main] No successful texts found'); return [] # пустой список, если ничего не удалось получить
+            if not successful_texts:
+                let_log('[main] No successful texts found')
+                return []
             let_log(f'[main] Processed links: {len(processed_links)}, total links received: {len(all_links)}')
             return successful_texts[:TARGET_SUCCESSFUL_SITES]
-        except Exception as e: let_log(f'[pages_handler] Unexpected error: {str(e)}'); return []  # при любой ошибке возвращаем пустой список
-    # Получаем список (url, raw_text) из кэшируемой функции
-    sites_data = pages_handler(text)
-    if not sites_data: return found_info_1
-    # Объединяем все сырые тексты в одну строку
-    combined_raw = "\n\n".join(raw for _, raw in sites_data)
-    # Сжимаем объединённый текст (text_cutter вызывается вне pages_handler)
-    summarized = text_cutter(text_cutter(combined_raw))
-    # Формируем список ссылок
-    links = [url for url, _ in sites_data]
-    # Добавляем заголовок из атрибута (с возможной локализацией)
+        except Exception as e:
+            let_log(f'[pages_handler] Unexpected error: {str(e)}')
+            return []
+
+    # Per-query budget: multi-query uses fewer pages each so total stays reasonable
+    nq = len(queries)
+    per_query_sites = 10 if nq == 1 else max(3, 12 // nq)
+
+    sections = []
+    all_links_ordered = []
+    seen_links = set()
+    any_data = False
+    for qi, q in enumerate(queries, 1):
+        sites_data = pages_handler(q, per_query_sites) or []
+        if not sites_data:
+            sections.append(f"=== {main.query_section_header} {qi}: {q} ===\n{found_info_1}")
+            continue
+        any_data = True
+        combined_raw = "\n\n".join(raw for _, raw in sites_data)
+        summarized = text_cutter(text_cutter(combined_raw))
+        for url, _ in sites_data:
+            if url not in seen_links:
+                seen_links.add(url)
+                all_links_ordered.append(url)
+        if nq == 1:
+            sections.append(summarized)
+        else:
+            sections.append(f"=== {main.query_section_header} {qi}: {q} ===\n{summarized}")
+
+    if not any_data:
+        return found_info_1
+    body = "\n\n".join(sections)
     header = main.used_links_header
-    links_str = "\n".join(links)
-    result = f"{summarized}\n\n{header}\n{links_str}"
-    let_log(f'[main] Final result length: {len(result)} chars')
+    links_str = "\n".join(all_links_ordered)
+    result = f"{body}\n\n{header}\n{links_str}"
+    let_log(f'[main] Final result length: {len(result)} chars, queries={nq}')
     return result

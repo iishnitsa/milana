@@ -1,6 +1,6 @@
 '''
 end_dialogue
-gets the final result and ends the dialogue
+gets the final result and ends the dialogue. REQUIRED: after the command write the full result text for the client (non-empty). Empty body is rejected.
 '''
 
 import time
@@ -16,17 +16,27 @@ from cross_gpt import (
     chat_path,
     recreate_agents,
     send_output_message,
-    get_input_message)
+    get_input_message,
+    critic_reuse_dialog)
 import os
 from datetime import datetime
 base_dir = os.path.join(chat_path, "results")
 
 def main(text):
     if not hasattr(main, 'attr_names'):
-        main.attr_names = ('end_dialog_return', 'got_client_answer')
+        main.attr_names = ('end_dialog_return', 'got_client_answer', 'empty_result_text')
         main.end_dialog_return = 'Response saved.'
         main.got_client_answer = "The client's response was received:"
+        main.empty_result_text = (
+            "End dialogue was called without a result. "
+            "Write the final answer for the client after the command, for example: "
+            "!!!end_dialogue!!! Here is the full result..."
+        )
         return
+    text = (text or '').strip()
+    if not text:
+        let_log('end_dialog: empty result rejected')
+        return main.empty_result_text
     let_log('\n' + '='*60)
     let_log('ЗАВЕРШЕНИЕ ДИАЛОГА')
     let_log(f"Current hierarchy ID: {global_state.now_try}")
@@ -49,8 +59,25 @@ def main(text):
         filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}__{filename}.txt"
         path = os.path.join(base_dir, filename)
         try:
+            os.makedirs(base_dir, exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f: f.write(text)
+            # файл результата — для пользователя
+            try:
+                with open(path + '.for_user', 'w', encoding='utf-8') as mf:
+                    mf.write('for_user=1\n')
+            except Exception:
+                pass
         except Exception as e: let_log(f"Error: {e}")
+    # Optional: snapshot touched project files to dialog_artifacts/ (NOT branch merge into main)
+    # Setting: fs_copy_touched_on_end (default off). Auto-promote merge is TODO.
+    try:
+        if getattr(global_state, 'fs_copy_touched_on_end', False):
+            from filesystem.api import copy_touched_to_folder
+            sess = str(getattr(global_state, 'now_try', 'default') or 'default')
+            snap = copy_touched_to_folder(sess, label=sess)
+            let_log(f"[fs] copy_touched_on_end: {snap.get('dest')} files={snap.get('copied')}")
+    except Exception as e:
+        let_log(f"[fs] copy_touched_on_end skipped: {e}")
     # ИСХОДНАЯ ЛОГИКА РАБОТЫ С КРИТИКОМ
     let_log('\n--- Проверка критика ---')
     let_log(f"Реакции критика: {global_state.critic_reactions}")
@@ -59,6 +86,17 @@ def main(text):
     if critic_result == 3:
         is_dialog_correct = 'correct'
         save_emb_dialog(is_dialog_correct, result_text=text, result=True)
+    elif isinstance(critic_result, str) and critic_reuse_dialog:
+        # Не пересоздаём диалог: возвращаем ответ + обновлённый промпт (комментарий критика уже в global_state)
+        let_log(f"[critic_reuse_dialog] доработка без пересоздания: {str(critic_result)[:120]}...")
+        save_emb_dialog(is_dialog_correct, result_text=text, result=True)
+        save_emb_dialog(is_dialog_correct)
+        global_state.dialog_state = True
+        global_state.stop_agent = True
+        global_state.dialog_ended = False
+        global_state.need_owerwrite_operator = True
+        # Ответ агенту: исходный результат + указание критика
+        return text + '\n\n' + str(critic_result)
     elif critic_result != 2 or critic != 1:
         let_log(f"Критик требует переделки: {critic_result}...")
         save_emb_dialog(is_dialog_correct, result_text=text, result=True)
@@ -67,14 +105,16 @@ def main(text):
         save_emb_dialog(is_dialog_correct, dialog_type='executor')
         # Удаляем чат исполнителя
         delete_chat(global_state.conversations)
-        global_state.tools_commands_dict.pop(global_state.conversations)
+        from cross_gpt import pop_agent_tools
+        pop_agent_tools(global_state.conversations)
         let_log("Удалены инструменты исполнителя")
         global_state.conversations -= 1
         let_log(f"Удалён чат исполнителя, conversations уменьшен до: {global_state.conversations}")
     else: let_log('Исполнитель не был создан, чат не удалён')
     delete_chat(global_state.conversations)
     let_log("Удалёны чат оператора")
-    global_state.tools_commands_dict.pop(global_state.conversations)
+    from cross_gpt import pop_agent_tools
+    pop_agent_tools(global_state.conversations)
     let_log("Удалены инструменты оператора")
     global_state.conversations -= 1
     let_log(f"Conversations после уменьшения: {global_state.conversations}")

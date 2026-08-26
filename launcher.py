@@ -90,6 +90,14 @@ if False:
     from ddgs import DDGS
     from bs4 import BeautifulSoup
     import cryptography
+    import secrets
+    import dulwich
+    from dulwich import porcelain  # subpackage — PyInstaller must collect it
+    from dulwich.objects import Blob, Commit, Tree
+    from dulwich.repo import Repo
+    import translators
+    import sympy
+    import mpmath
 
 def run_as_interpreter(): # Режим исполнения ui.py внутри среды лаунчера
     if len(sys.argv) < 2: return
@@ -133,7 +141,9 @@ def launch_external_ui(): # Запуск ui.py без консольного о�
     if getattr(sys, 'frozen', False): base_dir = os.path.dirname(os.path.abspath(sys.executable)); executable = sys.executable
     else: base_dir = os.path.dirname(os.path.abspath(__file__)); executable = get_pythonw_path()
     ui_path = os.path.join(base_dir, "ui.py")
-    if not os.path.exists(ui_path): show_error(f"Ошибка\nФайл ui.py не найден:\n{ui_path}\nУбедитесь, что файл ui.py находится в той же папке, что и программа."); return
+    if not os.path.exists(ui_path):
+        show_error("Ошибка", f"Файл ui.py не найден:\n{ui_path}\nУбедитесь, что файл ui.py находится в той же папке, что и программа.")
+        return
     try: # Для Windows используем специальные флаги
         if sys.platform == "win32":
             # Скрываем окно процесса
@@ -169,7 +179,11 @@ def launch_external_ui(): # Запуск ui.py без консольного о�
         # Небольшая задержка для проверки, что процесс запустился
         try:
             process.wait(timeout=0.1) # Если процесс завершился сразу - возможно, была ошибка
-            if process.returncode is not None and process.returncode != 0: show_error(f"Ошибка запуска\nПроцесс завершился с кодом {process.returncode}.\nПроверьте наличие всех необходимых файлов.")
+            if process.returncode is not None and process.returncode != 0:
+                show_error(
+                    "Ошибка запуска",
+                    f"Процесс завершился с кодом {process.returncode}.\nПроверьте наличие всех необходимых файлов.",
+                )
         except subprocess.TimeoutExpired: pass # Процесс запустился и работает - это нормально
     except Exception as e: show_error("Ошибка запуска", f"Не удалось запустить ui.py:\n{str(e)}")
 
@@ -178,12 +192,18 @@ def check_environment():
     if getattr(sys, 'frozen', False): base_dir = os.path.dirname(os.path.abspath(sys.executable))
     else: base_dir = os.path.dirname(os.path.abspath(__file__))
     # Проверяем наличие критически важных папок
-    required_dirs = ['data', 'lang', 'default_tools', 'model_providers']
+    # Editable next to exe (only launcher.py is frozen); include filesystem
+    required_dirs = ['data', 'lang', 'default_tools', 'model_providers', 'filesystem']
     missing_dirs = []
     for dir_name in required_dirs:
         dir_path = os.path.join(base_dir, dir_name)
         if not os.path.exists(dir_path): missing_dirs.append(dir_name)
-    if missing_dirs: show_error(f"Не найдены следующие папки:\n{', '.join(missing_dirs)}\nУбедитесь, что программа установлена правильно."); return False
+    if missing_dirs:
+        show_error(
+            "Ошибка проверки окружения",
+            f"Не найдены следующие папки:\n{', '.join(missing_dirs)}\nУбедитесь, что программа установлена правильно.",
+        )
+        return False
     return True
 
 def main():

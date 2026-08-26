@@ -28,6 +28,21 @@ worker_role_text = '\nИван: '
 
 func_role_text = '\nФункция: '
 
+# mid-dialog: сообщения клиента (deliver_user_messages)
+client_message_label = '[Сообщение клиента]'
+client_role_text = '\nКлиент: '
+client_messages_operator_note = (
+    '\nВнешний клиент (вне иерархии) может писать во время работы. '
+    'Тогда до продолжения с Иваном у тебя отдельный ход: '
+    'ответь клиенту обычным текстом (без команды) или !!!пропустить!!! чтобы вернуться к Ивану. '
+    'Другие команды в этом ходе недоступны. Не путай клиента с Иваном.\n'
+)
+client_interrupt_mode_note = (
+    'СООБЩЕНИЕ ВНЕШНЕГО КЛИЕНТА (это не Иван). '
+    'Ответь обычным текстом клиенту или !!!пропустить!!! чтобы вернуться к Ивану без ответа. '
+    'Другие команды сейчас недоступны.'
+)
+
 start_dialog_history = 'Краткая история диалога: '
 
 make_exec_first = 'Создай исполнителя перед началом диалога'
@@ -35,25 +50,33 @@ make_exec_first = 'Создай исполнителя перед началом
 gigo_dreamer = 'мечтатель'
 gigo_realist = 'реалист'
 gigo_critic = 'критик'
+
 gigo_questions = 'Пользователь пришлёт тебе задачу. В ответ напиши вопрос или вопросы, какой информации нехватает для выполнения задачи. По одному вопросу на строку. Обязательно ставь вопросительный знак (?) в конце каждой строки с вопросом. Если вопросов несколько, задавай сразу все в одном сообщении. Каждый вопрос должен быть самодостаточным, так как система не учитывает контекст при поиске. Например, "Какие существуют авторитетные источники, исследующие феномен X?" вместо "Какие существуют авторитетные источники?". Пришли только вопросы, никакого другого текста быть не должно'
 gigo_found_info = 'Доступна только следующая информация:'
+# --- классический GIGO (use_old_gigo) ---
 gigo_dreamer_note = '. Твоя задача — предложить самое смелое, амбициозное и идеальное решение, не ограниченное ресурсами или текущими возможностями. Представь, как можно выполнить задачу наилучшим образом, чтобы клиент был в полном восторге'
 gigo_realist_note = '. Твоя задача — предложить практичное, выполнимое решение. Опиши, как эффективно выполнить задачу, избегая излишних сложностей'
 gigo_critic_note = '. Твоя задача — проанализировать возможные решения и указать на их слабые места, риски, потенциальные проблемы. Выяви, что может пойти не так, и предложи, как этого избежать или смягчить последствия'
 gigo_role_answer_1 = 'Ты - '
 gigo_role_answer_2 = '. Пользователь пришлёт тебе задачу и, возможно, дополнительную информацию для выполнения задачи. Ответь сразу, как идеально выполнить задачу, как сполна удовлетворить клиента, задачу которого прислал пользователь. Нельзя задавать вопросов пользователю, или обсуждать с ним что-то. Нужен сразу ответ. Ответ не должен содержать вопросительных предложений.'
 gigo_make_plan_1 = '''Пользователь будет присылать тебе мысли разных сущностей о решении поставленной задачи.
-Как только он пришлёт мысли последней сущности, сразу напиши план решения задачи длинной в 10-25 строк.
+Как только он пришлёт мысли последней сущности, сразу напиши план решения задачи длиной в 10-25 строк.
+Оформи план только нумерованным списком вида:
+1. ...
+2. ...
+3. ...
 Не комментируй его, не пиши что-то вроде "Вот план по решению...", не задавай вопросов.
 Ответ не должен содержать вопросительных предложений.
-Просто план.
+Просто нумерованный план
 '''
+gigo_make_plan_num = '\nПунктов плана необходимо: '
 gigo_make_plan_2 = '\nСущности: '
 gigo_return_1 = 'Задача:\n'
 gigo_return_2 = 'План:\n'
 gigo_next_role = 'Далее: '
 gigo_final_role = '. Всё! Сразу после твоего сообщения я пришлю план.'
 gigo_final_role_2 = 'Это последнее. Жду от тебя план прямо сейчас!'
+
 start_load_attachments_text = 'Происходит загрузка вложений, может занять много времени...'
 end_load_attachments_text = 'Вложения загружены'
 
@@ -112,6 +135,25 @@ prompt_decision_5 = """
 НОВАЯ ЗАДАЧА:
 Твоя предыдущая попытка решить задачу "написать функцию суммирования" была почти успешной, но в ней отсутствовала обработка нечисловых данных. Пожалуйста, доработай эту функцию, добавив блок try-except.
 """
+prompt_critic_principles = """
+Принципы оценки:
+
+Оценивай только фактически полученный результат.
+
+Не одобряй работу только потому, что на неё было потрачено много усилий.
+Не отклоняй работу только потому, что для её выполнения потребовалось несколько попыток.
+
+Если результат решает задачу пользователя, даже неожиданным способом, считай это достоинством.
+
+Возможность отправить работу на доработку ограничена.
+Используй её только тогда, когда дополнительная итерация с высокой вероятностью сможет существенно улучшить результат.
+
+Не требуй доработки только потому, что ответ можно сделать немного лучше.
+
+Если невозможно уверенно определить правильность результата, выбери вердикт «не уверен», а не делай необоснованных выводов.
+
+Не придумывай достоинства или недостатки, которых нет в предоставленных задаче и результате.
+"""
 prompt_librarian_questions_1 = """
 Ты — дотошный факт-чекер. Основываясь на задаче, результате и отчёте об оценке, сформулируй список вопросов, которые нужно задать внешнему источнику знаний ("библиотекарю"), чтобы проверить факты, найти лучшие практики или выявить скрытые ошибки.
 Задача:"""
@@ -163,6 +205,14 @@ what_is_func_text = '''
 Если собеседник начинает своё сообщение текстом "Функция: ", то это не собеседник, а системное сообщение или ответ функции, если она была тобой вызвана.
 '''
 
+# Когда allow_command_not_at_start: команда может быть после короткого вступления
+what_is_func_text_not_at_start = '''
+Чтобы вызвать команду, напиши три восклицательных знака, потом имя команды, потом ещё три восклицательных знака, а потом информацию для команды. Команда может идти после короткого вступления, но сам маркер держи вне markdown/json и не смешивай вызов с обычным ответом собеседнику так же, как при «чистом» командном сообщении.
+Не используй json и markdown для вызова функций.
+Если ты пишешь команду, предпочитай явный блок команды без длинного комментария после вызова.
+Если собеседник начинает своё сообщение текстом "Функция: ", то это не собеседник, а системное сообщение или ответ функции, если она была тобой вызвана.
+'''
+
 only_one_func_text = """
 В одном сообщении разрешена только одна команда (один вызов). Нельзя писать несколько команд (разные или одну и ту же) в одном сообщении.
 Даже если система не выдаст предупреждение о нарушении, все команды кроме первой в сообщении не будут выполнены.
@@ -191,7 +241,12 @@ error_in_provider = 'Произошла ошибка при обращении �
 
 success_in_provider = 'Ошибка исчезла, продолжаю работу'
 
-wrong_command = 'Неправильная команда'
+empty_reply_context_hint = (
+    'Модель несколько раз подряд вернула пустой ответ. '
+    'Возможно, ей не хватает окна контекста для текущего промпта — увеличьте лимит контекста модели (num_ctx / token_limit) и повторите.'
+)
+
+wrong_command = 'Неправильная либо отсутствующая команда'
 
 warn_command_text_1 = "Обнаружено нарушение протокола:"
 
@@ -205,9 +260,15 @@ warn_command_text_5 = "Команда находится внутри JSON-ст�
 
 warn_command_text_6 = "Команда находится внутри markdown-форматирования (жирный, курсив, код и т.п.)."
 
-warn_command_text_7 = 'Если вы НЕ пытались вызвать команду, используйте !!!пропустить!!! в самом начале сообщения, и затем напишите ваше сообщение ещё раз — оно будет отправлено собеседнику (например, "!!!пропустить!!! Я хочу сказать, что...").'
+warn_command_text_7 = (
+    'Не используйте !!!пропустить!!! автоматически. '
+    'Если ошибка в команде — исправьте её; если хотели обычное сообщение — отправьте его без маркеров. '
+    'Используйте !!!пропустить!!! только если системе по ошибке кажется, что обычный текст является командой.'
+)
 
-no_markdown_instruction = 'ВАЖНО: Не используй Markdown (например, **жирный**, *курсив*, `код`, списки с * или -) в своих ответах. Пиши обычным текстом. Markdown разрешён только если это явно требуется для передачи форматированного кода или данных, но в обычном общении избегай его.'
+warn_command_text_8 = 'Доступные инструменты:'
+
+no_markdown_instruction = 'ВАЖНО: Не используй Markdown (например, **жирный**, *курсив*, `код`, списки с * или -). Пиши обычным текстом. Markdown разрешён только если это явно требуется для передачи форматированного кода или данных, но в обычном общении избегай его.'
 
 yes_no_instruction = """
 Ты должен отвечать только "Да." или "Нет." Не добавляй никакого дополнительного текста, пояснений или знаков препинания, кроме одной точки в конце. Это критически важно для правильной обработки ответа системой.
@@ -236,6 +297,9 @@ cut_message_prompt = '''Ты ИИ-сократитель сообщений. П�
 
 write_shortly_prompt = '\nСтарайся писать лаконично для экономии контекста.'
 
+# Единый hint для ролей old GIGO (вместо дубля write_shortly + англ. "10 sentences")
+gigo_role_short_hint = '\nОтветь не более чем примерно 10 короткими предложениями. Будь лаконичен.\n'
+
 prompt_chunk_summary = "Сжато изложи суть приведённого фрагмента диалога. Выдели ключевые факты, решения и важные детали. Ответ — 1-2 предложения."
 
 prompt_global_summary = "На основе сводок отдельных фрагментов составь единую глобальную сводку всего диалога. Опиши основные темы, принятые решения и ключевые факты. Используй 2-4 предложения."
@@ -243,6 +307,54 @@ prompt_global_summary = "На основе сводок отдельных фр�
 prompt_recent_summary = "На основе сводок фрагментов составь краткую сводку последней темы разговора. Выдели суть обсуждения и важные детали. Используй 1-3 предложения."
 
 text_tokens_coefficient = 0.5 # усреднённый коэффициент для русского языка
+
+gigo_intention_prompt = '''Проанализируй задачу пользователя и ответь на следующие вопросы (каждый на новой строке):
+1. Что пользователь имеет в виду?
+2. Чего пользователь хочет этим добиться?
+3. Как пользователь поймёт, что всё получилось?
+4. Что пользователю нельзя потерять?
+5. Какие возможности дают имеющиеся инструменты? Чем исполнители будут ограничены?
+
+Ответь строго в формате:
+1. ...
+2. ...
+3. ...
+4. ...
+5. ...
+'''
+# TODO: с одной стороны модель будет фантазировать без инструментальных ограничений а с другой не будет использовать инструменты необычным способом
+
+gigo_entropy_instruction = 'Используй эту строку как внешний источник энтропии при выборе направлений поиска идей. Идея не должна отклоняться от задачи клиента, не придумывай то, чего нет в задаче, идея не должна перевыполнять задачу. Не цитируй, не анализируй и не упоминай её в ответе. Она своим существованием позволит тебе сгенерировать случайную идею:'
+
+gigo_role_generation_prompt = 'Придумай, роль для эксперта, который будет генерировать идею по задаче. Ответь только названием роли.'
+#gigo_role_generation_prompt = 'Придумай необычную, но уместную роль для эксперта, который будет генерировать идею по задаче. Роль должна быть из области, максимально далёкой от темы задачи, чтобы обеспечить свежий взгляд. Ответь только названием роли.'
+
+gigo_idea_generation_prompt_1 = 'Ты – '
+gigo_idea_generation_prompt_2 = '. Используя задачу, намерение пользователя, доступную информацию и концепцию (если есть), сгенерируй одну смелую, но выполнимую идею для решения задачи. Ответь кратко, 3-5 предложений.'
+
+gigo_filter_ideas_prompt = 'Оцени следующие идеи по шкале от 1 до 10 (где 10 – наилучшая) по критериям: новизна, реализуемость, соответствие задаче. Верни только номера идей, которые набрали >= 7, через запятую без пробелов (например: 1,3,5). Не пиши ничего кроме номеров.'
+
+gigo_dreamer_prompt = 'Ты – мечтатель. Развей эту идею до максимально амбициозного, идеального решения, игнорируя ограничения. Опиши, как это могло бы выглядеть в лучшем мире.'
+gigo_realist_prompt = 'Ты – реалист. Развей эту идею в практичное, выполнимое решение, описав конкретные шаги и реалистичные ресурсы.'
+gigo_critic_prompt = 'Ты – критик. Выяви слабые места, риски и потенциальные проблемы этой идеи. Предложи, как их смягчить.'
+
+gigo_synthesize_prompt = 'Объедини три взгляда (мечтателя, реалиста, критика) на исходную идею в одну сбалансированную развитую версию. Учти амбициозность, реализуемость и устранение рисков. Ответь 5-7 предложениями.'
+
+gigo_choose_best_prompt = 'Из следующих развитых идей выбери одну, наиболее соответствующую задаче и намерению пользователя. Верни только номер идеи (цифру). Не пиши ничего кроме номера.'
+
+gigo_build_answer_prompt_1 = 'На основе выбранной идеи составь финальный ответ для пользователя. Включи:\n- Задачу (переформулируй кратко)\n- Концепт (если был)\n- Детальный план действий ('
+gigo_build_answer_prompt_2 = ' пунктов)\n\nИспользуй обычный текст, без маркдауна.'
+
+gigo_label_task = 'Задача:\n'
+gigo_label_intention = 'Намерение:\n'
+gigo_label_additional_info = 'Дополнительная информация:\n'
+gigo_label_concept = 'Концепция:\n'
+gigo_label_idea = 'Идея '
+gigo_label_colon = ': '
+gigo_label_original_idea = 'Исходная идея:\n'
+gigo_label_best_idea = 'Лучшая идея:\n'
+gigo_label_answer = 'Ответ:\n'
+gigo_revise_prompt = 'Перепиши следующий ответ, улучшив его по полноте, ясности и соответствию задаче. Сохрани структуру (задача, концепт, план). Ответь только исправленной версией.\n\n'
 
 class SystemTextContainer:
     def __init__(self):
@@ -254,6 +366,10 @@ class SystemTextContainer:
         self.operator_role_text = operator_role_text
         self.worker_role_text = worker_role_text
         self.func_role_text = func_role_text
+        self.client_message_label = client_message_label
+        self.client_role_text = client_role_text
+        self.client_messages_operator_note = client_messages_operator_note
+        self.client_interrupt_mode_note = client_interrupt_mode_note
         self.start_dialog_history = start_dialog_history
         self.make_exec_first = make_exec_first
         self.gigo_dreamer = gigo_dreamer
@@ -267,6 +383,7 @@ class SystemTextContainer:
         self.gigo_role_answer_1 = gigo_role_answer_1
         self.gigo_role_answer_2 = gigo_role_answer_2
         self.gigo_make_plan_1 = gigo_make_plan_1
+        self.gigo_make_plan_num = gigo_make_plan_num
         self.gigo_make_plan_2 = gigo_make_plan_2
         self.gigo_return_1 = gigo_return_1
         self.gigo_return_2 = gigo_return_2
@@ -291,6 +408,7 @@ class SystemTextContainer:
         self.prompt_decision_3 = prompt_decision_3
         self.prompt_decision_4 = prompt_decision_4
         self.prompt_decision_5 = prompt_decision_5
+        self.prompt_critic_principles = prompt_critic_principles
         self.prompt_librarian_questions_1 = prompt_librarian_questions_1
         self.prompt_librarian_questions_2 = prompt_librarian_questions_2
         self.prompt_librarian_questions_3 = prompt_librarian_questions_3
@@ -325,6 +443,7 @@ class SystemTextContainer:
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4
         self.what_is_func_text = what_is_func_text
+        self.what_is_func_text_not_at_start = what_is_func_text_not_at_start
         self.only_one_func_text = only_one_func_text
         self.last_messages_marker = last_messages_marker
         self.rag_context_marker = rag_context_marker
@@ -332,6 +451,7 @@ class SystemTextContainer:
         self.recent_summary_marker = recent_summary_marker
         self.error_in_provider = error_in_provider
         self.success_in_provider = success_in_provider
+        self.empty_reply_context_hint = empty_reply_context_hint
         self.wrong_command = wrong_command
         self.warn_command_text_1 = warn_command_text_1
         self.warn_command_text_2 = warn_command_text_2
@@ -340,15 +460,41 @@ class SystemTextContainer:
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
+        self.warn_command_text_8 = warn_command_text_8
         self.no_markdown_instruction = no_markdown_instruction
         self.yes_no_instruction = yes_no_instruction
         self.yes_word = yes_word
         self.no_word = no_word
         self.cut_message_prompt = cut_message_prompt
         self.write_shortly_prompt = write_shortly_prompt
+        self.gigo_role_short_hint = gigo_role_short_hint
         self.prompt_chunk_summary = prompt_chunk_summary
         self.prompt_global_summary = prompt_global_summary
         self.prompt_recent_summary = prompt_recent_summary
         self.text_tokens_coefficient = text_tokens_coefficient
+        self.gigo_intention_prompt = gigo_intention_prompt
+        self.gigo_entropy_instruction = gigo_entropy_instruction
+        self.gigo_role_generation_prompt = gigo_role_generation_prompt
+        self.gigo_idea_generation_prompt_1 = gigo_idea_generation_prompt_1
+        self.gigo_idea_generation_prompt_2 = gigo_idea_generation_prompt_2
+        self.gigo_filter_ideas_prompt = gigo_filter_ideas_prompt
+        self.gigo_dreamer_prompt = gigo_dreamer_prompt
+        self.gigo_realist_prompt = gigo_realist_prompt
+        self.gigo_critic_prompt = gigo_critic_prompt
+        self.gigo_synthesize_prompt = gigo_synthesize_prompt
+        self.gigo_choose_best_prompt = gigo_choose_best_prompt
+        self.gigo_build_answer_prompt_1 = gigo_build_answer_prompt_1
+        self.gigo_build_answer_prompt_2 = gigo_build_answer_prompt_2
+        self.gigo_label_task = gigo_label_task
+        self.gigo_label_intention = gigo_label_intention
+        self.gigo_label_additional_info = gigo_label_additional_info
+        self.gigo_label_concept = gigo_label_concept
+        self.gigo_label_idea = gigo_label_idea
+        self.gigo_label_colon = gigo_label_colon
+        self.gigo_label_original_idea = gigo_label_original_idea
+        self.gigo_label_best_idea = gigo_label_best_idea
+        self.gigo_label_answer = gigo_label_answer
+        self.gigo_revise_prompt = gigo_revise_prompt
 
-def system_text_container(): return SystemTextContainer()
+def system_text_container():
+    return SystemTextContainer()

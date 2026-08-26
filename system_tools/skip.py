@@ -1,6 +1,6 @@
 '''
 skip
-use this command if you were not trying to call any tool and just want to send your message to the user
+fallback only: force a plain message when the system mistakes it for a command; not for normal chat
 '''
 from cross_gpt import global_state, let_log
 

@@ -3,6 +3,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.pytest_cache
 build/
 dist/
 *.egg-info/
@@ -23,3 +24,10 @@ Milana.exe
 /start_milana.cmd
 /launch_milana.cmd
 /run_milana.sh
+# splash/boot debug (do not ship)
+milana_boot.log
+data/milana_boot.log
+.milana_boot.log
+
+# Linux self-extracting installer artifacts
+*.run

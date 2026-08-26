@@ -13,6 +13,8 @@ import pandas as pd
 import cv2
 import unicodedata
 from cross_gpt import (
+    global_state,
+    cacher,
     err_image_process_text_infoloaders,
     text_on_image_prompt_infoloaders,
     err_image_process_pdf_infoloaders,
@@ -35,7 +37,6 @@ from cross_gpt import (
     excel_cheet_error_text,
     excel_empty_text,
     excel_error_text)
-from cross_gpt import global_state   # ДОБАВЛЕНО
 
 def get_resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'): return os.path.join(sys._MEIPASS, relative_path)
@@ -44,6 +45,20 @@ def get_resource_path(relative_path):
 def get_external_path(relative_path): # Получает путь к файлу/папке рядом с .exe или скриптом
     if hasattr(sys, '_MEIPASS'): return os.path.join(os.path.dirname(sys.executable), relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
+
+def bundled_image_models_available():
+    """True if installer left local BLIP + EasyOCR weights under data/models/."""
+    blip = get_external_path(os.path.join("data", "models", "blip"))
+    easy = get_external_path(os.path.join("data", "models", "easyocr"))
+    blip_ok = (
+        os.path.isfile(os.path.join(blip, "config.json"))
+        or os.path.isfile(os.path.join(blip, "model.safetensors"))
+    )
+    easy_ok = (
+        os.path.isfile(os.path.join(easy, "craft_mlt_25k.pth"))
+        and os.path.isfile(os.path.join(easy, "cyrillic_g2.pth"))
+    )
+    return bool(blip_ok and easy_ok)
 
 # --- ДОБАВЛЕНО ---
 def is_image_too_small(image_bytes, min_size=150):
@@ -65,10 +80,16 @@ _IMAGE_MODELS_LOADED = False
 _IMAGE_MODELS_LOAD_FAILED = False
 
 def _load_image_models():
+    if not global_state.allow_ocr: raise RuntimeError('OCR not allowed')
     global _BLIP_PROCESSOR, _BLIP_MODEL, _OCR_INSTANCE
     global _IMAGE_MODELS_LOADED, _IMAGE_MODELS_LOAD_FAILED
     if _IMAGE_MODELS_LOADED: return True
     if _IMAGE_MODELS_LOAD_FAILED: raise RuntimeError(model_early_loading_error_text)
+    if not bundled_image_models_available():
+        let_log("Локальные BLIP/EasyOCR не установлены (установщик без models) — OCR недоступен")
+        _IMAGE_MODELS_LOADED = False
+        _IMAGE_MODELS_LOAD_FAILED = True
+        raise RuntimeError(model_early_loading_error_text)
     let_log("Загрузка моделей обработки изображений из локальных директорий...")
     try:
         import torch
@@ -77,14 +98,9 @@ def _load_image_models():
         import easyocr
         blip_path = get_external_path(os.path.join("data", "models", "blip"))
         easyocr_path = get_external_path(os.path.join("data", "models", "easyocr"))
-        if os.path.exists(blip_path):
-            _BLIP_PROCESSOR = BlipProcessor.from_pretrained(blip_path, use_fast=True)
-            _BLIP_MODEL = BlipForConditionalGeneration.from_pretrained(blip_path)
-            let_log("BLIP загружен локально")
-        else:
-            let_log(f"ВНИМАНИЕ: Локальная модель BLIP не найдена в {blip_path}. Попытка загрузки из сети...")
-            _BLIP_PROCESSOR = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base", use_fast=True)
-            _BLIP_MODEL = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+        _BLIP_PROCESSOR = BlipProcessor.from_pretrained(blip_path, use_fast=True)
+        _BLIP_MODEL = BlipForConditionalGeneration.from_pretrained(blip_path)
+        let_log("BLIP загружен локально")
         try:
             os.makedirs(easyocr_path, exist_ok=True)
             _OCR_INSTANCE = easyocr.Reader(['en', 'ru'], gpu=False, model_storage_directory=easyocr_path, download_enabled=False)
@@ -142,6 +158,7 @@ def decode_with_fallback(content):
         except: continue
     return content.decode('utf-8', errors='replace')
 
+@cacher
 def process_image(file_path_or_data, input_file_handlers):
     let_log('Обработка изображения')
     try: _load_image_models()
@@ -180,6 +197,7 @@ def cleanup_image_models():
     gc.collect()
     let_log("Модели очищены, сборщик мусора вызван")
 
+@cacher
 def process_pdf(file_path_or_data, input_file_handlers):
     let_log('пдф')
     try:
@@ -206,6 +224,7 @@ def process_pdf(file_path_or_data, input_file_handlers):
     pdf.close()
     return "\n".join(full_text)
 
+@cacher
 def process_docx(file_path_or_data, input_file_handlers):
     let_log('док икс')
     try: # Определяем тип входных данных
@@ -251,6 +270,7 @@ def process_docx(file_path_or_data, input_file_handlers):
                 except Exception as e: let_log(f"  Ошибка при поиске изображений в DOCX: {e}"); continue
     return "\n".join(full_text)
 
+@cacher
 def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0, max_depth=5):
     """
     Обрабатывает ZIP-архив с рекурсивной обработкой вложенных архивов
@@ -316,6 +336,7 @@ def process_zip(file_path_or_data, input_file_handlers, is_nested=False, depth=0
         return [{'filename': zip_archive_name_infoloaders, 'content': error_msg, 'type': 'error'}]
     return results
 
+@cacher
 def process_text(file_path_or_data, input_file_handlers):
     let_log('text')
     try:
@@ -338,6 +359,7 @@ def process_text(file_path_or_data, input_file_handlers):
         if isinstance(file_path_or_data, bytes): return file_path_or_data.decode('utf-8', errors='ignore')
         else: return file_path_or_data
 
+@cacher
 def process_excel(file_path_or_data, input_file_handlers):
     """
     Обрабатывает Excel файлы (xlsx, xls) - извлекает данные из всех листов
@@ -374,6 +396,7 @@ def process_excel(file_path_or_data, input_file_handlers):
         let_log(error_msg)
         return error_msg
 
+@cacher
 def process_unknown(file_path_or_data, input_file_handlers):
     """
     Обработчик для файлов с неизвестными расширениями.

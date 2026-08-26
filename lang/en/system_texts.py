@@ -30,6 +30,21 @@ worker_role_text = '\nIvan: '
 
 func_role_text = '\nFunction: '
 
+# mid-dialog client inject (deliver_user_messages)
+client_message_label = '[Client message]'
+client_role_text = '\nClient: '
+client_messages_operator_note = (
+    '\nThe external client (outside the agent hierarchy) may write while you work. '
+    'When that happens you get a special turn before continuing with Ivan: '
+    'reply to the client in plain text (no command), or !!!skip!!! to ignore and return to Ivan. '
+    'Other tools are unavailable in that turn. Do not confuse the client with Ivan.\n'
+)
+client_interrupt_mode_note = (
+    'EXTERNAL CLIENT MESSAGE (not Ivan). '
+    'Reply in plain text to the client, or !!!skip!!! to return to Ivan without answering. '
+    'No other commands are available now.'
+)
+
 start_dialog_history = 'Brief dialogue history: '
 
 make_exec_first = 'Create an executor before starting the dialogue'
@@ -37,25 +52,32 @@ make_exec_first = 'Create an executor before starting the dialogue'
 gigo_dreamer = 'dreamer'
 gigo_realist = 'realist'
 gigo_critic = 'critic'
+
 gigo_questions = 'The user will send you a task. In response, write a question or questions about what information is missing to complete the task. One question per line. Be sure to put a question mark (?) at the end of each line with a question. If there are several questions, ask all at once in one message. Each question must be self-contained, since the system does not take context into account when searching. For example, "What authoritative sources study phenomenon X?" instead of "What authoritative sources are there?". Send only questions, no other text should be present'
 gigo_found_info = 'Only the following information is available:'
-gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how to complete the task in the best possible way to leave the client completely delighted'
-gigo_realist_note = '. Your task is to propose a practical, feasible solution. Describe how to effectively complete the task, avoiding unnecessary complications'
-gigo_critic_note = '. Your task is to analyze possible solutions and point out their weaknesses, risks, and potential problems. Identify what could go wrong and suggest how to avoid or mitigate the consequences'
+# --- classic GIGO (use_old_gigo) ---
+gigo_dreamer_note = '. Your task is to propose the boldest, most ambitious and ideal solution, not limited by resources or current capabilities. Imagine how to complete the task in the best possible way so the client is fully delighted'
+gigo_realist_note = '. Your task is to propose a practical, feasible solution. Describe how to complete the task efficiently, avoiding unnecessary complexity'
+gigo_critic_note = '. Your task is to analyze possible solutions and point out their weaknesses, risks, and potential problems. Identify what can go wrong and suggest how to avoid or mitigate the consequences'
 gigo_role_answer_1 = 'You are a '
-gigo_role_answer_2 = '. The user will send you a task and, possibly, additional information to complete the task. Respond immediately with how to perfectly complete the task, how to fully satisfy the client whose task the user sent. You cannot ask the user questions or discuss anything with them. An answer is needed immediately. The answer should not contain interrogative sentences.'
+gigo_role_answer_2 = '. The user will send you a task and possibly additional information for completing it. Answer immediately how to ideally complete the task and fully satisfy the client. You must not ask the user questions or discuss anything with them. An answer is needed right away. The answer must not contain interrogative sentences.'
 gigo_make_plan_1 = '''The user will send you the thoughts of different entities about solving the given task.
 As soon as they send the thoughts of the last entity, immediately write a plan for solving the task with a length of 10-25 lines.
+Format the plan as a numbered list only, like:
+1. ...
+2. ...
+3. ...
 Do not comment on it, do not write anything like "Here is a plan for solving...", do not ask questions.
 The answer should not contain interrogative sentences.
-Just the plan.
+Just the numbered plan
 '''
+gigo_make_plan_num = '\nNumber of plan steps required: '
 gigo_make_plan_2 = '\nEntities: '
 gigo_return_1 = 'Task:\n'
 gigo_return_2 = 'Plan:\n'
 gigo_next_role = 'Next: '
-gigo_final_role = ". That's it! Right after your message I will send the plan."
-gigo_final_role_2 = "This is the last one. I am waiting for a plan from you right now!"
+gigo_final_role = '. That is all! Right after your message I will send the plan.'
+gigo_final_role_2 = 'This is the last one. I am waiting for the plan from you right now!'
 
 start_load_attachments_text = 'Attachments are being loaded, this may take a long time...'
 end_load_attachments_text = 'Attachments loaded'
@@ -115,6 +137,25 @@ VERDICT: REVISE
 NEW TASK:
 Your previous attempt to solve the task "write a summation function" was almost successful, but it lacked handling of non-numeric data. Please revise this function by adding a try-except block.
 """
+prompt_critic_principles = """
+Evaluation principles:
+
+Evaluate only the result that was actually produced.
+
+Do not approve work simply because significant effort was invested.
+Do not reject work simply because it required several attempts.
+
+If the result successfully solves the user's task, even in an unexpected way, treat that as a strength rather than a weakness.
+
+The opportunity to request a revision is limited.
+Request another iteration only when one additional attempt is highly likely to produce a substantial improvement.
+
+Do not request a revision merely because the answer could be made slightly better.
+
+If you cannot confidently determine whether the result is correct, return the "unsure" verdict instead of guessing.
+
+Do not invent strengths or weaknesses that are not supported by the provided task and result.
+"""
 prompt_librarian_questions_1 = """
 You are a meticulous fact-checker. Based on the task, the result, and the evaluation report, formulate a list of questions to ask an external knowledge source ("the librarian") in order to verify facts, find best practices, or identify hidden errors.
 Task:"""
@@ -166,6 +207,14 @@ If you are writing a command, write only the command, do not comment on your act
 If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message or a function response if it was called by you.
 '''
 
+# When allow_command_not_at_start: command may appear after a short preamble
+what_is_func_text_not_at_start = '''
+To call a command, write three exclamation marks, then the command name, then three more exclamation marks, and then the information for the command. The command may appear after a short preamble, but keep the marker itself outside markdown/json and do not mix it with a normal reply to the peer in the same way as a pure command message.
+Do not use json or markdown to call functions.
+If you are writing a command, prefer a clear command block without long commentary after the call.
+If the interlocutor starts their message with the text "Function: ", then it is not the interlocutor, but a system message or a function response if it was called by you.
+'''
+
 only_one_func_text = """
 Only one command (one call) per message is allowed. Do not write multiple commands (different or the same) in one message.
 Even if the system does not issue a protocol violation warning, all commands except the first one in the message will not be executed.
@@ -194,7 +243,12 @@ error_in_provider = 'An error occurred while accessing the model provider. Infin
 
 success_in_provider = 'The error has been resolved, continuing work'
 
-wrong_command = 'Wrong command'
+empty_reply_context_hint = (
+    'The model has returned empty answers several times in a row. '
+    'Its context window may be too small for the current prompt — try increasing the model context limit (num_ctx / token_limit) and retry.'
+)
+
+wrong_command = 'Wrong or missing command'
 
 warn_command_text_1 = "Protocol violation detected:"
 
@@ -208,9 +262,15 @@ warn_command_text_5 = "Command is inside a JSON structure. Use pure !!!command!!
 
 warn_command_text_6 = "Command is inside markdown formatting (bold, italic, code, etc.)."
 
-warn_command_text_7 = 'If you did NOT try to invoke a command, use !!!skip!!! at the very beginning of the message, then write your message again — it will be sent to the interlocutor (for example, "!!!skip!!! I want to say that...").'
+warn_command_text_7 = (
+    'Do not use !!!skip!!! automatically. '
+    'If the command is invalid, fix it; if you intended a normal message, send it without any command marker. '
+    'Use !!!skip!!! only when the system mistakenly interprets a normal message as a command.'
+)
 
-no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -) in your responses. Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
+warn_command_text_8 = 'Available tools:'
+
+no_markdown_instruction = 'IMPORTANT: Do not use Markdown (e.g., **bold**, *italic*, `code`, lists with * or -). Write in plain text. Markdown is allowed only if explicitly required for formatted code or data, but in regular conversation avoid it.'
 
 yes_no_instruction = """
 You must answer only "Yes." or "No." Do not add any additional text, explanations, or punctuation other than a single period at the end. This is critically important for the system to parse your response correctly.
@@ -239,6 +299,9 @@ The user's message will be replaced by your message and embedded into the conver
 
 write_shortly_prompt = '\nTry to write concisely to save context.'
 
+# Single hint for old-GIGO roles (replaces write_shortly + separate English "10 sentences")
+gigo_role_short_hint = '\nRespond in at most about 10 short sentences. Be concise.\n'
+
 prompt_chunk_summary = "Concisely summarize the essence of the given dialogue fragment. Highlight key facts, decisions, and important details. Response — 1-2 sentences."
 
 prompt_global_summary = "Based on the summaries of individual fragments, create a single global summary of the entire dialogue. Describe the main topics, decisions made, and key facts. Use 2-4 sentences."
@@ -246,6 +309,55 @@ prompt_global_summary = "Based on the summaries of individual fragments, create 
 prompt_recent_summary = "Based on the summaries of fragments, create a brief summary of the recent conversation topic. Highlight the essence of the discussion and important details. Use 1-3 sentences."
 
 text_tokens_coefficient = 0.5 # average coefficient for English
+
+gigo_intention_prompt = '''Analyze the user's task and answer the following questions (each on a new line):
+1. What does the user mean?
+2. What does the user want to achieve?
+3. How will the user know that everything worked out?
+4. What must the user not lose?
+5. What opportunities do the available tools provide? What are the limitations for the executors?
+
+Answer strictly in the format:
+1. ...
+2. ...
+3. ...
+4. ...
+5. ...
+'''
+
+gigo_entropy_instruction = "Use this line as an external source of entropy when choosing directions for finding ideas. The idea should not deviate from the client's task, do not invent something that is not in the task, the idea should not exceed the task. Don't quote, analyze, or mention her in the reply. By its very existence, it will allow you to generate a random idea:"
+
+#gigo_role_generation_prompt = 'Come up with an unusual but appropriate role for an expert who will generate an idea for the task. The role should be from an area as far as possible from the topic of the task to ensure a fresh perspective. Respond with only the role name.'
+gigo_role_generation_prompt = 'Come up with a role for an expert who will generate an idea for the task. Respond with only the role name.'
+
+gigo_idea_generation_prompt_1 = 'You are a '
+gigo_idea_generation_prompt_2 = '. Using the task, user intention, available information, and concept (if any), generate one bold but feasible idea for solving the task. Respond briefly, 3-5 sentences.'
+
+gigo_filter_ideas_prompt = 'Evaluate the following ideas on a scale from 1 to 10 (where 10 is the best) according to the criteria: novelty, feasibility, relevance to the task. Return only the numbers of ideas that scored >= 7, separated by commas without spaces (e.g., 1,3,5). Do not write anything other than the numbers.'
+
+gigo_dreamer_prompt = 'You are a dreamer. Develop this idea into the most ambitious, ideal solution, ignoring limitations. Describe what it could look like in the best of worlds.'
+
+gigo_realist_prompt = 'You are a realist. Develop this idea into a practical, feasible solution, describing specific steps and realistic resources.'
+
+gigo_critic_prompt = 'You are a critic. Identify weaknesses, risks, and potential problems of this idea. Suggest how to mitigate them.'
+
+gigo_synthesize_prompt = 'Combine three perspectives (dreamer, realist, critic) on the original idea into one balanced developed version. Consider ambition, feasibility, and risk mitigation. Respond in 5-7 sentences.'
+
+gigo_choose_best_prompt = 'From the following developed ideas, choose the one that best matches the task and user intention. Return only the idea number (digit). Do not write anything other than the number.'
+
+gigo_build_answer_prompt_1 = 'Based on the chosen idea, compose a final response for the user. Include:\n- The task (rephrase briefly)\n- The concept (if any)\n- A detailed action plan ('
+gigo_build_answer_prompt_2 = ' points)\n\nUse plain text, no markdown.'
+
+gigo_label_task = 'Task:\n'
+gigo_label_intention = 'Intention:\n'
+gigo_label_additional_info = 'Additional information:\n'
+gigo_label_concept = 'Concept:\n'
+gigo_label_idea = 'Idea '
+gigo_label_colon = ': '
+gigo_label_original_idea = 'Original idea:\n'
+gigo_label_best_idea = 'Best idea:\n'
+gigo_label_answer = 'Answer:\n'
+gigo_revise_prompt = 'Rewrite the following answer, improving its completeness, clarity, and relevance to the task. Preserve the structure (task, concept, plan). Respond only with the corrected version.\n\n'
 
 class SystemTextContainer:
     def __init__(self):
@@ -257,6 +369,10 @@ class SystemTextContainer:
         self.operator_role_text = operator_role_text
         self.worker_role_text = worker_role_text
         self.func_role_text = func_role_text
+        self.client_message_label = client_message_label
+        self.client_role_text = client_role_text
+        self.client_messages_operator_note = client_messages_operator_note
+        self.client_interrupt_mode_note = client_interrupt_mode_note
         self.start_dialog_history = start_dialog_history
         self.make_exec_first = make_exec_first
         self.gigo_dreamer = gigo_dreamer
@@ -270,6 +386,7 @@ class SystemTextContainer:
         self.gigo_role_answer_1 = gigo_role_answer_1
         self.gigo_role_answer_2 = gigo_role_answer_2
         self.gigo_make_plan_1 = gigo_make_plan_1
+        self.gigo_make_plan_num = gigo_make_plan_num
         self.gigo_make_plan_2 = gigo_make_plan_2
         self.gigo_return_1 = gigo_return_1
         self.gigo_return_2 = gigo_return_2
@@ -294,6 +411,7 @@ class SystemTextContainer:
         self.prompt_decision_3 = prompt_decision_3
         self.prompt_decision_4 = prompt_decision_4
         self.prompt_decision_5 = prompt_decision_5
+        self.prompt_critic_principles = prompt_critic_principles
         self.prompt_librarian_questions_1 = prompt_librarian_questions_1
         self.prompt_librarian_questions_2 = prompt_librarian_questions_2
         self.prompt_librarian_questions_3 = prompt_librarian_questions_3
@@ -328,6 +446,7 @@ class SystemTextContainer:
         self.user_review_text3 = user_review_text3
         self.user_review_text4 = user_review_text4
         self.what_is_func_text = what_is_func_text
+        self.what_is_func_text_not_at_start = what_is_func_text_not_at_start
         self.only_one_func_text = only_one_func_text
         self.last_messages_marker = last_messages_marker
         self.rag_context_marker = rag_context_marker
@@ -335,6 +454,7 @@ class SystemTextContainer:
         self.recent_summary_marker = recent_summary_marker
         self.error_in_provider = error_in_provider
         self.success_in_provider = success_in_provider
+        self.empty_reply_context_hint = empty_reply_context_hint
         self.wrong_command = wrong_command
         self.warn_command_text_1 = warn_command_text_1
         self.warn_command_text_2 = warn_command_text_2
@@ -343,15 +463,41 @@ class SystemTextContainer:
         self.warn_command_text_5 = warn_command_text_5
         self.warn_command_text_6 = warn_command_text_6
         self.warn_command_text_7 = warn_command_text_7
+        self.warn_command_text_8 = warn_command_text_8
         self.no_markdown_instruction = no_markdown_instruction
         self.yes_no_instruction = yes_no_instruction
         self.yes_word = yes_word
         self.no_word = no_word
         self.cut_message_prompt = cut_message_prompt
         self.write_shortly_prompt = write_shortly_prompt
+        self.gigo_role_short_hint = gigo_role_short_hint
         self.prompt_chunk_summary = prompt_chunk_summary
         self.prompt_global_summary = prompt_global_summary
         self.prompt_recent_summary = prompt_recent_summary
         self.text_tokens_coefficient = text_tokens_coefficient
+        self.gigo_intention_prompt = gigo_intention_prompt
+        self.gigo_entropy_instruction = gigo_entropy_instruction
+        self.gigo_role_generation_prompt = gigo_role_generation_prompt
+        self.gigo_idea_generation_prompt_1 = gigo_idea_generation_prompt_1
+        self.gigo_idea_generation_prompt_2 = gigo_idea_generation_prompt_2
+        self.gigo_filter_ideas_prompt = gigo_filter_ideas_prompt
+        self.gigo_dreamer_prompt = gigo_dreamer_prompt
+        self.gigo_realist_prompt = gigo_realist_prompt
+        self.gigo_critic_prompt = gigo_critic_prompt
+        self.gigo_synthesize_prompt = gigo_synthesize_prompt
+        self.gigo_choose_best_prompt = gigo_choose_best_prompt
+        self.gigo_build_answer_prompt_1 = gigo_build_answer_prompt_1
+        self.gigo_build_answer_prompt_2 = gigo_build_answer_prompt_2
+        self.gigo_label_task = gigo_label_task
+        self.gigo_label_intention = gigo_label_intention
+        self.gigo_label_additional_info = gigo_label_additional_info
+        self.gigo_label_concept = gigo_label_concept
+        self.gigo_label_idea = gigo_label_idea
+        self.gigo_label_colon = gigo_label_colon
+        self.gigo_label_original_idea = gigo_label_original_idea
+        self.gigo_label_best_idea = gigo_label_best_idea
+        self.gigo_label_answer = gigo_label_answer
+        self.gigo_revise_prompt = gigo_revise_prompt
 
-def system_text_container(): return SystemTextContainer()
+def system_text_container():
+    return SystemTextContainer()

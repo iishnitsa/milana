@@ -100,15 +100,7 @@ fi
 echo "✓ Dependencies installed."
 echo ""
 
-# 6) Verify key packages
-echo "Verifying key packages..."
-python -c "import torch; print('  PyTorch:', torch.__version__)" 2>/dev/null || echo "  PyTorch: Not installed"
-python -c "import transformers; print('  Transformers: OK')" 2>/dev/null || echo "  Transformers: Not installed"
-python -c "import easyocr; print('  EasyOCR: OK')" 2>/dev/null || echo "  EasyOCR: Not installed"
-python -c "import customtkinter; print('  CustomTkinter: OK')" 2>/dev/null || echo "  CustomTkinter: Not installed"
-echo ""
-
-# 7) Create launcher script
+# 6) Create launcher script
 echo "Creating launcher: run_milana.sh"
 LAUNCHER="$PROJECT_ROOT/run_milana.sh"
 

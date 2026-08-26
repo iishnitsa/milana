@@ -27,8 +27,17 @@ MAX_RETRIES = 20          # Максимальное количество поп
 MAX_WAIT_TOTAL = 420      # 7 минут в секундах
 BASE_BACKOFF = 2.0        # Основание экспоненты
 
-# Флаг облачного режима (если указан токен)
-is_cloud_mode = False
+# === НОВЫЕ ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
+llm_cpu = False
+emb_cpu = True
+offload_on_boot = False
+default_num_ctx = None     # заданный в строке подключения контекст (если есть)
+filter_think_tag = False   # флаг фильтрации тегов <think>
+_last_think_content = None # последнее извлечённое содержимое think
+
+# Прошлые состояния для детекта изменений
+_last_llm_num_ctx = None
+_last_llm_cpu = None
 
 def normalize_url(url, default_port, default_scheme="http"):
     """Добавляет схему и порт по умолчанию, если они отсутствуют."""
@@ -179,40 +188,69 @@ def connect(connection_string, timeout=30):
     """
     Подключение к серверу Ollama API.
     Формат строки подключения:
-    "url=http://localhost:11434; model=mistral:latest; emb_model=all-minilm:latest; token=xxx" (token - для облачного режима)
+    "url=http://localhost:11434; model=gemma3:4b; emb_model=all-minilm:latest;
+     llm_cpu=false; emb_cpu=true; offload_on_boot=false; num_ctx=...; filter_think_tag=false"
     """
     global session, base_url, default_chat_model, token_limit, emb_token_limit
     global emb_model, do_chat_construct, native_func_call, tags, model_template_info
-    global is_cloud_mode
-    # Параметры по умолчанию (только необходимые)
+    global llm_cpu, emb_cpu, offload_on_boot, default_num_ctx
+    global _last_llm_num_ctx, _last_llm_cpu
+    global filter_think_tag
+
+    # Defaults for UI / incomplete connection strings (user may not have this model).
+    # Caller (initialize_work / _connect_model_backend) must not call connect with empty string.
+    # is_thinking removed: never sent to server (server chooses); use filter_think_tag for <think> strip.
     params = {
         "url": "http://localhost:11434",
-        "model": "qwen3.5:2b",
+        "model": "gemma3:4b",
         "emb_model": "all-minilm:latest",
         "chat_template": "True",
-        "native_func_call": "False",}
+        "native_func_call": "False",
+        "num_ctx": "",
+        "llm_cpu": "false",
+        "emb_cpu": "true",
+        "offload_on_boot": "false",
+        "filter_think_tag": "false",
+    }
     # --- Разбор строки подключения ---
-    for part in connection_string.split(";"):
+    raw = (connection_string or "").strip()
+    for part in raw.split(";"):
         part = part.strip()
-        if not part or "=" not in part: continue
+        if not part or "=" not in part:
+            continue
         key, value = part.split("=", 1)
         key = key.strip().lower()
         value = value.strip()
-        if key in params: params[key] = value
+        # apply known keys + any extra so model= always wins over default when present
+        params[key] = value
     # === НОРМАЛИЗАЦИЯ ===
-    params["url"] = normalize_url(params["url"], default_port=11434)
-    params["model"] = normalize_model(params["model"])
-    params["emb_model"] = normalize_model(params["emb_model"])
+    params["url"] = normalize_url(params.get("url") or "http://localhost:11434", default_port=11434)
+    params["model"] = normalize_model(params.get("model") or "gemma3:4b")
+    params["emb_model"] = normalize_model(params.get("emb_model") or "all-minilm:latest")
     base_url = params["url"].strip('/')
     emb_model = params["emb_model"]
     do_chat_construct = params["chat_template"].lower().strip() == "true"
     native_func_call = params["native_func_call"].lower().strip() == "true"
+
+    # Новые параметры
+    llm_cpu = params["llm_cpu"].lower().strip() == "true"
+    emb_cpu = params["emb_cpu"].lower().strip() == "true"
+    offload_on_boot = params["offload_on_boot"].lower().strip() == "true"
+    filter_think_tag = params["filter_think_tag"].lower().strip() == "true"
+
+    # Обработка num_ctx
+    num_ctx_str = params.get("num_ctx", "").strip()
+    if num_ctx_str.isdigit():
+        default_num_ctx = int(num_ctx_str)
+    else:
+        default_num_ctx = None
+
     print('подключение')
     try:
         # === Подключение к Ollama ===
         session = requests.Session()
         session.headers.update({"Content-Type": "application/json"})
-        if is_cloud_mode: session.headers.update({"Authorization": f"Bearer {params['token']}"})
+
         api_url = f"{base_url}/api/tags"
         response = session.get(api_url, timeout=timeout)
         response.raise_for_status()
@@ -238,8 +276,18 @@ def connect(connection_string, timeout=30):
                 model_template_info = model_details
                 # Определяем лимит контекста
                 token_limit = find_context_size(model_details, base_url, {})
+                # 4095/4096 «по умолчанию» часто = сбой валидации/модель retired — явно сигнализируем
+                if token_limit in (4095, 4096) and not default_num_ctx:
+                    let_log(f"[validation] Контекст модели определён как {token_limit} — возможна ошибка валидации/was retired")
+                    # Не фейлим connect (локальные модели могут иметь 4k), но помечаем в tags meta
+                    tags = _parse_template_info(model_details)
+                    tags = dict(tags or {})
+                    tags["_validation_warning"] = f"context={token_limit}: possible validation error / model retired"
+                else:
+                    tags = _parse_template_info(model_details)
                 # Извлекаем теги из шаблона модели
-                tags = _parse_template_info(model_details)
+                if not tags:
+                    tags = _parse_template_info(model_details)
         except Exception as e:
             let_log(f"Ошибка при получении деталей модели: {e}")
             tags = {
@@ -250,6 +298,8 @@ def connect(connection_string, timeout=30):
                 "tool_def_start": "", "tool_def_end": "",
                 "tool_call_start": "", "tool_call_end": "",
                 "tool_result_start": "", "tool_result_end": "",}
+            # Ошибка show/details — это ошибка валидации, не «всё ок»
+            return [False, 0, tags, f"Ошибка валидации модели (details/show failed): {e}"]
         # Проверяем и устанавливаем модель для эмбеддингов
         if emb_model not in available_models:
             let_log(f"Модель для эмбеддингов '{emb_model}' не найдена. Доступные модели: {available_models}")
@@ -267,6 +317,28 @@ def connect(connection_string, timeout=30):
                 else: emb_token_limit = 4095
             else: emb_token_limit = token_limit
         except Exception as e: let_log(f"Не удалось определить лимит токенов для эмбеддингов: {e}"); emb_token_limit = 4095
+
+        # === ВЫГРУЗКА МОДЕЛИ ПРИ ПОДКЛЮЧЕНИИ (если offload_on_boot) ===
+        if offload_on_boot and session:
+            try:
+                session.post(
+                    f"{base_url}/api/generate",
+                    json={
+                        "model": default_chat_model,
+                        "prompt": "",
+                        "keep_alive": 0,
+                        "stream": False
+                    },
+                    timeout=timeout
+                )
+                let_log("Модель выгружена (offload_on_boot=true).")
+            except Exception as e:
+                let_log(f"Предупреждение: не удалось выгрузить модель при старте: {e}")
+
+        # Сохраняем начальные состояния
+        _last_llm_num_ctx = default_num_ctx
+        _last_llm_cpu = llm_cpu
+
         return [True, token_limit, tags]
     except requests.exceptions.RequestException as e: session = None; return [False, 0, tags, f"Ошибка подключения: {e}"]
     except Exception as e: session = None; return [False, 0, tags, f"Непредвиденная ошибка: {e}"]
@@ -283,6 +355,57 @@ def disconnect() -> bool:
         return True
     return False
 
+def _check_and_reload_model():
+    """
+    Сравнивает текущие настройки с сохранёнными.
+    Если что-то изменилось — выгружает модель (keep_alive=0),
+    чтобы следующий запрос подхватил новые параметры.
+    """
+    global _last_llm_num_ctx, _last_llm_cpu
+    need_reload = False
+
+    if _last_llm_num_ctx != default_num_ctx:
+        need_reload = True
+    if _last_llm_cpu != llm_cpu:
+        need_reload = True
+
+    if need_reload:
+        let_log("Обнаружены изменения настроек. Выгружаю модель...")
+        try:
+            session.post(
+                f"{base_url}/api/generate",
+                json={
+                    "model": default_chat_model,
+                    "prompt": "",
+                    "keep_alive": 0,
+                    "stream": False
+                },
+                timeout=10
+            )
+        except Exception as e:
+            let_log(f"Ошибка при выгрузке модели: {e}")
+        finally:
+            # Обновляем сохранённые состояния в любом случае
+            _last_llm_num_ctx = default_num_ctx
+            _last_llm_cpu = llm_cpu
+
+def _extract_think(text):
+    """
+    Извлекает содержимое между <think> и </think> и возвращает (очищенный_текст, think_содержимое).
+    Если теги не найдены, возвращает (исходный_текст, None).
+    """
+    if not text:
+        return text, None
+    pattern = re.compile(r'<think>(.*?)</think>', re.DOTALL | re.IGNORECASE)
+    match = pattern.search(text)
+    if match:
+        think_content = match.group(1).strip()
+        cleaned = pattern.sub('', text).strip()
+        return cleaned, think_content
+    return text, None
+
+import traceback
+
 def _request_with_backoff(api_url, json_payload):
     let_log(json_payload)
     """
@@ -291,112 +414,195 @@ def _request_with_backoff(api_url, json_payload):
     """
     global _skip_num_predict
     start_time = time.time()
-    last_exception = None
-    # Если флаг уже установлен, сразу удаляем num_predict, чтобы не тратить попытки
     if _skip_num_predict and 'options' in json_payload and 'num_predict' in json_payload['options']:
         del json_payload['options']['num_predict']
         let_log("Костыль: num_predict удалён из запроса (по флагу _skip_num_predict).")
+
     for attempt in range(1, MAX_RETRIES + 1):
-        # Проверка общего времени выполнения
         elapsed = time.time() - start_time
-        if elapsed > MAX_WAIT_TOTAL: raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
+        if elapsed > MAX_WAIT_TOTAL:
+            raise RuntimeError(f"Превышено общее время ожидания ({MAX_WAIT_TOTAL} с)")
+
         try:
-            response = session.post(api_url, json=json_payload) # Обработка HTTP 400 — отдельно, для возможного исключения num_predict
+            response = session.post(api_url, json=json_payload)
+
+            # Обработка HTTP 400 — отдельно, для возможного исключения num_predict
             if response.status_code == 400:
-                if 'options' in json_payload and 'num_predict' in json_payload['options']:# Убираем num_predict и пробуем снова
+                if 'options' in json_payload and 'num_predict' in json_payload['options']:
                     del json_payload['options']['num_predict']
                     let_log("Обнаружена ошибка 400. Убираем num_predict и пробуем снова.")
                     _skip_num_predict = True
-                    continue  # повторить запрос (счётчик попыток не сбрасываем, но прогресс идёт)
-                else: response.raise_for_status()
+                    continue
+                else:
+                    response.raise_for_status()
+
             # Обработка HTTP ошибок с повторными попытками
-            if response.status_code == 429:  # Пытаемся определить, является ли ошибка квотной (сессионный/недельный лимит)
+            if response.status_code == 429:
                 retry_after = response.headers.get('Retry-After')
                 wait_time = None
-                if retry_after and retry_after.isdigit(): wait_time = int(retry_after)
-                else: # Пытаемся извлечь из текста ошибки
+                if retry_after and retry_after.isdigit():
+                    wait_time = int(retry_after)
+                else:
                     try:
                         err_data = response.json()
                         err_msg = err_data.get('error', '').lower()
-                        if 'session limit' in err_msg: wait_time = 5 * 60 * 60 # 5 часов
-                        elif 'weekly limit' in err_msg: wait_time = 7 * 24 * 60 * 60  # 7 дней
-                        elif 'insufficient_quota' in err_msg: raise RuntimeError("balance end")
-                    except: pass
+                        if 'session limit' in err_msg:
+                            # Сессионный лимит Ollama Cloud — не ждём 5ч, сигналим UI
+                            raise RuntimeError("balance end: session limit")
+                        elif 'weekly limit' in err_msg:
+                            raise RuntimeError("balance end: weekly limit")
+                        elif 'insufficient_quota' in err_msg:
+                            raise RuntimeError("balance end")
+                    except RuntimeError:
+                        raise
+                    except Exception:
+                        pass
+
                 if wait_time is not None:
-                    # ИЗМЕНЕНИЕ: если время ожидания больше 5 часов (18000 секунд) – сразу исключение
-                    MAX_QUOTA_WAIT = 5 * 60 * 60  # 5 часов
-                    if wait_time > MAX_QUOTA_WAIT: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
-                    # Дополнительная проверка на общий лимит MAX_WAIT_TOTAL (420с) – для квотных ошибок она обычно не сработает,
-                    # но оставим для безопасности
-                    if wait_time > MAX_WAIT_TOTAL: raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
+                    MAX_QUOTA_WAIT = 5 * 60 * 60
+                    if wait_time > MAX_QUOTA_WAIT:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает допустимые {MAX_QUOTA_WAIT}с")
+                    if wait_time > MAX_WAIT_TOTAL:
+                        raise RuntimeError(f"Лимит квоты требует ожидания {wait_time}с, что превышает общий лимит {MAX_WAIT_TOTAL}с")
                     let_log(f"Обнаружен лимит квоты (429). Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
-                    continue # повторяем запрос после ожидания
-                # Иначе это обычный rate limit - используем экспоненциальный backoff
+                    continue
+
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining: wait_time = remaining
-                    if wait_time < 0.1: wait_time = 0.1
+                    if wait_time > remaining:
+                        wait_time = remaining
+                    if wait_time < 0.1:
+                        wait_time = 0.1
                     let_log(f"HTTP 429 (Rate Limit) на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     continue
-                else: response.raise_for_status()
+                else:
+                    response.raise_for_status()
+
             if response.status_code in (500, 502, 503, 504):
-                # Временные серверные ошибки - используем экспоненциальный backoff
                 if attempt < MAX_RETRIES:
                     wait_time = BASE_BACKOFF ** attempt
                     remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                    if wait_time > remaining: wait_time = remaining
-                    if wait_time < 0.1: wait_time = 0.1
+                    if wait_time > remaining:
+                        wait_time = remaining
+                    if wait_time < 0.1:
+                        wait_time = 0.1
                     let_log(f"HTTP {response.status_code} на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                     time.sleep(wait_time)
                     continue
-                else: response.raise_for_status()
-            # Для других статусов сразу вызываем исключение, если код не 2xx
+                else:
+                    response.raise_for_status()
+
             response.raise_for_status()
             return response.json()
+
+        # --- Обработка специфических сетевых ошибок ---
         except requests.exceptions.ConnectionError as e:
-            # Ошибка соединения – повторяем с экспоненциальной задержкой
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining: wait_time = remaining
-                if wait_time < 0.1: wait_time = 0.1
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
                 let_log(f"Ошибка соединения на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else: raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
+            else:
+                raise RuntimeError(f"Ошибка соединения после {MAX_RETRIES} попыток: {e}")
+
         except requests.exceptions.Timeout as e:
-            # Таймаут запроса – повторяем
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining: wait_time = remaining
-                if wait_time < 0.1: wait_time = 0.1
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
                 let_log(f"Таймаут на попытке {attempt}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else: raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
+            else:
+                raise RuntimeError(f"Таймаут запроса после {MAX_RETRIES} попыток: {e}")
+
         except requests.exceptions.RequestException as e:
-            # Другие ошибки сети
             if attempt < MAX_RETRIES:
                 wait_time = BASE_BACKOFF ** attempt
                 remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
-                if wait_time > remaining: wait_time = remaining
-                if wait_time < 0.1: wait_time = 0.1
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
                 let_log(f"Сетевая ошибка на попытке {attempt}: {e}. Ожидание {wait_time:.2f} с...")
                 time.sleep(wait_time)
                 continue
-            else: raise RuntimeError(f"Сетевая ошибка после {MAX_RETRIES} попыток: {e}")
+            else:
+                raise RuntimeError(f"Сетевая ошибка после {MAX_RETRIES} попыток: {e}")
+
+        # --- НОВЫЙ БЛОК: специальная обработка AssertionError (баг HTTP/2 в urllib3) ---
+        except AssertionError as e:
+            # Это ошибка urllib3 при попытке использовать HTTP/2 с http://
+            let_log(f"AssertionError (HTTP/2) на попытке {attempt}: {e}. Повторяем сразу без задержки.")
+            # Микро-пауза, чтобы не грузить процессор
+            time.sleep(0.05)
+            # continue – переходим к следующей итерации (счётчик увеличится, но задержка минимальна)
+            continue
+
+        # --- Общий перехват любых других неожиданных ошибок ---
+        except Exception as e:
+            let_log(f"Неизвестная ошибка на попытке {attempt}: {type(e).__name__}: {e}")
+            if attempt < MAX_RETRIES:
+                wait_time = BASE_BACKOFF ** attempt
+                remaining = MAX_WAIT_TOTAL - (time.time() - start_time)
+                if wait_time > remaining:
+                    wait_time = remaining
+                if wait_time < 0.1:
+                    wait_time = 0.1
+                let_log(f"Повтор через {wait_time:.2f} с...")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise RuntimeError(f"Необработанная ошибка после {MAX_RETRIES} попыток: {e}")
+
     raise RuntimeError("Превышено максимальное количество попыток")
 
+def _is_thinking_param_key(key):
+    """D15: never forward think/thinking/reasoning keys to the server."""
+    k = (key or "").lower()
+    return ("think" in k) or ("reasoning" in k)
+
+
 def ask_model(generation_params):
+    global _last_think_content, filter_think_tag
     if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/generate"
     try:
         let_log(f"ask_model: Отправка запроса на {api_url}")
-        ollama_params = {"model": default_chat_model, "prompt": generation_params.get("prompt", ""), "stream": False, "options": {}}
+
+        # Проверка настроек и перезагрузка модели при необходимости
+        _check_and_reload_model()
+
+        ollama_params = {
+            "model": default_chat_model,
+            "prompt": generation_params.get("prompt", ""),
+            "stream": False,
+            "keep_alive": "1.5m",  # время жизни модели 1.5 минуты
+            "options": {}
+        }
+
+        # Устанавливаем контекст
+        ctx = default_num_ctx if default_num_ctx else token_limit
+        ollama_params["options"]["num_ctx"] = ctx
+
+        # D15: do NOT send think/thinking/reasoning — let server choose defaults
+
+        # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
+        if not _skip_num_predict and "max_tokens" in generation_params:
+            ollama_params["options"]["num_predict"] = generation_params["max_tokens"]
+
+        # Маппинг остальных параметров
         param_mapping = {
             "max_tokens": "num_predict",
             "temperature": "temperature",
@@ -405,28 +611,65 @@ def ask_model(generation_params):
             "repeat_penalty": "repeat_penalty",
             "stop": "stop"}
         for param, value in generation_params.items():
-            if param == "prompt": continue
-            if param in param_mapping: ollama_params["options"][param_mapping[param]] = value
-            else: ollama_params["options"][param] = value
+            if param in ["prompt", "max_tokens", "think"] or _is_thinking_param_key(param):
+                continue
+            if param in param_mapping:
+                ollama_params["options"][param_mapping[param]] = value
+            else:
+                ollama_params["options"][param] = value
+        # Strip think/reasoning from top-level and options
+        for k in list(ollama_params.keys()):
+            if _is_thinking_param_key(k):
+                ollama_params.pop(k, None)
+        for k in list(ollama_params.get("options", {}).keys()):
+            if _is_thinking_param_key(k):
+                ollama_params["options"].pop(k, None)
+
         data = _request_with_backoff(api_url, ollama_params)
         let_log(f"ask_model: Получен ответ, длина: {len(str(data))} символов")
         result = data.get("response", "").strip()
         let_log(f"ask_model: Результат: '{result[:100]}...'")
+
+        # Обработка think-тегов (фильтрация)
+        if filter_think_tag:
+            cleaned, think = _extract_think(result)
+            _last_think_content = think
+            result = cleaned
+
         return result
     except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
     except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
 
 def ask_model_chat(generation_params):
-    if not session or not base_url or not default_chat_model: raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
+    global filter_think_tag
+    if not session or not base_url or not default_chat_model:
+        raise RuntimeError("Ollama клиент не инициализирован. Сначала вызовите connect().")
     api_url = f"{base_url}/api/chat"
     try:
         let_log(f"ask_model_chat: Отправка запроса на {api_url}")
+
+        # Проверка настроек и перезагрузка модели при необходимости
+        _check_and_reload_model()
+
         # Подготовка параметров для Ollama Chat API
         ollama_params = {
             "model": default_chat_model,
             "messages": generation_params.get("messages", []),
             "stream": False,
-            "options": {}}
+            "keep_alive": "1.5m",  # время жизни модели 1.5 минуты
+            "options": {}
+        }
+
+        # Устанавливаем контекст
+        ctx = default_num_ctx if default_num_ctx else token_limit
+        ollama_params["options"]["num_ctx"] = ctx
+
+        # D15: do NOT send think/thinking/reasoning — let server choose defaults
+
+        # Пробрасываем max_tokens -> num_predict (если не запрещён флагом)
+        if not _skip_num_predict and "max_tokens" in generation_params:
+            ollama_params["options"]["num_predict"] = generation_params["max_tokens"]
+
         # Маппинг параметров
         param_mapping = {
             "max_tokens": "num_predict",
@@ -434,16 +677,54 @@ def ask_model_chat(generation_params):
             "top_p": "top_p",
             "top_k": "top_k",
             "repeat_penalty": "repeat_penalty",
-            "stop": "stop"}
+            "stop": "stop"
+        }
         for param, value in generation_params.items():
-            if param in ["messages", "model"]: continue
-            if param in param_mapping: ollama_params["options"][param_mapping[param]] = value
-            else: ollama_params["options"][param] = value
-        data = _request_with_backoff(api_url, ollama_params)
+            if param in ["messages", "model", "max_tokens", "think"] or _is_thinking_param_key(param):
+                continue
+            if param in param_mapping:
+                ollama_params["options"][param_mapping[param]] = value
+            else:
+                ollama_params["options"][param] = value
+        # Strip think/reasoning from top-level and options
+        for k in list(ollama_params.keys()):
+            if _is_thinking_param_key(k):
+                ollama_params.pop(k, None)
+        for k in list(ollama_params.get("options", {}).keys()):
+            if _is_thinking_param_key(k):
+                ollama_params["options"].pop(k, None)
+
+        # --- ВЫЗОВ _request_with_backoff С ЛОГИРОВАНИЕМ ---
+        try:
+            data = _request_with_backoff(api_url, ollama_params)
+        except Exception as e:
+            let_log(f"ask_model_chat: _request_with_backoff выбросил исключение: {type(e).__name__}: {e}")
+            raise  # пробрасываем дальше
+
         let_log(f"ask_model_chat: Получен ответ, длина: {len(str(data))} символов")
+
+        # Обработка think-тегов (фильтрация) для ответа чата
+        if filter_think_tag and 'message' in data and 'content' in data['message']:
+            original_content = data['message']['content']
+            cleaned_content, think_content = _extract_think(original_content)
+            data['message']['content'] = cleaned_content
+            data['think'] = think_content
+        elif filter_think_tag:
+            data['think'] = None
+
         return data
-    except requests.exceptions.RequestException as e: raise RuntimeError(f"Ошибка сети: {e}")
-    except Exception as e: raise RuntimeError(f"Неожиданная ошибка: {e}")
+
+    except requests.exceptions.RequestException as e:
+        let_log(f"ask_model_chat: Ошибка сети: {e}")
+        raise RuntimeError(f"Ошибка сети: {e}")
+    except Exception as e:
+        # Здесь мы перехватим любую ошибку, которая возникла после _request_with_backoff
+        let_log(f"ask_model_chat: НЕОЖИДАННАЯ ОШИБКА: {type(e).__name__}: {e}")
+        raise RuntimeError(f"Неожиданная ошибка: {e}")
+
+def get_last_think():
+    """Возвращает последнее извлечённое think-содержимое (после вызова ask_model)."""
+    return _last_think_content
 
 def create_embeddings(text):
     global base_url, emb_model, session
