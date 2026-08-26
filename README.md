@@ -152,8 +152,8 @@ Behaviour:
 <summary>Installation and Getting Started for Users or Developers in Venv for Windows/macOS/Linux or .exe Build</summary>
 **For users**
 
-- **Windows:** `MilanaSetup.exe` (optional task: image recognition models ~1 GB) or the smaller `MilanaSetup-nomodels.exe` (no weights inside, no prompt; OCR stays off).
-- **Linux:** `MilanaSetup.run` (question about models) or `MilanaSetup-nomodels.run` (no weights inside, no prompt). Menu/desktop shortcuts are offered. **OCR on Linux needs AVX2**; without AVX2 the “recognize images” switch stays off even if models are installed.
+- **Windows:** `MilanaSetup.exe` (optional task: image recognition models ~1 GB) or the smaller `MilanaSetupNoOCRModels.exe` (no `data/models`, no prompt; OCR stays off).
+- **Linux:** `MilanaSetup.run` (question about models) or `MilanaSetupNoOCRModels.run` (no `data/models`, no prompt). Menu/desktop shortcuts are offered. **OCR on Linux needs AVX2**; without AVX2 the “recognize images” switch stays off even if models are installed.
   - After install you typically get a `milana` launcher (e.g. under `~/.local/bin`) and/or a desktop/menu entry pointing at the install directory. You can also run `./Milana` from the install folder.
 
 <details>
@@ -167,7 +167,7 @@ You need:
 
 Run `windows.bat` in `install` → `start_milana.bat`.
 Or `buildexe.bat` → `Milana.exe`.
-Installer: Inno Setup + `InnoSetupInstallerBuild.iss` in `install` (`compile_innosetup.bat` builds both). `iscc InnoSetupInstallerBuild.iss` → `MilanaSetup.exe`; `iscc /DNoModels InnoSetupInstallerBuild.iss` → `MilanaSetup-nomodels.exe`.
+Installer: Inno Setup in `install`. `InnoSetupInstallerBuild.iss` → `MilanaSetup.exe`; `InnoSetupInstallerBuildNoOCRModels.iss` → `MilanaSetupNoOCRModels.exe` (`compile_innosetup.bat` builds both).
 </details>
 <details>
 <summary>**Linux and macOS**</summary>
@@ -176,7 +176,7 @@ You need:
 - Python tk packages, e.g. `sudo pacman -S tk` (if you forgot: `pyenv uninstall 3.13.7`, install tk, retry)
 
 Run `linux_macos.sh` in `install`.
-ELF: `buildlinux.sh`, then pack `.run` files with `make_linux_installer.sh` (default: both `MilanaSetup.run` and `MilanaSetup-nomodels.run`).
+ELF: `buildlinux.sh`, then `make_linux_installer.sh` → `MilanaSetup.run` and/or `make_linux_installerNoOCRModels.sh` → `MilanaSetupNoOCRModels.run` (`make_linux_installers.sh` builds both).
 </details>
 </details>
 

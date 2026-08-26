@@ -1,3 +1,7 @@
+; Slim installer: data\models is never packed (no OCR weights, no prompt).
+; Compile: iscc InnoSetupInstallerBuildNoOCRModels.iss
+;   → Output\MilanaSetupNoOCRModels.exe
+
 [Setup]
 AppName=Milana
 AppVersion=2026.08
@@ -5,7 +9,7 @@ AppPublisher=iishnitsa
 AppPublisherURL=https://github.com/iishnitsa/milana
 DefaultDirName={userpf}\Milana
 DefaultGroupName=Milana
-OutputBaseFilename=MilanaSetup
+OutputBaseFilename=MilanaSetupNoOCRModels
 Compression=lzma2
 SolidCompression=yes
 SetupIconFile=..\data\icons\icon.ico
@@ -25,11 +29,9 @@ AllowNoIcons=yes
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"
 Name: "startmenuicon"; Description: "Create a Start Menu shortcut"; GroupDescription: "Additional icons:"
-; Optional ~1GB BLIP + EasyOCR weights for image OCR/caption
-Name: "models"; Description: "Install image recognition models (OCR / captions, ~1 GB)"; GroupDescription: "Optional components:"; Flags: checkedonce
 
 [Files]
-; App (exclude models from recursive data so they are optional)
+; Never capture data\models
 ; Exclude data\chats AND top-level chats (would land as {app}\chats next to exe)
 ; Also never ship milana_boot.log (debug leftover)
 Source: "..\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs; Excludes: "__pycache__, __pycache__\*, tests, install\Output, install\Output\*, mvenv, mvenv\*, *.pyc, *.pyo, *.pyd, launcher.py, data\settings.db, run_ui.cmd, run_ui.sh, *.lnk, build, build\*, dist, dist\*, Milana.lnk, Output, Output\*, .git, .git\*, .gitattributes, .vscode, .vscode\*, .idea, .idea\*, *.log, milana_boot.log, data\milana_boot.log, *.bak, *.tmp, thumbs.db, *.db, data\chats, chats, chats\*, data\models, launch_milana.cmd, run_milana.sh, *.run, build_installer"
@@ -40,9 +42,6 @@ Source: "..\data\*"; DestDir: "{app}\data"; Flags: recursesubdirs createallsubdi
 
 Source: "..\data\icons\icon.ico"; DestDir: "{app}\data\icons"; Flags: skipifsourcedoesntexist
 Source: "..\data\icons\icon.png"; DestDir: "{app}\data\icons"; Flags: skipifsourcedoesntexist
-
-; Models only if task selected
-Source: "..\data\models\*"; DestDir: "{app}\data\models"; Flags: recursesubdirs createallsubdirs skipifsourcedoesntexist; Tasks: models
 
 [Dirs]
 Name: "{app}\data\chats"

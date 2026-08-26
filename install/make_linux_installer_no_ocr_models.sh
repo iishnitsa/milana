@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Builds a self-extracting .run installer for Milana (like InnoSetup on Windows)
-# Usage: ./make_linux_installer.sh
-#   → install/MilanaSetup.run  (image models packed; asked at install)
+# Slim .run installer: data/models is never packed (no OCR weights, no prompt).
+# Usage: ./make_linux_installerNoOCRModels.sh
+#   → install/MilanaSetupNoOCRModels.run
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_ROOT/build_installer"
-INSTALLER_NAME="MilanaSetup.run"
+INSTALLER_NAME="MilanaSetupNoOCRModels.run"
 
 # Verify that the application has been built
 if [ ! -f "$PROJECT_ROOT/Milana" ] || [ ! -d "$PROJECT_ROOT/_internal" ]; then
@@ -60,6 +60,8 @@ rsync -av --delete \
     --exclude='data/chats' \
     --exclude='chats' \
     --exclude='chats/*' \
+    --exclude='data/models' \
+    --exclude='data/models/*' \
     --exclude='launch_milana.cmd' \
     --exclude='run_milana.sh' \
     --exclude='*.run' \
@@ -73,6 +75,9 @@ rsync -av --delete \
     --exclude='*.iss' \
     --exclude='requirements.txt' \
     "$PROJECT_ROOT/" "$BUILD_DIR/package/"
+
+# Empty models dir so the app has a place to look; weights are not in this installer
+mkdir -p "$BUILD_DIR/package/data/models"
 
 # Create the installer script (self-extracting archive with GUI)
 cat > "$BUILD_DIR/installer.sh" << 'EOF'
@@ -259,19 +264,8 @@ main_installation() {
     # Ask about shortcuts
     SHORTCUTS=$(ask_shortcuts)
 
-    # Optional image models (BLIP + EasyOCR, ~1 GB)
-    INSTALL_MODELS=false
-    if ask_yesno "Install image recognition models?\n\nOCR / image captions (BLIP + EasyOCR).\nAdds about 1 GB on disk.\n\nWithout models, image recognition is disabled."; then
-        INSTALL_MODELS=true
-    fi
-    
-    # Confirmation
+    # Confirmation (this build never includes image models)
     local confirm_msg="Ready to install?\n\nDestination folder: $INSTALL_DIR"
-    if [ "$INSTALL_MODELS" = true ]; then
-        confirm_msg="$confirm_msg\nImage models: yes"
-    else
-        confirm_msg="$confirm_msg\nImage models: no (OCR off)"
-    fi
     
     if [ "$USE_SUDO" = true ]; then
         confirm_msg="$confirm_msg\n(Will use sudo for installation)"
@@ -295,15 +289,6 @@ main_installation() {
         exit 1
     fi
 
-    # Drop models from package if user declined (installer still contains them; strip before copy)
-    if [ "$INSTALL_MODELS" != true ]; then
-        show_progress "Skipping image models..."
-        rm -rf "$TMP_DIR/package/data/models" 2>/dev/null || true
-        mkdir -p "$TMP_DIR/package/data/models"
-        # marker for support / docs
-        echo "skipped" > "$TMP_DIR/package/data/models/.models_not_installed" 2>/dev/null || true
-    fi
-    
     # Copy to destination
     show_progress "Installing files to $INSTALL_DIR..."
     
@@ -403,11 +388,6 @@ EOL
     local final_msg="Installation complete!\n\n"
     final_msg="$final_msg✓ Installed to: $INSTALL_DIR\n"
     final_msg="$final_msg✓ Files copied: $(find "$INSTALL_DIR" -type f | wc -l) files\n"
-    if [ "$INSTALL_MODELS" = true ]; then
-        final_msg="$final_msg✓ Image models: installed\n"
-    else
-        final_msg="$final_msg✓ Image models: skipped (OCR disabled)\n"
-    fi
     final_msg="$final_msg✓ Command-line launcher: milana\n"
     
     if [[ "$SHORTCUTS" == *"menu"* ]] || [[ "$SHORTCUTS" == "both" ]]; then

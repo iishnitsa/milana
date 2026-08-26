@@ -1,11 +1,10 @@
 @echo off
 setlocal
-REM Compile both Windows installers:
-REM   Output\MilanaSetup.exe           (models packed, optional task)
-REM   Output\MilanaSetup-nomodels.exe  (no weights, no prompt)
+REM Compile both Windows installers from the two .iss scripts:
+REM   Output\MilanaSetup.exe              (models packed, optional task)
+REM   Output\MilanaSetupNoOCRModels.exe   (data\models not captured)
 
 set "SCRIPT_DIR=%~dp0"
-set "ISS=%SCRIPT_DIR%InnoSetupInstallerBuild.iss"
 
 set "ISCC="
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
@@ -22,17 +21,17 @@ if not defined ISCC (
 echo Using: %ISCC%
 echo.
 
-echo === MilanaSetup.exe (with optional image models) ===
-"%ISCC%" "%ISS%"
+echo === MilanaSetup.exe ===
+"%ISCC%" "%SCRIPT_DIR%InnoSetupInstallerBuild.iss"
 if errorlevel 1 exit /b 1
 
 echo.
-echo === MilanaSetup-nomodels.exe (no models in the installer) ===
-"%ISCC%" /DNoModels "%ISS%"
+echo === MilanaSetupNoOCRModels.exe ===
+"%ISCC%" "%SCRIPT_DIR%InnoSetupInstallerBuildNoOCRModels.iss"
 if errorlevel 1 exit /b 1
 
 echo.
 echo Both installers written to:
 echo   %SCRIPT_DIR%Output\MilanaSetup.exe
-echo   %SCRIPT_DIR%Output\MilanaSetup-nomodels.exe
+echo   %SCRIPT_DIR%Output\MilanaSetupNoOCRModels.exe
 endlocal
