@@ -137,6 +137,10 @@ pyinstaller --onedir --icon="data\icons\icon.ico" --name "Milana" ^
 --hidden-import cryptography.hazmat.primitives ^
 --hidden-import cryptography.hazmat.primitives.kdf.pbkdf2 ^
 --hidden-import cryptography.hazmat.backends ^
+--collect-all dulwich ^
+--hidden-import dulwich.porcelain ^
+--hidden-import dulwich.objects ^
+--hidden-import dulwich.repo ^
 --noconsole ^
 --clean ^
 --noconfirm ^

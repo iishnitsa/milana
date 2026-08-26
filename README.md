@@ -2,8 +2,9 @@
 <h1 align="center"><span style="color: #5200ff;">Milana</span></h1>
 <p align="center"><strong>Autonomous · Independent · Free · For Mere Mortals</strong></p>
 <p align="center">Discord: iishnitsa_milana</p>
+<p align="center">License: <a href="LICENSE">MIT</a> (code) · bundled OCR weights under their own licenses (see LICENSE)</p>
 
-[Features (+video demo)](#features-and-use-cases) | [How It Works](#how-it-works) | [History](#history-and-project-details) | [Installation](#installation-for-users-or-in-venv-for-windowsmacoslinux-or-exe-build) | [How to Use](#how-to-use) | [Module Development](#how-to-develop-modules) | [Provider Development](#how-to-develop-model-providers) | [Third-Party Modules and Providers](#third-party-modules)
+[Features (+video demo)](#features-and-use-cases) | [How It Works](#how-it-works) | [History](#history-and-project-details) | [Installation](#installation-and-getting-started-for-users-or-developers-in-venv-for-windowsmacoslinux-or-exe-build) | [How to Use](#how-to-use) | [Module Development](#how-to-develop-modules) | [Provider Development](#how-to-develop-model-providers) | [Third-Party Modules and Providers](#third-party-modules)
 
 Here is what I am **trying** to achieve.
 
@@ -20,25 +21,31 @@ No request limits, file upload limits, paid subscription tiers, or regional rest
 Just run the Windows installer or the Linux `.run` installer; no console required.
 
 ## Optimized for Weak Models
-Initially, I was limited by an old laptop, and then I grew to like it. I write detailed prompts, add hints when the model makes protocol mistakes, and allow some leniency for weak models (typos in commands, softer recovery). It spends an incredibly small number of tokens on medium-complexity tasks. More to come.
+Initially I was limited by an old laptop, and then it became a principle. I write detailed prompts, add hints when the model breaks the command protocol, and give weak models some leeway (typos in commands, softer rules). Further ideas that already help:
+
+- Splitting into **two agents** so context is not clogged: the executor is recreated after a subtask, while the operator’s context is not fully filled with that subtask.
+- Generating a **work plan** so the agent knows what to do from the start.
+- **Result evaluation** (critic).
+- An automatic **Git-based filesystem** layer to protect files from agent mistakes.
+- Optionally using an even **weaker model** for simpler jobs (e.g. summarization) to save cost.
+
+More optimizations will come.
 
 ## Universal
 Supports any sufficiently smart instruct model. The model doesn't necessarily need agentic or tool-calling capabilities, nor does it need to strictly follow specific standards.
 
-## The Best
-The prototype is far from an attractive state, but I will constantly improve it, putting my soul and vision into it.
+## The Best — for me
+The prototype is still far from a polished state, but I will keep improving it, putting my soul and vision into it.
 
 ## Features and Use Cases
-Module support allows the system to do anything, even turning on a kettle. Useful built-ins include web search (multi-line queries), deep research, report generation, cross-platform `shell_cmd`, and file tools on the new `filesystem` API. Optional MCP URL loads remote tools. You can write your own module using the documentation below.
+Module support lets the system do almost anything — even turn on a kettle. Useful built-ins: web search (multi-line queries), deep research, reports, cross-platform `shell_cmd`, and file tools on the new `filesystem` API. An optional MCP URL loads remote tools. You can write your own module using the docs below.
 
-The request I used to debug the system was related to progress in Alzheimer's treatment, as this ambiguous topic requires meticulous study. Literally, it was:
+The request I used to debug the system was about progress in Alzheimer’s treatment — an ambiguous topic that needs careful study. Literally:
 
-```
-perform a meta-study on the entire study of alzheimer's and drugs for this disease, draw conclusions about what alzheimer's is according to the most likely theory (this can be found out by comparing many works), about scandals, about misconceptions, etc., in order to get the most reliable information about what alzheimer's is and how to treat it
-periodically make reports on the information found and the conclusions drawn
-```
+**perform a meta-study on the entire study of alzheimer's and drugs for this disease, draw conclusions about what alzheimer's is according to the most likely theory (this can be found out by comparing many works), about scandals, about misconceptions, etc., in order to get the most reliable information about what alzheimer's is and how to treat it
+periodically make reports on the information found and the conclusions drawn**
 
-**Demo (08 2026):** will be recorded on Ollama `gemma3:4b` (easy default). That model is **not very stable** for this workload — for real use we recommend **`gemma4:e2b`** or **`gemma4:e4b`** (pull them in Ollama yourself). Older demo (04 2026, cloud Qwen): [YouTube](https://www.youtube.com/watch?v=USj5WB6UfME).
+**Demo (08 2026):** recorded on Ollama `gemma3:4b`. It did not work on the first try and is not great — but the previous release would not have allowed this demo at all. For this workload the model is **not very stable**; for real use I still recommend **`gemma4:e4b`** or **`qwen3.5:9b`**. [YouTube](https://youtu.be/kXu3Uc1MgS8). The older demo showed high stability on Qwen3.5 (04 2026 release, cloud Qwen3.5 9b): [YouTube](https://www.youtube.com/watch?v=USj5WB6UfME).
 
 ## How It Works
 ```mermaid
@@ -61,55 +68,61 @@ flowchart TD
     I -->|No, 2 attempts| J
     J -->|Return to higher dialogue| E
 ```
-The system begins by receiving a client task, which enters the GIGO block where three roles—Dreamer, Realist, and Critic—trigger sequentially to form a structured action plan. Based on this plan, a Milana agent-operator is created to select the necessary tools, followed by the creation of an Ivan executor with its own toolset, and a dialogue begins between them to execute the task. If during the dialogue the executor realizes it cannot handle the task, it can delegate it to a new level, returning the process to the GIGO block to create a nested dialogue. When the dialogue is finished and a result is obtained, it is passed to the Critic, who evaluates its quality (up to two attempts are given by default). Depending on the evaluation: on full success, the result is returned to the client; if unsure, human verification is required; if the result is unsatisfactory but attempts remain, a refined task is formed and the process returns to executor creation; if both attempts fail, the task with the critic's comments is returned to the level above (to the superior agent or the original client).
+The system receives the client task → the GIGO block (Dreamer → Realist → Critic) builds a plan → operator Milana is created with a toolset → executor Ivan is created with his toolset → dialogue starts. If the executor cannot handle the task, it may delegate to a new level (again via GIGO). When finished, Critic evaluates the result (up to two attempts by default): success → client / level above; unsure → human check; bad but attempts left → refined task and recreate; both attempts exhausted → critic comments go one level up.
 
-File tools go through the local `filesystem` API (per-dialog session, optional git/worlds, import-on-read) so agents can touch the project safely without a separate “manual FS” step — details in the filesystem spoiler under History.
+File tools go through the local `filesystem` API (per-dialog session, optional git/worlds, import-on-read) so agents can touch the project safely — details in the filesystem spoiler under History.
 
 <details>
 <summary>History and Project Details</summary>
-One day I was talking to ChatGPT, asking for help in developing a project. In response, I received an implementation plan. At first, I fed the tasks from the plan to ChatGPT one by one, and then I had the idea to make it talk to itself.
+One day I asked ChatGPT for help with a project and got a plan. At first I fed tasks one by one; then I had the idea to make the model talk to itself.
 
-Later I realized that the tasks were too complex for it, and it would be good to create a plan for those tasks as well. The idea expanded into a hierarchy that should grow by one level at the AI's command.
+Later I realized the tasks were too hard — they needed plans too. The idea grew into a hierarchy that grows by one level on the AI’s command.
 
-I proceeded to implementation.
+I started with LangChain — seemed good for an agent that creates hierarchy levels. Problems:
+1. LangChain changes constantly and heavily.
+2. It targets strong models; weak ones easily break commands.
+3. Poor fit into custom code.
 
-I chose LangChain as the foundation. At the time, I thought it would be well-suited for creating an agent that would issue commands to create hierarchy levels. However, several problems arose during development:
-1. LangChain changes constantly and significantly.
-2. It is designed for powerful AI models, as even weak models can make mistakes when writing commands.
-3. The library does not allow for fine integration into user code.
+So I wrote my own mechanism.
 
-Therefore, I wrote my own mechanism.
-
-I realized that not everyone has access to powerful AI, high-performance PCs, or a nuclear power plant to run servers. Weak models can also be useful if the right approach is found. For example, I allowed models to make typos in commands and tried to simplify the prompts.
+Not everyone has strong AI, a fast PC, or a power plant for servers. Weak models can still help if you approach them right: I allowed typos in commands and simplified prompts.
 
 **upd1**
-While I was preparing the release for December 2025, I realized that a hierarchical structure is poorly suited for programming. I learned about this from here: https://deepmind.google/discover/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/ and here: https://arxiv.org/abs/2512.08296.
-
-I see a significant problem with data exchange between hierarchy levels and between dialogues within the same hierarchy level. I tried to solve this by saving the entire dialogue in embeddings after its completion so that a librarian could later extract information from it. I also need to figure out automatic safe creation, reading, editing, and deletion of files during operation, as well as automatic aggregation of file access. I will experiment with combining structures.
+While preparing the December 2025 release I realized hierarchy fits programming poorly (see AlphaEvolve / related work). A big issue is data exchange across levels and dialogues; I tried saving dialogues into embeddings for the librarian. Safe file handling was still needed — experimenting with structures.
 
 **upd2 05 2026**
-The 05 2026 release is mostly bug fixes, minor refinements, and a redesign. I also worked hard to fix the data exchange problem. Now agents can get information about other dialogues, both existing and deleted.
+Mostly bugfixes, small polish, and a redesign. Fixed data exchange: agents can see info about other dialogues, including deleted ones.
 
-I removed "10,000 monkeys" and the best-solution selection. It was highly underdeveloped, very costly, and slow, which doesn't align with the philosophy of a cheap system on fast small models.
+I removed “10,000 monkeys” and best-solution selection — raw, expensive, and slow; not in the spirit of a cheap system on fast small models.
 
-My own command protocol and response system turned out to be even better than standard ones. True, I had to tinker with writing instructions for the model on correct command usage. Now the system doesn't depend on whether the model natively supports function calling. I still left the native call option but haven't tested it thoroughly — for now, I recommend not enabling it.
+My own command protocol turned out more convenient than standards: not tied to native function calling or a specific calling convention. Native call remains but is not deeply tested — better leave it off for now.
 
 **upd3 08 2026**
-- New `filesystem/` API for tools (worlds / dual-write / optional git); see spoiler below.
-- Cross-platform `shell_cmd` (old per-OS cmd modules removed).
-- Optional image OCR models in the installer; on Linux OCR defaults need **AVX2** (otherwise the switch stays off).
-- Optional small/large dual-model setup; agent personalities; translation; MCP URL for remote tools.
-- Soft protocol hints / leniency when weak models misuse commands; hierarchy level limit (0 = unlimited).
-- Linux self-extracting `.run` installer; Windows Inno Setup bump; UI preload and theme/scale polish.
-- Default Ollama chat model hint: `gemma3:4b` (demo); prefer `gemma4:e2b` / `gemma4:e4b` for stability.
 
-The project is still raw. I'll be happy to hear your ideas, bug reports, and suggestions. Versions are marked with the publication date.
+- Prompt polish
+- New `filesystem/` API for tools (worlds / dual-write / optional git); see spoiler below
+- Optional small/large model pairing
+- Agent personalities
+- Translation (some small models work better in their native language)
+- MCP URL for remote tools
+- Soft hints / leeway when weak models break protocol; hierarchy limit (0 = unlimited)
+- Some UI speedups, light theme, scaling
+- Ollama demo default: `gemma3:4b`; for stability prefer `gemma4:e2b` / `gemma4:e4b`
+- Many bugfixes — e.g. a previous-release bug that truncated context with local Ollama
+- Many features made optional; different tiny models need different settings
+- Lots of small improvements
+
+There will be a large refactor. Plans: an upper agent somewhat like OpenClaw, better coding help for agents, extreme context compression, improving RAG / Critic / GIGO / filesystem, maybe splitting into parts for systems more complex than a 2-agent dialogue hierarchy — and keep adapting to weak models.
+
+Most importantly, I understood the main weakness of small models. Agent-oriented models are trained for long work with large context and staying on topic without drift. Closest are reasoning models — in a sense agent models descend from them. The smaller the model (even reasoning, and especially non-reasoning), the worse it is at long sessions. Even with native tool calling, training is often on short Q&A dialogues — fine for a support chatbot (query → tool → answer), but quality drops message by message. A live user also keeps the topic from drifting. Splitting operator/executor helped a bit when the operator had few messages and kept a busy executor on track. Generating complementary personalities is another attempt. Better RAG may help further; I want a more radical fix, though I don’t fully know the shape yet.
+
+The project is still raw. Ideas, bug reports, and suggestions are welcome. Versions are tagged by publication date.
 </details>
 
 <details>
 <summary>filesystem/ (product modules)</summary>
 
-Editable after freeze (loaded from `base_dir` like `default_tools`). Namespace package: import **submodules**, not package root. No `__init__.py`.
+Editable after freeze (loaded from `base_dir` like `default_tools`). Namespace package: import **submodules**, not the package root. No `__init__.py`.
 
 | Module | Role |
 |--------|------|
@@ -136,62 +149,73 @@ Behaviour:
 </details>
 
 <details>
-<summary>Installation for Users or in Venv for Windows/macOS/Linux or .exe Build</summary>
-**Installation for Users**
+<summary>Installation and Getting Started for Users or Developers in Venv for Windows/macOS/Linux or .exe Build</summary>
+**For users**
 
-- **Windows:** run `MilanaSetup.exe` (optional task: image recognition models ~1 GB).
-- **Linux:** run the self-extracting `.run` installer (optional models question). Menu/desktop shortcuts are offered. **OCR / image recognition on Linux needs AVX2**; without AVX2 the “recognize images” switch stays disabled even if models are installed.
+- **Windows:** `MilanaSetup.exe` (optional task: image recognition models ~1 GB) or the smaller `MilanaSetup-nomodels.exe` (no weights inside, no prompt; OCR stays off).
+- **Linux:** `MilanaSetup.run` (question about models) or `MilanaSetup-nomodels.run` (no weights inside, no prompt). Menu/desktop shortcuts are offered. **OCR on Linux needs AVX2**; without AVX2 the “recognize images” switch stays off even if models are installed.
+  - After install you typically get a `milana` launcher (e.g. under `~/.local/bin`) and/or a desktop/menu entry pointing at the install directory. You can also run `./Milana` from the install folder.
 
 <details>
 <summary>Installation Windows/macOS/Linux Venv, `.exe` or `ELF` Build</summary>
 <details>
 <summary>**Windows**</summary>
-Before installation, you need:
+You need:
 - `Git`
 - `MSVC Build Tools`
-- `Python 3.13.7` (not `3.14`, as some libraries haven't been rewritten for `3.14`; I might handle the adaptation of my code later) with `Tk` installed (otherwise the interface won't work)
+- `Python 3.13.7` (not `3.14`; some libraries are not ready yet) with `Tk`
 
-Run `windows.bat` in the `install` folder and wait for `start_milana.bat` to be created.
-Or run `buildexe.bat` in the `install` folder and wait for `Milana.exe` to be created.
-To create an installer, download Inno Setup and compile the installer using the `InnoSetupInstallerBuild.iss` config in the `install` folder.
+Run `windows.bat` in `install` → `start_milana.bat`.
+Or `buildexe.bat` → `Milana.exe`.
+Installer: Inno Setup + `InnoSetupInstallerBuild.iss` in `install` (`compile_innosetup.bat` builds both). `iscc InnoSetupInstallerBuild.iss` → `MilanaSetup.exe`; `iscc /DNoModels InnoSetupInstallerBuild.iss` → `MilanaSetup-nomodels.exe`.
 </details>
 <details>
 <summary>**Linux and macOS**</summary>
-Before installation, you need:
+You need:
 - pyenv
-- python tk packages, e.g., `sudo pacman -S tk` (if you forgot to install them, clear the pyenv cache `pyenv uninstall 3.13.7`, install the packages, and try again), otherwise the interface won't work
+- Python tk packages, e.g. `sudo pacman -S tk` (if you forgot: `pyenv uninstall 3.13.7`, install tk, retry)
 
-Run `linux_macos.sh` in the `install` folder.
-To compile a binary `ELF`, use `buildlinux.sh`, then pack with `make_linux_installer.sh` for a `.run`.
+Run `linux_macos.sh` in `install`.
+ELF: `buildlinux.sh`, then pack `.run` files with `make_linux_installer.sh` (default: both `MilanaSetup.run` and `MilanaSetup-nomodels.run`).
 </details>
 </details>
+
+## Getting started
+Open **chat settings** after creating a chat — defaults are set, but models often need tuning.
+
+Pay attention to the **Small model** tab: you can enable a cheaper/weaker model for lighter jobs (summaries / cutter by default). Copy params from the large model (except `model=`), validate the small connection, and clamp token limits. Leave it off if you only want one model.
 </details>
 
 <details>
 <summary>How to Use</summary>
-1. Run Milana and configure the model. Prefer **`gemma4:e2b` / `gemma4:e4b`** (Ollama). Default field may show `gemma3:4b` (fine for a quick try / demo, less stable).
-2. Select a model provider (Ollama, llama.cpp, OpenAI-compatible, Grok/xAI, …). For Ollama also pull `all-minilm:latest` (embeddings). Click `Validate model` and save.
-3. Optionally enable a **small model** for cheaper non-agent steps; set **agent personalities** / translation / **MCP URL** if needed.
-4. Enable the necessary modules in the settings.
-5. Create a chat, enter a task, and send the message.
+1. Run Milana and configure the model. Prefer **`gemma4:e4b`** or **`qwen3.5:9b`** (Ollama). The default field may show `gemma3:4b` (quick try / demo, less stable).
+2. Pick a provider (Ollama, llama.cpp, OpenAI-compatible, Grok/xAI, …). For Ollama also pull `all-minilm:latest` (embeddings). Click `Validate model` and save.
+3. Optionally: **small model**, **agent personalities**, translation, **MCP URL**.
+4. Enable the modules you need.
+5. Create a chat, enter a task, send.
 
-Chat Settings (selection)
-- Hierarchy level limit: default 0 = unlimited. `1` = one root dialog (no deeper delegation).
-- Maximum critic reactions: default 2, 0 to disable.
-- Use advanced dialogue memory (RAG): enabled by default; disabling is not recommended.
-- Deliver user messages mid-dialog / client inject: optional.
-- Recognize images (OCR): needs bundled models; on Linux also **AVX2**.
-- MCP URL: optional remote tools list.
-- Record log / results, Librarian, recreate agents, skip nested images — as before.
+Chat settings (selection; defaults highlighted)
+- **Use RAG** — on by default.
+- **Task elaboration / classic GIGO** — on by default (`use_gigo` + classic/`use_old_gigo`).
+- **Librarian in GIGO** — on by default.
+- **Max critic reactions** — default **0** (critic reactions off unless you raise it).
+- **Allow commands not at start** — on by default.
+- **Copy user attachments** into the chat `files/` folder — on by default.
+- **Mid-dialog** user message delivery (`deliver_user_messages`) — on by default.
+- Hierarchy limit: 0 = unlimited; `1` = one root dialog without deeper delegation.
+- OCR: needs bundled models; on Linux also **AVX2**.
+- MCP URL: optional remote tools.
 
-**Note:**
-- For stable operation, use a stronger model than the one that failed you. Demo default `gemma3:4b` is weak; **`gemma4:e2b` / `gemma4:e4b` recommended**.
-- Best-tested provider path today: **Ollama** (also llama.cpp / scripted / cloud OpenAI-style).
-- If you encounter errors, send to Discord **iishnitsa_milana**: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other relevant files from the chat folder, with a detailed description.
+**Notes:**
+- For stability use a stronger model than the one that failed you. Demo default `gemma3:4b` is weak.
+- Best-tested path today: **Ollama** (also llama.cpp / scripted / cloud OpenAI-style).
+- On errors, write to Discord **iishnitsa_milana**: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other files from the chat folder, plus a description.
 </details>
 
 <details>
 <summary>How to Develop Modules</summary>
+File tools should use the `filesystem` API (`filesystem.api.pipeline`, `filesystem.tool_arg`, …) instead of ad-hoc disk IO — see the filesystem spoiler above. Keep `filesystem/` editable next to the frozen binary.
+
 A module consists of:
 - A main file (e.g., `shell_cmd.py`).
 - An optional localization file with the same name ending in `_lang` in the same folder (e.g., `shell_cmd_lang.py`).

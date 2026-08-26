@@ -72,12 +72,26 @@ def bundled_image_models_available():
         return blip_ok and easy_ok
 
 def suggest_default_chats_dir():
-    """Windows: D:/Milana/chats если D: есть; иначе data/chats. Mac/Linux: data/chats."""
+    """Windows: D:/Milana/chats если D: есть и это НЕ папка установки; иначе data/chats.
+
+    If the app is installed to D:\\Milana, D:\\Milana\\chats would sit in the install
+    root next to the exe — avoid that and keep chats under data/chats instead.
+    """
     default_local = resource_path(os.path.join("data", "chats"))
     if sys.platform == "win32":
         for drive in ("D:\\", "D:/"):
-            if os.path.exists(drive):
-                return os.path.join(drive, "Milana", "chats")
+            if not os.path.exists(drive):
+                continue
+            candidate = os.path.join(drive, "Milana", "chats")
+            try:
+                base = os.path.normcase(os.path.abspath(get_base_dir()))
+                milana_on_d = os.path.normcase(os.path.abspath(os.path.join(drive, "Milana")))
+                # Install root is D:\Milana (or a subfolder) → don't nest chats there
+                if base == milana_on_d or base.startswith(milana_on_d + os.sep):
+                    return default_local
+            except Exception:
+                pass
+            return candidate
     return default_local
 
 def normalize_chats_dir(path_value):
@@ -139,47 +153,40 @@ def show_splash(app_ready_event: multiprocessing.Event):
                 except Exception:
                     pass
 
-    # Windows: keep classic resource_path (splash already worked there).
-    # Linux: try several roots — frozen/install layouts differ.
     if sys.platform.startswith("win32"):
+        # Windows: restore main-branch splash (RGBA + transparentcolor). Linux keeps flatten path.
         icon_path = resource_path(os.path.join("data", "icons", "icon.png"))
-    else:
-        icon_path = find_resource("data", "icons", "icon.png")
-    if not os.path.isfile(icon_path):
-        icon_path = None
-
-    if sys.platform.startswith("win32"):
+        if not os.path.exists(icon_path):
+            print(f"Иконка для сплэша не найдена: {icon_path}")
+            return
         root = tk.Tk()
         root.withdraw()
         splash = tk.Toplevel(root)
         splash.overrideredirect(True)
-        # Win: black key + transparentcolor (unchanged working path). Flatten alpha onto black for PhotoImage.
-        bg_color = "black"
-        splash.configure(bg=bg_color)
+        splash.configure(bg='black')
         sw, sh = 800, 600
         try:
-            splash.update_idletasks()
-            sw = max(splash.winfo_screenwidth(), 320)
-            sh = max(splash.winfo_screenheight(), 240)
-            max_size = max(64, int(min(sw, sh) * 0.3))
-            if icon_path:
-                img_tk = _load_splash_image(icon_path, (0, 0, 0), max_size, splash)
-                w, h = img_tk.width(), img_tk.height()
-                label = tk.Label(splash, image=img_tk, bg=bg_color, borderwidth=0, highlightthickness=0)
-                label.image = img_tk
-            else:
-                raise FileNotFoundError("icon missing")
+            img = Image.open(icon_path)
+            sw = splash.winfo_screenwidth()
+            sh = splash.winfo_screenheight()
+            max_ratio = 0.3
+            max_size = int(min(sw, sh) * max_ratio)
+            ratio = min(max_size / img.width, max_size / img.height)
+            if ratio < 1:
+                img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+            img_tk = ImageTk.PhotoImage(img)
+            w, h = img_tk.width(), img_tk.height()
+            label = tk.Label(splash, image=img_tk, bg='black')
+            label.image = img_tk
         except Exception as e:
+            print(f"Splash image load failed: {e}")
             w, h = 400, 300
-            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg=bg_color, fg="white")
+            label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg='black', fg='white')
         x, y = (sw - w) // 2, (sh - h) // 2
         splash.geometry(f"{w}x{h}+{x}+{y}")
         label.pack()
-        splash.attributes("-topmost", True)
-        try:
-            splash.attributes("-transparentcolor", "black")
-        except Exception:
-            pass
+        splash.attributes('-topmost', True)
+        splash.attributes('-transparentcolor', 'black')
         def poll():
             try:
                 if not splash.winfo_exists():
@@ -196,10 +203,14 @@ def show_splash(app_ready_event: multiprocessing.Event):
         splash.after(50, poll)
         root.mainloop()
     else:
+        # Linux: find_resource + flatten alpha (no transparentcolor); withdraw before center
+        icon_path = find_resource("data", "icons", "icon.png")
+        if not os.path.isfile(icon_path):
+            print(f"Иконка для сплэша не найдена: {icon_path}")
+            return
         splash = tk.Tk()
-        splash.withdraw()  # avoid green flash at (0,0) before center geometry
+        splash.withdraw()
         splash.overrideredirect(True)
-        # Linux: no reliable transparentcolor; green panel + flattened icon
         bg_color = "#1da244"
         bg_rgb = (29, 162, 68)
         splash.configure(bg=bg_color)
@@ -209,14 +220,12 @@ def show_splash(app_ready_event: multiprocessing.Event):
             sw = max(splash.winfo_screenwidth(), 320)
             sh = max(splash.winfo_screenheight(), 240)
             max_size = max(64, int(min(sw, sh) * 0.3))
-            if icon_path:
-                img_tk = _load_splash_image(icon_path, bg_rgb, max_size, splash)
-                w, h = img_tk.width(), img_tk.height()
-                label = tk.Label(splash, image=img_tk, bg=bg_color, borderwidth=0, highlightthickness=0)
-                label.image = img_tk
-            else:
-                raise FileNotFoundError("icon missing")
+            img_tk = _load_splash_image(icon_path, bg_rgb, max_size, splash)
+            w, h = img_tk.width(), img_tk.height()
+            label = tk.Label(splash, image=img_tk, bg=bg_color, borderwidth=0, highlightthickness=0)
+            label.image = img_tk
         except Exception as e:
+            print(f"Splash image load failed: {e}")
             w, h = 400, 300
             label = tk.Label(splash, text="Loading...", font=("Georgia", 24), bg=bg_color, fg="white")
         splash.configure(bg=bg_color)
@@ -1467,32 +1476,25 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 self.sql_exec(db_path, "INSERT OR IGNORE INTO settings (key, value) VALUES ('language', 'en')")
             providers = ProviderManager().get_providers()
             default_provider = list(providers.keys())[0] if providers else ""
-            # allow_ocr: needs local models + (on Linux) AVX2
-            models_ok = bundled_image_models_available()
-            if not models_ok:
-                allow_ocr = "0"
-            elif sys.platform.startswith("linux"):
-                try:
-                    has_avx2 = subprocess.run(['grep', '-q', 'avx2', '/proc/cpuinfo'], capture_output=True).returncode == 0
-                    allow_ocr = "1" if has_avx2 else "0"
-                except Exception:
-                    allow_ocr = "0"
-            else:
-                allow_ocr = "1"
+            # Default switches ON only: use_rag, use_gigo+use_old_gigo (classic),
+            # gigo_use_librarian, allow_command_not_at_start, copy_user_attachments,
+            # deliver_user_messages; gigo_role_* stay on so classic GIGO has roles.
+            # All other switches default OFF (incl. allow_ocr). max_critic_reactions=0.
+            # OCR can still be enabled in UI when bundled models (+ AVX2 on Linux) are present.
             defaults = {
                 "token_limit": "8192", "model_provider_params": "",
                 "provider_params_by_type": "{}",
                 "model_type": default_provider, "use_rag": "1",
                 "filter_generations": "0", "hierarchy_limit": "0",
-                "write_log": "1", "write_results": "0",
+                "write_log": "0", "write_results": "0",
                 "fs_copy_touched_on_end": "0",
-                "copy_user_attachments_to_files": "0",
-                "max_critic_reactions": "2",
+                "copy_user_attachments_to_files": "1",
+                "max_critic_reactions": "0",
                 "max_token_limit": "8192", "use_librarian": "0",
                 "recreate_agents": "0",
                 "skip_nested_images": "0",
                 "cut_wrong_command_history": "0",
-                "allow_ocr": allow_ocr,
+                "allow_ocr": "0",
                 "number_of_plan_items": "0",
                 "do_translate": "0",
                 "target_lang": "None",
@@ -1506,28 +1508,28 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "gigo_idea_count": "2",
                 "gigo_plan_items": "10",
                 "gigo_use_entropy": "0",
-                "gigo_use_filter": "1",
-                "gigo_use_librarian": "0",
+                "gigo_use_filter": "0",
+                "gigo_use_librarian": "1",
                 "show_message_datetime": "0",
                 "chats_dir": suggest_default_chats_dir(),
                 "librarian_use_models": "0",
                 "module_hints_for_operator": "0",
                 "give_all_tools": "0",
-                "critic_reuse_dialog": "1",
+                "critic_reuse_dialog": "0",
                 "one_shot_intention_permission": "0",
                 "max_messages_before_answer": "0",
                 "librarian_use_web": "0",
-                "save_emb_dialog": "1",
+                "save_emb_dialog": "0",
                 "tools_no_examples": "0",
-                "allow_command_not_at_start": "0",
+                "allow_command_not_at_start": "1",
                 "give_operator_goal_to_executor": "0",
-                "deliver_user_messages": "0",
+                "deliver_user_messages": "1",
                 "use_small_model": "0",
                 "small_model_type": "",
                 "small_model_provider_params": "",
                 "small_token_limit": "8192",
                 "small_max_token_limit": "8192",
-                "small_for_cutter_only": "1",
+                "small_for_cutter_only": "0",
                 "small_agent_until_protocol": "0",
                 "text_cutter_token_limit": "2000",
                 "max_incoming_tokens": "10000",
@@ -1540,7 +1542,7 @@ def run_main_app(app_ready_event: multiprocessing.Event):
                 "gigo_role_dreamer": "1",
                 "gigo_role_realist": "1",
                 "gigo_role_critic": "1",
-                "fs_use_git": "1",
+                "fs_use_git": "0",
                 "small_protocol_drop_error": "0",
                 }
             widget_type_map = {
@@ -4616,11 +4618,10 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             self._clear_step_widgets()
             prev_lang = self.lang_var.get() if hasattr(self, 'lang_var') else (Lang.current_language or "en")
             self.lang_var = tk.StringVar(value=prev_lang or "en")
+            # Theme/scale not shown in initial setup (defaults only; change later in Settings)
             gs = self.backend.get_global_settings()
-            prev_theme = self.theme_var.get() if hasattr(self, 'theme_var') else str(gs.get("ui_light_theme", "0") or "0")
-            prev_scale = self.scale_var.get() if hasattr(self, 'scale_var') else str(gs.get("ui_scale", "100") or "100")
-            self.theme_var = tk.StringVar(value=str(prev_theme or "0"))
-            self.scale_var = tk.StringVar(value=str(prev_scale or "100"))
+            self.theme_var = tk.StringVar(value=str(gs.get("ui_light_theme", "0") or "0"))
+            self.scale_var = tk.StringVar(value=str(gs.get("ui_scale", "100") or "100"))
             container = create_styled_frame(self)
             container.pack(expand=True, fill='both', padx=16, pady=12)
             lang_frame = create_styled_frame(container)
@@ -4628,52 +4629,15 @@ def run_main_app(app_ready_event: multiprocessing.Event):
             create_styled_label(lang_frame, text=f"{Lang.get('language')}:").pack(side='left', padx=(0, 10))
             lang_combo = CTkOptionMenu(lang_frame, variable=self.lang_var, values=list(Lang.available_languages.keys()), **OPTIONMENU_THEME)
             lang_combo.pack(side='left')
-            # Theme under language
-            theme_frame = create_styled_frame(container)
-            theme_frame.pack(pady=8, fill="x")
-            create_styled_label(theme_frame, text=Lang.get("ui_light_theme", default="Light theme")).pack(side='left', padx=(0, 10))
-            CTkSwitch(
-                theme_frame, text="", variable=self.theme_var,
-                onvalue="1", offvalue="0", switch_width=50, switch_height=25,
-                progress_color=PURPLE_ACCENT, font=FONT_REGULAR,
-            ).pack(side='right')
-            # Scale under theme
-            scale_frame = create_styled_frame(container)
-            scale_frame.pack(pady=8, fill="x")
-            create_styled_label(scale_frame, text=Lang.get("ui_scale", default="UI scale")).pack(side='left', padx=(0, 10))
-            idx0 = ui_scale_pct_to_index(self.scale_var.get())
-            n_steps = max(1, len(UI_SCALE_STEPS) - 1)
-            def _on_init_scale(v, sv=self.scale_var):
-                try:
-                    sv.set(str(ui_scale_index_to_pct(v)))
-                except Exception:
-                    pass
-            scale_slider = CTkSlider(
-                scale_frame, from_=0, to=n_steps, number_of_steps=n_steps,
-                command=_on_init_scale, width=140, height=18,
-                progress_color=PURPLE_ACCENT, button_color=WHITE,
-                button_hover_color=PURPLE_ACCENT,
-            )
-            scale_slider.set(float(idx0))
-            scale_slider.pack(side='right', padx=(0, 4))
             create_styled_button(container, text="→", command=self.show_step2_model).pack(pady=20)
         def show_step2_model(self):
             Lang.load_language(self.lang_var.get())
-            # Apply theme/scale early so wizard and main UI match choice
-            try:
-                apply_ui_theme(str(self.theme_var.get()) == "1")
-            except Exception:
-                pass
-            try:
-                apply_ui_scale(clamp_ui_scale_pct(self.scale_var.get()))
-            except Exception:
-                pass
             self.title(Lang.get("initial_settings_title"))
             self.backend.rescan_and_localize_modules()
             ModuleManager().load_modules(self.backend)
             self._clear_step_widgets()
             self.settings_vars = self._get_default_settings()
-            # Keep theme/scale vars in settings for save
+            # Defaults only (wizard UI for theme/scale disabled)
             self.settings_vars['ui_light_theme'] = self.theme_var
             self.settings_vars['ui_scale'] = self.scale_var
             btn_frame = create_styled_frame(self)

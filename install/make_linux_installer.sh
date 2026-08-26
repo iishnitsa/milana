@@ -1,79 +1,129 @@
 #!/usr/bin/env bash
-# Builds a self-extracting .run installer for Milana (like InnoSetup on Windows)
-# Usage: ./make_linux_installer.sh
+# Builds self-extracting .run installer(s) for Milana (like Inno Setup on Windows).
+#
+# Usage:
+#   ./make_linux_installer.sh                 # both variants (default)
+#   ./make_linux_installer.sh --all           # same
+#   ./make_linux_installer.sh --with-models   # MilanaSetup.run only
+#                                             # (weights inside; ask at install)
+#   ./make_linux_installer.sh --no-models     # MilanaSetup-nomodels.run only
+#                                             # (no weights, no prompt)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_ROOT/build_installer"
-INSTALLER_NAME="MilanaSetup.run"
 
-# Verify that the application has been built
+WITH_MODELS=false
+NO_MODELS=false
+
+usage() {
+    sed -n '2,12p' "$0" | sed 's/^# \?//'
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --with-models) WITH_MODELS=true ;;
+        --no-models)   NO_MODELS=true ;;
+        --all)         WITH_MODELS=true; NO_MODELS=true ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$WITH_MODELS" = false ] && [ "$NO_MODELS" = false ]; then
+    WITH_MODELS=true
+    NO_MODELS=true
+fi
+
 if [ ! -f "$PROJECT_ROOT/Milana" ] || [ ! -d "$PROJECT_ROOT/_internal" ]; then
-    echo "ERROR: Run ./install/build_linux.sh first to create Milana and _internal"
+    echo "ERROR: Run ./install/buildlinux.sh first to create Milana and _internal"
     exit 1
 fi
 
-# Clean temporary build folder
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR/package"
+# ----------------------------------------------------------------------
+# Shared rsync excludes (same idea as Inno Setup)
+# ----------------------------------------------------------------------
+RSYNC_EXCLUDES=(
+    --exclude='__pycache__'
+    --exclude='__pycache__/*'
+    --exclude='tests'
+    --exclude='install/Output'
+    --exclude='install/Output/*'
+    --exclude='mvenv'
+    --exclude='mvenv/*'
+    --exclude='*.pyc'
+    --exclude='*.pyo'
+    --exclude='*.pyd'
+    --exclude='launcher.py'
+    --exclude='data/settings.db'
+    --exclude='run_ui.cmd'
+    --exclude='run_ui.sh'
+    --exclude='*.lnk'
+    --exclude='build'
+    --exclude='build/*'
+    --exclude='dist'
+    --exclude='dist/*'
+    --exclude='Milana.lnk'
+    --exclude='Output'
+    --exclude='Output/*'
+    --exclude='.git'
+    --exclude='.git/*'
+    --exclude='.gitattributes'
+    --exclude='.vscode'
+    --exclude='.vscode/*'
+    --exclude='.idea'
+    --exclude='.idea/*'
+    --exclude='*.log'
+    --exclude='*.bak'
+    --exclude='*.tmp'
+    --exclude='thumbs.db'
+    --exclude='*.db'
+    --exclude='data/chats'
+    --exclude='chats'
+    --exclude='chats/*'
+    --exclude='launch_milana.cmd'
+    --exclude='run_milana.sh'
+    --exclude='*.run'
+    --exclude='build_installer'
+    --exclude='buildexe.bat'
+    --exclude='build_linux.sh'
+    --exclude='make_linux_installer.sh'
+    --exclude='*.iss'
+    --exclude='requirements.txt'
+)
 
-# Copy entire project root with exclusions (same as InnoSetup)
-echo "Copying application files (with exclusions)..."
-rsync -av --delete \
-    --exclude='__pycache__' \
-    --exclude='__pycache__/*' \
-    --exclude='tests' \
-    --exclude='install/Output' \
-    --exclude='install/Output/*' \
-    --exclude='mvenv' \
-    --exclude='mvenv/*' \
-    --exclude='*.pyc' \
-    --exclude='*.pyo' \
-    --exclude='*.pyd' \
-    --exclude='launcher.py' \
-    --exclude='data/settings.db' \
-    --exclude='run_ui.cmd' \
-    --exclude='run_ui.sh' \
-    --exclude='*.lnk' \
-    --exclude='build' \
-    --exclude='build/*' \
-    --exclude='dist' \
-    --exclude='dist/*' \
-    --exclude='Milana.lnk' \
-    --exclude='Output' \
-    --exclude='Output/*' \
-    --exclude='.git' \
-    --exclude='.git/*' \
-    --exclude='.gitattributes' \
-    --exclude='.vscode' \
-    --exclude='.vscode/*' \
-    --exclude='.idea' \
-    --exclude='.idea/*' \
-    --exclude='*.log' \
-    --exclude='*.bak' \
-    --exclude='*.tmp' \
-    --exclude='thumbs.db' \
-    --exclude='*.db' \
-    --exclude='data/chats' \
-    --exclude='launch_milana.cmd' \
-    --exclude='run_milana.sh' \
-    --exclude='*.run' \
-    --exclude='build_installer' \
-    --exclude='buildexe.bat' \
-    --exclude='build_linux.sh' \
-    --exclude='make_linux_installer.sh' \
-    --exclude='*.iss' \
-    --exclude='requirements.txt' \
-    "$PROJECT_ROOT/" "$BUILD_DIR/package/"
+MODELS_EXCLUDES=(
+    --exclude='data/models/blip'
+    --exclude='data/models/blip/*'
+    --exclude='data/models/easyocr'
+    --exclude='data/models/easyocr/*'
+    --exclude='*.safetensors'
+    --exclude='*.pth'
+)
 
-# Create the installer script (self-extracting archive with GUI)
-cat > "$BUILD_DIR/installer.sh" << 'EOF'
+# ----------------------------------------------------------------------
+# Embed installer.sh (placeholder __INCLUDE_MODELS__ is replaced per variant)
+# ----------------------------------------------------------------------
+write_installer_sh() {
+    local dest="$1"
+    local include_models="$2"
+
+    cat > "$dest" << 'EOF'
 #!/bin/bash
 # Milana Self-Extracting Installer (graphical + console fallback)
 
 set -e
+
+INCLUDE_MODELS_IN_PACKAGE=__INCLUDE_MODELS__
 
 # ----------------------------------------------------------------------
 # Detect available GUI tool
@@ -253,18 +303,22 @@ main_installation() {
     # Ask about shortcuts
     SHORTCUTS=$(ask_shortcuts)
 
-    # Optional image models (BLIP + EasyOCR, ~1 GB)
+    # Optional image models (BLIP + EasyOCR, ~1 GB) — only if this .run contains them
     INSTALL_MODELS=false
-    if ask_yesno "Install image recognition models?\n\nOCR / image captions (BLIP + EasyOCR).\nAdds about 1 GB on disk.\n\nWithout models, image recognition is disabled."; then
-        INSTALL_MODELS=true
+    if [ "$INCLUDE_MODELS_IN_PACKAGE" = true ]; then
+        if ask_yesno "Install image recognition models?\n\nOCR / image captions (BLIP + EasyOCR).\nAdds about 1 GB on disk.\n\nWithout models, image recognition is disabled."; then
+            INSTALL_MODELS=true
+        fi
     fi
     
     # Confirmation
     local confirm_msg="Ready to install?\n\nDestination folder: $INSTALL_DIR"
-    if [ "$INSTALL_MODELS" = true ]; then
-        confirm_msg="$confirm_msg\nImage models: yes"
-    else
-        confirm_msg="$confirm_msg\nImage models: no (OCR off)"
+    if [ "$INCLUDE_MODELS_IN_PACKAGE" = true ]; then
+        if [ "$INSTALL_MODELS" = true ]; then
+            confirm_msg="$confirm_msg\nImage models: yes"
+        else
+            confirm_msg="$confirm_msg\nImage models: no (OCR off)"
+        fi
     fi
     
     if [ "$USE_SUDO" = true ]; then
@@ -289,8 +343,8 @@ main_installation() {
         exit 1
     fi
 
-    # Drop models from package if user declined (installer still contains them; strip before copy)
-    if [ "$INSTALL_MODELS" != true ]; then
+    # Drop models from package if user declined (full installer still contains them)
+    if [ "$INCLUDE_MODELS_IN_PACKAGE" = true ] && [ "$INSTALL_MODELS" != true ]; then
         show_progress "Skipping image models..."
         rm -rf "$TMP_DIR/package/data/models" 2>/dev/null || true
         mkdir -p "$TMP_DIR/package/data/models"
@@ -399,8 +453,10 @@ EOL
     final_msg="$final_msg✓ Files copied: $(find "$INSTALL_DIR" -type f | wc -l) files\n"
     if [ "$INSTALL_MODELS" = true ]; then
         final_msg="$final_msg✓ Image models: installed\n"
-    else
+    elif [ "$INCLUDE_MODELS_IN_PACKAGE" = true ]; then
         final_msg="$final_msg✓ Image models: skipped (OCR disabled)\n"
+    else
+        final_msg="$final_msg✓ Image models: not included in this installer (OCR disabled)\n"
     fi
     final_msg="$final_msg✓ Command-line launcher: milana\n"
     
@@ -428,24 +484,80 @@ fi
 __ARCHIVE_BELOW__
 EOF
 
-# Create tar.gz archive of the package folder
-echo "Creating tar.gz archive..."
-tar czf "$BUILD_DIR/package.tar.gz" -C "$BUILD_DIR" package
+    if [ "$include_models" = true ]; then
+        sed -i 's/__INCLUDE_MODELS__/true/' "$dest"
+    else
+        sed -i 's/__INCLUDE_MODELS__/false/' "$dest"
+    fi
+}
 
-# Concatenate installer script and archive into a single .run file
-echo "Building .run installer..."
-cat "$BUILD_DIR/installer.sh" "$BUILD_DIR/package.tar.gz" > "$BUILD_DIR/$INSTALLER_NAME"
-chmod +x "$BUILD_DIR/$INSTALLER_NAME"
+strip_model_weights() {
+    local pkg="$1"
+    rm -rf "$pkg/data/models/blip" "$pkg/data/models/easyocr"
+    mkdir -p "$pkg/data/models"
+    echo "not-in-installer" > "$pkg/data/models/.models_not_installed"
+    # drop leftover weight files if any slipped through
+    find "$pkg/data/models" -type f \( -name '*.safetensors' -o -name '*.pth' -o -name '*.bin' -o -name '*.onnx' \) -delete 2>/dev/null || true
+}
 
-# Move final installer to the install/ folder
-mv "$BUILD_DIR/$INSTALLER_NAME" "$PROJECT_ROOT/install/"
+seal_run() {
+    local work="$1"
+    local installer_name="$2"
+    local include_models="$3"
 
-# Clean up build directory
+    write_installer_sh "$work/installer.sh" "$include_models"
+    echo "Creating tar.gz archive for $installer_name..."
+    tar czf "$work/package.tar.gz" -C "$work" package
+    echo "Building $installer_name..."
+    cat "$work/installer.sh" "$work/package.tar.gz" > "$work/$installer_name"
+    chmod +x "$work/$installer_name"
+    mv "$work/$installer_name" "$PROJECT_ROOT/install/"
+    rm -f "$work/installer.sh" "$work/package.tar.gz"
+    echo "✓ Installer created: $PROJECT_ROOT/install/$installer_name"
+    echo "  Size: $(du -h "$PROJECT_ROOT/install/$installer_name" | cut -f1)"
+}
+
+# ----------------------------------------------------------------------
+# Build
+# ----------------------------------------------------------------------
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR/package"
+
+if [ "$WITH_MODELS" = true ]; then
+    echo "Copying application files (with image models)..."
+    rsync -av --delete "${RSYNC_EXCLUDES[@]}" \
+        "$PROJECT_ROOT/" "$BUILD_DIR/package/"
+    seal_run "$BUILD_DIR" "MilanaSetup.run" true
+fi
+
+if [ "$NO_MODELS" = true ]; then
+    if [ "$WITH_MODELS" = true ]; then
+        echo "Stripping image-model weights for nomodels installer..."
+        strip_model_weights "$BUILD_DIR/package"
+    else
+        echo "Copying application files (without image models)..."
+        rsync -av --delete "${RSYNC_EXCLUDES[@]}" "${MODELS_EXCLUDES[@]}" \
+            "$PROJECT_ROOT/" "$BUILD_DIR/package/"
+        strip_model_weights "$BUILD_DIR/package"
+    fi
+    seal_run "$BUILD_DIR" "MilanaSetup-nomodels.run" false
+fi
+
 rm -rf "$BUILD_DIR"
 
 echo ""
-echo "✓ Installer created: $PROJECT_ROOT/install/$INSTALLER_NAME"
-echo "  Size: $(du -h "$PROJECT_ROOT/install/$INSTALLER_NAME" | cut -f1)"
+echo "Done. Installers in $PROJECT_ROOT/install/ :"
+if [ "$WITH_MODELS" = true ]; then
+    echo "  MilanaSetup.run"
+fi
+if [ "$NO_MODELS" = true ]; then
+    echo "  MilanaSetup-nomodels.run"
+fi
 echo ""
 echo "To test:"
-echo "  $PROJECT_ROOT/install/$INSTALLER_NAME"
+if [ "$WITH_MODELS" = true ]; then
+    echo "  $PROJECT_ROOT/install/MilanaSetup.run"
+fi
+if [ "$NO_MODELS" = true ]; then
+    echo "  $PROJECT_ROOT/install/MilanaSetup-nomodels.run"
+fi

@@ -1537,16 +1537,34 @@ def get_embs(text):
         let_log("[get_embs] пустой текст — эмбеддинг не запрашиваем")
         return []
     current_text = text
-    if len(current_text) * text_tokens_coefficient > emb_token_limit: half_len = len(current_text) // 2
+    # Pre-trim to estimated emb window before first call
+    try:
+        coeff = float(text_tokens_coefficient) if text_tokens_coefficient else 0.5
+    except Exception:
+        coeff = 0.5
+    try:
+        lim = int(emb_token_limit) if emb_token_limit else 512
+    except Exception:
+        lim = 512
+    if lim > 0 and len(current_text) * coeff > lim:
+        max_chars = max(1, int(lim / max(coeff, 0.01)))
+        current_text = current_text[:max_chars]
+        let_log(f"[get_embs] pre-trim {len(text)}→{len(current_text)} chars (~emb_token_limit={lim})")
     last_err = None
-    for attempt in range(3):
+    attempt = 0
+    # Halve on ContextOverflow until 1 char left (not a fixed range(3))
+    while len(current_text) >= 1:
+        attempt += 1
         try:
             result = get_provider_embs(current_text)
-            # Пустой/None результат — не пишем в Chroma, пробуем ещё раз
+            # Пустой/None результат — не пишем в Chroma, пробуем ещё раз (с укорочением)
             if result is None or (isinstance(result, (list, tuple)) and len(result) == 0):
                 last_err = "empty embedding vector"
-                let_log(f"[get_embs] пустой embedding (попытка {attempt+1}/3), текст[:80]={current_text[:80]!r}")
-                time.sleep(0.5 * (attempt + 1))
+                let_log(f"[get_embs] пустой embedding (попытка {attempt}), текст[:80]={current_text[:80]!r}")
+                if len(current_text) <= 1:
+                    break
+                current_text = current_text[: max(1, len(current_text) // 2)]
+                time.sleep(min(0.5 * attempt, 2.0))
                 continue
             if isinstance(result, (list, tuple)) and all(
                     (not isinstance(x, (int, float)) or x == 0) for x in (result[:8] if len(result) >= 8 else result)):
@@ -1554,20 +1572,25 @@ def get_embs(text):
                 let_log(f"[get_embs] embedding начинается с нулей, dim={len(result)}")
             # Обновляем лимит, если пришлось урезать текст
             if len(current_text) < len(text):
-                new_limit = int(len(current_text) * text_tokens_coefficient)
+                new_limit = max(1, int(len(current_text) * coeff))
                 let_log(f"[get_embs] Обновлён emb_token_limit: {new_limit} (был {emb_token_limit})")
                 emb_token_limit = new_limit
             return result
         except Exception as e:
             last_err = e
-            if 'ContextOverflowError' in str(e):
-                half_len = len(current_text) // 2
-                if half_len == 0: raise
+            if 'ContextOverflowError' in str(e) or 'context' in str(e).lower():
+                if len(current_text) <= 1:
+                    break
+                half_len = max(1, len(current_text) // 2)
+                let_log(f"[get_embs] ContextOverflow → trim {len(current_text)}→{half_len} (попытка {attempt})")
                 current_text = current_text[:half_len]
                 continue
             else:
-                let_log(f"[get_embs] Ошибка (попытка {attempt+1}/3): {e}")
-                time.sleep(0.5 * (attempt + 1))
+                let_log(f"[get_embs] Ошибка (попытка {attempt}): {e}")
+                if len(current_text) <= 1:
+                    break
+                current_text = current_text[: max(1, len(current_text) // 2)]
+                time.sleep(min(0.5 * attempt, 2.0))
                 continue
     err_msg = f"[get_embs] не удалось получить embedding: {last_err}"
     let_log(err_msg)

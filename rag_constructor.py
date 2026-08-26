@@ -434,12 +434,23 @@ def prompt_assembler(chat_id: str, system_prompt: str, current_message: str, his
         if available_tokens_for_rag_actual > 0:
             let_log(f"##### [{chat_id}] RAG АКТИВИРОВАН. Доступно токенов: {available_tokens_for_rag_actual:.0f} #####")
             rag_token_limit_final = available_tokens_for_rag_actual
-            # Формируем расширенный запрос для поиска (используем последние 2 сообщения + текущее)
-            recent_context = ""
-            if len(history_to_use) >= 2:
-                recent_context = "\n".join([f"{m['full_text']}" for m in history_to_use[-2:]])
-            expanded_query = f"{recent_context}\n{current_message}"
-            query_embedding = get_embs(expanded_query)
+            # Query for RAG: newest-first (current, then history[-1], [-2], …).
+            # get_embs keeps a prefix / halves on overflow → prefers recent text.
+            # TODO: optional — emb each message separately and intersect nearest hits.
+            _parts = []
+            _cur = (current_message or "").strip()
+            if _cur:
+                _parts.append(_cur)
+            for _m in reversed(history_to_use or []):
+                _t = str((_m.get("full_text") if isinstance(_m, dict) else "") or "").strip()
+                if _t:
+                    _parts.append(_t)
+            expanded_query = "\n".join(_parts)
+            try:
+                query_embedding = get_embs(expanded_query) if expanded_query else []
+            except Exception as e:
+                let_log(f"RAG: get_embs failed ({e}) — поиск пропущен, диалог продолжается")
+                query_embedding = []
             if not query_embedding:
                 let_log("RAG: пустой query embedding — поиск пропущен")
                 initial_results = None

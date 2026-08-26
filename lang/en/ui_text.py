@@ -296,7 +296,7 @@ TEXTS = {
     "use_magical_prompt_desc": "Include the Magical Prompt principles in critic and related system prompts.",
     "use_old_gigo_desc": "When enabled, use the classic (old) GIGO pipeline. When disabled, use the advanced GIGO pipeline (gigo_adv).",
     "show_message_datetime_desc": "When on: agent history (full_text) is prefixed with [YYYY-MM-DD HH:MM:SS]; also shown in the UI. Default off.",
-    "chats_dir_desc": "Folder where chat data is stored. On Windows, D: is suggested if available; otherwise the default data/chats path.",
+    "chats_dir_desc": "Folder where chat data is stored. On Windows, D:\\Milana\\chats is suggested if D: exists and the app is not installed there; otherwise data/chats next to the app.",
     "librarian_use_models_desc": "When enabled, the Librarian uses the LLM for relevance and reformulation. When off (default), only embeddings and raw fragments are used.",
     "module_hints_for_operator_desc": "Also include module/tool hints in the operator prompt (off by default).",
     "give_all_tools_desc": "Do not select a subset of tools; give the full tool set to the agent.",

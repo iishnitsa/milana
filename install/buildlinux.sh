@@ -108,6 +108,29 @@ echo "========================================"
 
 cd "$PROJECT_ROOT"
 
+# Tcl/Tk data dirs (PyInstaller hook sometimes ships only _tcl_data → runtime crash on _tk_data)
+TCL_DIR=""
+TK_DIR=""
+for d in /usr/lib/tcl8.6 /usr/share/tcltk/tcl8.6; do
+    if [ -f "$d/init.tcl" ]; then TCL_DIR="$d"; break; fi
+done
+for d in /usr/lib/tk8.6 /usr/share/tcltk/tk8.6; do
+    if [ -f "$d/tk.tcl" ]; then TK_DIR="$d"; break; fi
+done
+ADD_DATA_ARGS=()
+if [ -n "$TCL_DIR" ]; then
+    echo "✓ Tcl data: $TCL_DIR → _tcl_data"
+    ADD_DATA_ARGS+=(--add-data "$TCL_DIR:_tcl_data")
+else
+    echo "WARNING: Tcl data dir not found (install tk/tcl packages)"
+fi
+if [ -n "$TK_DIR" ]; then
+    echo "✓ Tk data: $TK_DIR → _tk_data"
+    ADD_DATA_ARGS+=(--add-data "$TK_DIR:_tk_data")
+else
+    echo "WARNING: Tk data dir not found (install tk/tcl packages)"
+fi
+
 pyinstaller --onedir --icon="data/icons/icon.ico" --name "Milana" \
 --distpath "$PROJECT_ROOT/dist" \
 --workpath "$PROJECT_ROOT/build" \
@@ -141,6 +164,11 @@ pyinstaller --onedir --icon="data/icons/icon.ico" --name "Milana" \
 --hidden-import cryptography.hazmat.primitives \
 --hidden-import cryptography.hazmat.primitives.kdf.pbkdf2 \
 --hidden-import cryptography.hazmat.backends \
+--collect-all dulwich \
+--hidden-import dulwich.porcelain \
+--hidden-import dulwich.objects \
+--hidden-import dulwich.repo \
+"${ADD_DATA_ARGS[@]}" \
 --noconsole \
 --clean \
 --noconfirm \
@@ -167,6 +195,27 @@ else
     echo "ERROR: Build output not found!"
     exit 1
 fi
+
+# Safety net: ensure _tk_data / _tcl_data exist (hook or --add-data may have missed)
+ensure_tk_data() {
+    local dest="$PROJECT_ROOT/_internal"
+    if [ ! -d "$dest/_tcl_data" ] && [ -n "$TCL_DIR" ]; then
+        echo "Copying Tcl data → _internal/_tcl_data"
+        mkdir -p "$dest/_tcl_data"
+        cp -a "$TCL_DIR"/. "$dest/_tcl_data/"
+    fi
+    if [ ! -d "$dest/_tk_data" ] && [ -n "$TK_DIR" ]; then
+        echo "Copying Tk data → _internal/_tk_data"
+        mkdir -p "$dest/_tk_data"
+        cp -a "$TK_DIR"/. "$dest/_tk_data/"
+    fi
+    if [ -d "$dest/_tcl_data" ] && [ -d "$dest/_tk_data" ]; then
+        echo "✓ Tcl/Tk data present under _internal"
+    else
+        echo "WARNING: _tcl_data / _tk_data still missing — ./Milana will fail at pyi_rth__tkinter"
+    fi
+}
+ensure_tk_data
 
 # Clean temporary build folders
 rm -rf "$PROJECT_ROOT/build" "$PROJECT_ROOT/dist" "$PROJECT_ROOT/Milana.spec"

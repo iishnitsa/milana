@@ -92,6 +92,9 @@ if False:
     import cryptography
     import secrets
     import dulwich
+    from dulwich import porcelain  # subpackage — PyInstaller must collect it
+    from dulwich.objects import Blob, Commit, Tree
+    from dulwich.repo import Repo
     import translators
     import sympy
     import mpmath
