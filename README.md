@@ -34,18 +34,18 @@ More optimizations will come.
 ## Universal
 Supports any sufficiently smart instruct model. The model doesn't necessarily need agentic or tool-calling capabilities, nor does it need to strictly follow specific standards.
 
-## The Best — for me
+## The Best (for me)
 The prototype is still far from a polished state, but I will keep improving it, putting my soul and vision into it.
 
 ## Features and Use Cases
-Module support lets the system do almost anything — even turn on a kettle. Useful built-ins: web search (multi-line queries), deep research, reports, cross-platform `shell_cmd`, and file tools on the new `filesystem` API. An optional MCP URL loads remote tools. You can write your own module using the docs below.
+Module support lets the system do almost anything, even turn on a kettle. Useful built-ins: web search (multi-line queries), deep research, reports, cross-platform `shell_cmd`, and file tools on the new `filesystem` API. An optional MCP URL loads remote tools. You can write your own module using the docs below.
 
-The request I used to debug the system was about progress in Alzheimer’s treatment — an ambiguous topic that needs careful study. Literally:
+The request I used to debug the system was about progress in Alzheimer’s treatment, an ambiguous topic that needs careful study. Literally:
 
 **perform a meta-study on the entire study of alzheimer's and drugs for this disease, draw conclusions about what alzheimer's is according to the most likely theory (this can be found out by comparing many works), about scandals, about misconceptions, etc., in order to get the most reliable information about what alzheimer's is and how to treat it
 periodically make reports on the information found and the conclusions drawn**
 
-**Demo (08 2026):** recorded on Ollama `gemma3:4b`. It did not work on the first try and is not great — but the previous release would not have allowed this demo at all. For this workload the model is **not very stable**; for real use I still recommend **`gemma4:e4b`** or **`qwen3.5:9b`**. [YouTube](https://youtu.be/kXu3Uc1MgS8). The older demo showed high stability on Qwen3.5 (04 2026 release, cloud Qwen3.5 9b): [YouTube](https://www.youtube.com/watch?v=USj5WB6UfME).
+**Demo (08 2026):** recorded on Ollama `gemma3:4b`. It did not work on the first try and is not great, but the previous release would not have allowed this demo at all. For this workload the model is **not very stable**; for real use I still recommend **`gemma4:e4b`** or **`qwen3.5:9b`**. [YouTube](https://youtu.be/kXu3Uc1MgS8). The older demo showed high stability on Qwen3.5 (04 2026 release, cloud Qwen3.5 9b): [YouTube](https://www.youtube.com/watch?v=USj5WB6UfME).
 
 ## How It Works
 ```mermaid
@@ -53,7 +53,7 @@ flowchart TD
     A[Client Task] --> B["GIGO: Plan Generation<br/>Dreamer → Realist → Critic"]
     B --> C["Create Milana Operator<br/>and Select Tools"]
     C --> D["Create Ivan Executor<br/>with Toolset"]
-    D --> E["Dialogue between Milana and Ivan<br/>Task Execution"]
+    D --> E["Dialogue between<br/>Milana and Ivan<br/>Task Execution"]
 
     E --> F{Executor Delegates?}
     F -->|Yes| B
@@ -70,15 +70,15 @@ flowchart TD
 ```
 The system receives the client task → the GIGO block (Dreamer → Realist → Critic) builds a plan → operator Milana is created with a toolset → executor Ivan is created with his toolset → dialogue starts. If the executor cannot handle the task, it may delegate to a new level (again via GIGO). When finished, Critic evaluates the result (up to two attempts by default): success → client / level above; unsure → human check; bad but attempts left → refined task and recreate; both attempts exhausted → critic comments go one level up.
 
-File tools go through the local `filesystem` API (per-dialog session, optional git/worlds, import-on-read) so agents can touch the project safely — details in the filesystem spoiler under History.
+File tools go through the local `filesystem` API (per-dialog session, optional git/worlds, import-on-read) so agents can touch the project safely. Details are in the filesystem spoiler under History.
 
 <details>
 <summary>History and Project Details</summary>
 One day I asked ChatGPT for help with a project and got a plan. At first I fed tasks one by one; then I had the idea to make the model talk to itself.
 
-Later I realized the tasks were too hard — they needed plans too. The idea grew into a hierarchy that grows by one level on the AI’s command.
+Later I realized the tasks were too hard: they needed plans too. The idea grew into a hierarchy that grows by one level on the AI’s command.
 
-I started with LangChain — seemed good for an agent that creates hierarchy levels. Problems:
+I started with LangChain. It seemed good for an agent that creates hierarchy levels. Problems:
 1. LangChain changes constantly and heavily.
 2. It targets strong models; weak ones easily break commands.
 3. Poor fit into custom code.
@@ -88,14 +88,14 @@ So I wrote my own mechanism.
 Not everyone has strong AI, a fast PC, or a power plant for servers. Weak models can still help if you approach them right: I allowed typos in commands and simplified prompts.
 
 **upd1**
-While preparing the December 2025 release I realized hierarchy fits programming poorly (see AlphaEvolve / related work). A big issue is data exchange across levels and dialogues; I tried saving dialogues into embeddings for the librarian. Safe file handling was still needed — experimenting with structures.
+While preparing the December 2025 release I realized hierarchy fits programming poorly (see AlphaEvolve / related work). A big issue is data exchange across levels and dialogues; I tried saving dialogues into embeddings for the librarian. Safe file handling was still needed, so I started experimenting with structures.
 
 **upd2 05 2026**
 Mostly bugfixes, small polish, and a redesign. Fixed data exchange: agents can see info about other dialogues, including deleted ones.
 
-I removed “10,000 monkeys” and best-solution selection — raw, expensive, and slow; not in the spirit of a cheap system on fast small models.
+I removed “10,000 monkeys” and best-solution selection: raw, expensive, and slow, and not in the spirit of a cheap system on fast small models.
 
-My own command protocol turned out more convenient than standards: not tied to native function calling or a specific calling convention. Native call remains but is not deeply tested — better leave it off for now.
+My own command protocol turned out more convenient than standards: not tied to native function calling or a specific calling convention. Native call remains but is not deeply tested, so better leave it off for now.
 
 **upd3 08 2026**
 
@@ -108,13 +108,13 @@ My own command protocol turned out more convenient than standards: not tied to n
 - Soft hints / leeway when weak models break protocol; hierarchy limit (0 = unlimited)
 - Some UI speedups, light theme, scaling
 - Ollama demo default: `gemma3:4b`; for stability prefer `gemma4:e4b` or `qwen3.5:9b`
-- Many bugfixes — e.g. a previous-release bug that truncated context with local Ollama
+- Many bugfixes, e.g. a previous-release bug that truncated context with local Ollama
 - Many features made optional; different tiny models need different settings
 - Lots of small improvements
 
-There will be a large refactor. Plans: an upper agent somewhat like OpenClaw, better coding help for agents, extreme context compression, improving RAG / Critic / GIGO / filesystem, maybe splitting into parts for systems more complex than a 2-agent dialogue hierarchy — and keep adapting to weak models.
+There will be a large refactor. Plans: an upper agent somewhat like OpenClaw, better coding help for agents, extreme context compression, improving RAG / Critic / GIGO / filesystem, maybe splitting into parts for systems more complex than a 2-agent dialogue hierarchy, and keep adapting to weak models.
 
-Most importantly, I understood the main weakness of small models. Agent-oriented models are trained for long work with large context and staying on topic without drift. Closest are reasoning models — in a sense agent models descend from them. The smaller the model (even reasoning, and especially non-reasoning), the worse it is at long sessions. Even with native tool calling, training is often on short Q&A dialogues — fine for a support chatbot (query → tool → answer), but quality drops message by message. A live user also keeps the topic from drifting. Splitting operator/executor helped a bit when the operator had few messages and kept a busy executor on track. Generating complementary personalities is another attempt. Better RAG may help further; I want a more radical fix, though I don’t fully know the shape yet.
+Most importantly, I understood the main weakness of small models. Agent-oriented models are trained for long work with large context and staying on topic without drift. Closest are reasoning models: in a sense, agent models descend from them. The smaller the model (even reasoning, and especially non-reasoning), the worse it is at long sessions. Even with native tool calling, training is often on short Q&A dialogues, which is fine for a support chatbot (query → tool → answer), but quality drops message by message. A live user also keeps the topic from drifting. Splitting operator/executor helped a bit when the operator had few messages and kept a busy executor on track. Generating complementary personalities is another attempt. Better RAG may help further; I want a more radical fix, though I don’t fully know the shape yet.
 
 The project is still raw. Ideas, bug reports, and suggestions are welcome. Versions are tagged by publication date.
 </details>
@@ -138,10 +138,10 @@ from filesystem.tool_arg import one_line_arg
 `cross_gpt.initialize_work` puts `base_dir` on `sys.path`. **Do not** add `--hidden-import filesystem*` to the freeze: only `launcher.py` is in the exe; `filesystem/` stays editable next to the binary.
 
 Behaviour:
-- **Main-first** — no auto fork on hierarchy
-- **Import-on-read** — pull missing path from other world / disk
+- **Main-first**: no auto fork on hierarchy
+- **Import-on-read**: pull missing path from other world / disk
 - **No auto-merge** on end_dialog
-- **Session default** — when tools omit `session_id`, pipeline uses `global_state.now_try`
+- **Session default**: when tools omit `session_id`, pipeline uses `global_state.now_try`
 - **Optional** `fs_copy_touched_on_end` → `chat/dialog_artifacts/…` (default off)
 - **Optional** `fs_use_git` (default on). Off → plain disk CRUD without git/worlds
 - **Lazy init** on first API call
@@ -181,7 +181,7 @@ ELF: `buildlinux.sh`, then `make_linux_installer.sh` → `MilanaSetup.run` and/o
 </details>
 
 ## Getting started
-Open **chat settings** after creating a chat — defaults are set, but models often need tuning.
+Open **chat settings** after creating a chat. Defaults are set, but models often need tuning.
 
 Pay attention to the **Small model** tab: you can enable a cheaper/weaker model for lighter jobs (summaries / cutter by default). Copy params from the large model (except `model=`), validate the small connection, and clamp token limits. Leave it off if you only want one model.
 </details>
@@ -204,7 +204,7 @@ On errors, write to Discord **iishnitsa_milana**: screenshots/videos, `log.txt`,
 
 <details>
 <summary>How to Develop Modules</summary>
-File tools should use the `filesystem` API (`filesystem.api.pipeline`, `filesystem.tool_arg`, …) instead of ad-hoc disk IO — see the filesystem spoiler above. Keep `filesystem/` editable next to the frozen binary.
+File tools should use the `filesystem` API (`filesystem.api.pipeline`, `filesystem.tool_arg`, …) instead of ad-hoc disk IO. See the filesystem spoiler above. Keep `filesystem/` editable next to the frozen binary.
 
 A module consists of:
 - A main file (e.g., `shell_cmd.py`).
@@ -272,7 +272,7 @@ Progress saving is done through caching:
 - Inside operations that change the system state, if they don't directly relate to changing the system state (e.g., `ask_model` inside `start_dialog`).
 
 Caching is forbidden for operations:
-- Changing the system state (e.g. outer `@cacher` on `start_dialog` / `end_dialog` / hierarchy helpers) — those must re-run so RAM/DB reach the pre-crash state. Mark such helpers with `@no_cache` if needed.
+- Changing the system state (e.g. outer `@cacher` on `start_dialog` / `end_dialog` / hierarchy helpers): those must re-run so RAM/DB reach the pre-crash state. Mark such helpers with `@no_cache` if needed.
 - Anything that would change the **number** of cached slots between the original run and resume (unstable branching).
 
 **Nesting is supported:** outer `@cacher` may call inner `@cacher` (marker stack / `\x02` descent). Do **not** call `@no_cache` functions from inside an active `@cacher` body.
@@ -280,8 +280,8 @@ Caching is forbidden for operations:
 The system caches many types of data (not classes/functions). Exceptions are stored and re-thrown on replay. Serialization uses `pickle`.
 
 The caching system consists of:
-- `read_cache` / `write_cache` — sequential slots in `cache.db` (`cache_counter`).
-- `cacher` — `@cacher` decorator around those.
+- `read_cache` / `write_cache`: sequential slots in `cache.db` (`cache_counter`).
+- `cacher`: the `@cacher` decorator around those.
 - On resume, `left_cache_counter` is set from `COUNT(*)` so the worker replays until the miss point.
 
 In most cases you only need `@cacher`. Manual `read_cache`/`write_cache` only when necessary (e.g. `tools_selector`); any sequence break breaks resume.
@@ -301,16 +301,16 @@ def get_weather():
 List of common decorated helpers:
 - `ask_model`, `get_embs`, `text_cutter`, `sql_exec`, `coll_exec`
 - `get_input_message`, `send_output_message` (UI chat queue; cached)
-- `let_log` / `send_log_to_ui` — **not** `@cacher` (debug only; `send_ui_no_cache` for errors that must always show)
+- `let_log` / `send_log_to_ui` are **not** `@cacher` (debug only; `send_ui_no_cache` for errors that must always show)
 
 Everything else is at your own risk.
 </details>
 <details>
 <summary>How to use some useful system functions</summary>
-When writing your own modules, you can use built-in core functions. **All of them already have built-in caching**—you don't need to manually write `read_cache` / `write_cache` logic.
+When writing your own modules, you can use built-in core functions. **All of them already have built-in caching.** You don't need to manually write `read_cache` / `write_cache` logic.
 
 #### 1. `ask_model`
-`ask_model(prompt_text, ...)`—the main function for generating responses with automatic fallback via `text_cutter` on context overflow.
+`ask_model(prompt_text, ...)` is the main function for generating responses with automatic fallback via `text_cutter` on context overflow.
 
 **Basic Parameters**
 * `prompt_text` (str, required): Request text.
