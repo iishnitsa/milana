@@ -29,5 +29,9 @@ milana_boot.log
 data/milana_boot.log
 .milana_boot.log
 
-# Linux self-extracting installer artifacts
+# Packaged installers (do not commit built setups)
+MilanaSetup.exe
+MilanaSetupNoOCRModels.exe
+MilanaSetup.run
+MilanaSetupNoOCRModels.run
 *.run

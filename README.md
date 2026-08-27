@@ -50,19 +50,19 @@ periodically make reports on the information found and the conclusions drawn**
 ## How It Works
 ```mermaid
 flowchart TD
-    A[Client Task] --> B[GIGO: Plan Generation - Dreamer → Realist → Critic]
-    B --> C[Create Milana Operator and Select Tools]
-    C --> D[Create Ivan Executor with Toolset]
-    D --> E[Dialogue between Milana and Ivan, Task Execution]
+    A[Client Task] --> B["GIGO: Plan Generation<br/>Dreamer → Realist → Critic"]
+    B --> C["Create Milana Operator<br/>and Select Tools"]
+    C --> D["Create Ivan Executor<br/>with Toolset"]
+    D --> E["Dialogue between Milana and Ivan<br/>Task Execution"]
 
     E --> F{Executor Delegates?}
     F -->|Yes| B
-    F -->|No| G[End Dialogue and Transfer Result]
+    F -->|No| G["End Dialogue<br/>and Transfer Result"]
 
     G --> H[Critic Evaluates Result]
     H --> I{Satisfactory?}
-    I -->|Yes, 3| J[Success → Result to Client or Ivan]
-    I -->|No, <2 attempts| K[Formulate New Task for Executor or Operator]
+    I -->|Yes, 3| J["Success → Result<br/>to Client or Ivan"]
+    I -->|"No, under 2 attempts"| K["Formulate New Task<br/>for Executor or Operator"]
     K --> B
     I -->|Unsure, 2| J
     I -->|No, 2 attempts| J
@@ -107,7 +107,7 @@ My own command protocol turned out more convenient than standards: not tied to n
 - MCP URL for remote tools
 - Soft hints / leeway when weak models break protocol; hierarchy limit (0 = unlimited)
 - Some UI speedups, light theme, scaling
-- Ollama demo default: `gemma3:4b`; for stability prefer `gemma4:e2b` / `gemma4:e4b`
+- Ollama demo default: `gemma3:4b`; for stability prefer `gemma4:e4b` or `qwen3.5:9b`
 - Many bugfixes — e.g. a previous-release bug that truncated context with local Ollama
 - Many features made optional; different tiny models need different settings
 - Lots of small improvements
@@ -176,7 +176,7 @@ You need:
 - Python tk packages, e.g. `sudo pacman -S tk` (if you forgot: `pyenv uninstall 3.13.7`, install tk, retry)
 
 Run `linux_macos.sh` in `install`.
-ELF: `buildlinux.sh`, then `make_linux_installer.sh` → `MilanaSetup.run` and/or `make_linux_installerNoOCRModels.sh` → `MilanaSetupNoOCRModels.run` (`make_linux_installers.sh` builds both).
+ELF: `buildlinux.sh`, then `make_linux_installer.sh` → `MilanaSetup.run` and/or `make_linux_installer_no_ocr_models.sh` → `MilanaSetupNoOCRModels.run` (`make_linux_installers.sh` builds both).
 </details>
 </details>
 
@@ -188,28 +188,18 @@ Pay attention to the **Small model** tab: you can enable a cheaper/weaker model 
 
 <details>
 <summary>How to Use</summary>
+
 1. Run Milana and configure the model. Prefer **`gemma4:e4b`** or **`qwen3.5:9b`** (Ollama). The default field may show `gemma3:4b` (quick try / demo, less stable).
 2. Pick a provider (Ollama, llama.cpp, OpenAI-compatible, Grok/xAI, …). For Ollama also pull `all-minilm:latest` (embeddings). Click `Validate model` and save.
 3. Optionally: **small model**, **agent personalities**, translation, **MCP URL**.
 4. Enable the modules you need.
 5. Create a chat, enter a task, send.
 
-Chat settings (selection; defaults highlighted)
-- **Use RAG** — on by default.
-- **Task elaboration / classic GIGO** — on by default (`use_gigo` + classic/`use_old_gigo`).
-- **Librarian in GIGO** — on by default.
-- **Max critic reactions** — default **0** (critic reactions off unless you raise it).
-- **Allow commands not at start** — on by default.
-- **Copy user attachments** into the chat `files/` folder — on by default.
-- **Mid-dialog** user message delivery (`deliver_user_messages`) — on by default.
-- Hierarchy limit: 0 = unlimited; `1` = one root dialog without deeper delegation.
-- OCR: needs bundled models; on Linux also **AVX2**.
-- MCP URL: optional remote tools.
-
 **Notes:**
-- For stability use a stronger model than the one that failed you. Demo default `gemma3:4b` is weak.
-- Best-tested path today: **Ollama** (also llama.cpp / scripted / cloud OpenAI-style).
-- On errors, write to Discord **iishnitsa_milana**: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other files from the chat folder, plus a description.
+
+For stability use a stronger model than the one that failed you. Demo default `gemma3:4b` is weak.
+Best-tested path today: **Ollama** (also llama.cpp / scripted / cloud OpenAI-style).
+On errors, write to Discord **iishnitsa_milana**: screenshots/videos, `log.txt`, `cache.db`, `chatsettings.db`, and other files from the chat folder, plus a description.
 </details>
 
 <details>
